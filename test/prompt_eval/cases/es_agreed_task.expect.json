@@ -1,0 +1,7 @@
+{
+  "design": "Agreed future work with owner and deadline is a [task]; a 'from now on' rule is a [method]. Nothing is left open.",
+  "no_entry": false,
+  "required_labels": ["task", "method"],
+  "label_item_mentions_any": {"task": ["Laura"], "method": ["pytest"]},
+  "open_questions_must_not_mention": ["Laura", "migr"]
+}

@@ -1,0 +1,3 @@
+{"type":"user","uuid":"u1","message":{"role":"user","content":"a valid line"}}
+this line is not json at all
+{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"never reached"}]}}

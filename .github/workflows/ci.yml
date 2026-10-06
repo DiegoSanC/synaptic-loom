@@ -1,0 +1,73 @@
+name: CI
+
+# Minimal CI: full test suite + static contract assertions (no live `claude` CLI,
+# no secrets, no external services). The live contract is a manual check — see README.md.
+#
+# The e2e gates expect the pilot's real boundary tools (test/waves/README.md,
+# test/phase_gates/ prerequisites): gitleaks PINNED to 8.30.1 (the version the
+# scan-engine oracles were validated against), plus uv for the installer legs.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-static-contract:
+    runs-on: ubuntu-latest
+    steps:
+      # Attached head branch with full history (never a detached SHA): the install/update
+      # fixture legs clone this checkout and exercise their real git pull/push contract,
+      # which requires an attached branch to resolve HEAD from.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref || github.ref_name }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned gitleaks 8.30.1 (repo pin) and uv
+        run: |
+          case "$(uname -m)" in
+            x86_64) arch=x64 ;;
+            aarch64 | arm64) arch=arm64 ;;
+            *) echo "unsupported arch: $(uname -m)"; exit 1 ;;
+          esac
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_${arch}.tar.gz" \
+            | tar -xz -C /usr/local/bin gitleaks
+          gitleaks version
+          pip install uv
+          uv --version
+
+      # The repo's documented dev setup (README "Getting started"): a project venv at
+      # .venv, editable install with the project extras. The Makefile prefers
+      # .venv/bin/python and the goal-wave runners resolve the same documented path.
+      - name: Install project (documented dev venv)
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -e ".[server,client,dev]"
+
+      - name: Test suite (deterministic boundary — pilot crontab branch, no real systemd user manager)
+        # The scan-engine oracles pin gitleaks 8.30.1 and wave h pins zero skips when
+        # gitleaks/jq/uv are present; the scheduler oracles (test/waves/b, install/doctor)
+        # pin the CRONTAB branch of the periodic trigger — the documented pilot host
+        # condition (WSL2: no usable `systemctl --user`, PLAN P1). CI runners have a live
+        # systemd user manager, which would flip those oracles' environments onto the
+        # systemd branch they never shim. A silent unusable `systemctl` stub restores
+        # exactly that documented boundary. Tests that own the systemd branch bring their
+        # own PATH shims; the allowlist-based suites never resolve systemctl outside their
+        # own shims. `crontab` is NOT shadowed: the oracles shim it where they own it.
+        # No test is skipped or weakened.
+        run: |
+          mkdir -p "$HOME/.loom-ci-scheduler-shims"
+          printf '#!/bin/sh\n# CI scheduler boundary: no real systemd user manager (pilot crontab branch).\nexit 1\n' \
+            > "$HOME/.loom-ci-scheduler-shims/systemctl"
+          chmod +x "$HOME/.loom-ci-scheduler-shims/systemctl"
+          PATH="$HOME/.loom-ci-scheduler-shims:$PATH" make test
+
+      - name: Static contract assertions
+        run: LOOM_SKIP_LIVE=1 make contract

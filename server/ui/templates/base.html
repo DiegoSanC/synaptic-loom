@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Loom{% endblock %}</title>
+<link rel="icon" href="/ui/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/static/ui.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/ui/">Loom</a>
+  {% if user %}
+  <nav><a href="/ui/">Projects</a><a href="/ui/usage">Usage</a></nav>
+  <span class="who">Signed in as {{ user }}</span>
+  {% endif %}
+</header>
+<p class="banner">Automatically generated from developers' Claude Code sessions. Unverified reference — check it against the code and the PR.</p>
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

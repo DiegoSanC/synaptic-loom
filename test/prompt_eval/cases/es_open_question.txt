@@ -1,0 +1,4 @@
+[user]: Hay que decidir cada cuánto rotamos los tokens de la API.
+[assistant]: Opciones: cada 30 días o cada 90. Con 30 hay más fricción para el piloto; con 90, más exposición si se filtra uno.
+[user]: No lo tengo claro, lo hablo con seguridad la semana que viene. Lo que sí: los tokens se guardan solo como hash, eso no se discute.
+[assistant]: De acuerdo, tokens solo como hash; server/auth.py ya lo hace con sha256.

@@ -1,0 +1,4 @@
+[user]: The e2e gate failed on my Mac with 'setsid: command not found'.
+[assistant]: Right: macOS has no setsid. The pilot host is WSL2, where setsid is available, so the hook works there; on darwin this is the one sanctioned known failure.
+[user]: OK. And let's make it a rule: every new hook test must pass under LOOM_GATE=1 before it is merged.
+[assistant]: Agreed, that's a standing rule now. I've written it into AGENTS.md.

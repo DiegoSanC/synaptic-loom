@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Loom — {{ project.name }}{% endblock %}
+{% block content %}
+<h1>{{ project.name }} <span class="muted">{{ project.canonical_remote or "" }}</span></h1>
+<nav class="tabs">
+  {% for key, label in tabs %}
+  <a href="/ui/projects/{{ project.id }}?tab={{ key }}"{% if key == tab %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+{% if error %}<p class="signal">{{ error }}</p>{% endif %}
+{% include "tab_" ~ tab ~ ".html" %}
+{% endblock %}

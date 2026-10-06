@@ -1,0 +1,4 @@
+[user]: The CLI flags drifted from the contract again. How do we stop that?
+[assistant]: Decided: always run make contract after CLI updates - that's our standing rule from now on, added to the Makefile docs. Also, we chose argparse over click for the new subcommand to avoid a dependency; see client/loom/cli.py.
+[user]: OK. And someone needs to update the runbook before Friday.
+[assistant]: Agreed - Diego will update docs/RUNBOOK.md section 7 by Friday. Note the pilot host is WSL2, so setsid is available there.

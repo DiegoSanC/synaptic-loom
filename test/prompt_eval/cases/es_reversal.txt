@@ -1,0 +1,7 @@
+[user]: Necesitamos una cola para los webhooks salientes. ¿Qué usamos?
+[assistant]: Propongo Redis con listas: es rápido y lo conocemos bien. Lo dejo configurado en server/queue.py.
+[tool:Edit]: server/queue.py
+[tool:result]: The file server/queue.py has been updated.
+[user]: Espera, no quiero meter otra pieza de infraestructura solo para esto. ¿No nos vale Postgres?
+[assistant]: Sí: con LISTEN/NOTIFY de Postgres y una tabla outbox tenemos la cola sin ningún servicio nuevo. Descarto Redis y reescribo server/queue.py sobre la tabla outbox.
+[user]: Perfecto, quedamos así.

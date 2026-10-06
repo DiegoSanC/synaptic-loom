@@ -1,0 +1,7 @@
+{
+  "design": "Deferred work mentioned as an aside is still pending work: a [task], never an open question.",
+  "no_entry": false,
+  "required_labels": ["task"],
+  "label_item_mentions_any": {"task": ["flaky"]},
+  "open_questions_must_not_mention": ["flaky"]
+}

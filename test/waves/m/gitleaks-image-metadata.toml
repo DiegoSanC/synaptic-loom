@@ -1,0 +1,25 @@
+# gitleaks config for wave m's image-metadata scan (AC5).
+#
+# The default rule set PLUS one narrow allowlist entry. The allowlist exists because
+# `python:3.12-slim` sets `ENV GPG_KEY=<40 hex chars>` — the PUBLIC PGP key fingerprint of
+# the Python release manager, used to verify the source tarball at build time. It is
+# published, it is not a credential, and gitleaks' `generic-api-key` rule flags it on
+# entropy alone (3.64). It appears twice in every scan of this image's metadata: once in
+# the config's Env and once in the history.
+#
+# The pattern is pinned to that exact assignment and shape on purpose. Allowlisting the
+# `generic-api-key` RULE, or the metadata FILES, would turn this scan into scenery — and
+# the whole reason it exists is that a secret arriving via `--build-arg` is structurally
+# invisible to every other AC5 check in this wave. The test plants a credential and
+# asserts this config still catches it, so a future widening of this file fails there.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "python base image's public Python-release-manager PGP key fingerprint"
+# `regexTarget = "line"` is required, not decorative: gitleaks matches allowlist regexes
+# against the SECRET by default, and the secret here is the bare 40-hex value with no
+# `GPG_KEY=` in it. Matching the line is what keeps this pattern anchored to that one
+# assignment instead of allowlisting every 40-hex string in the image's metadata.
+regexTarget = "line"
+regexes = ['''GPG_KEY=[0-9A-F]{40}''']

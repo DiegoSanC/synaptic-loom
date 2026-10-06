@@ -1,0 +1,54 @@
+# The build context is the whole repo, but the image needs `server/` and nothing else:
+# server/ imports only stdlib, fastapi, pydantic and starlette — never the `loom` client
+# package. Everything excluded here is excluded because it has no runtime role, and this
+# file is also AC5's first line of defence, so the two jobs are kept visibly separate.
+
+# ---------------------------------------------------------------------------
+# Trees the server does not need at runtime
+# ---------------------------------------------------------------------------
+.git
+.github
+client
+test
+docs
+prompts
+contract
+server/tests
+
+# ---------------------------------------------------------------------------
+# Build artefacts and caches — rebuilt inside the image, never copied into it
+# ---------------------------------------------------------------------------
+.venv
+venv
+build
+dist
+**/*.egg-info
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# ---------------------------------------------------------------------------
+# AC5: nothing secret-shaped may reach a layer
+#
+# The pilot database and the revisor token live OUTSIDE the repo (~/.loom-server/), so
+# these patterns are not covering a known leak — they exist so that a stray copy made
+# inside the tree cannot become one. `**/` is load-bearing: a bare `*.db` is anchored at
+# the context root and would happily ship `some/dir/loom.db`.
+# ---------------------------------------------------------------------------
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/.env
+**/.env.*
+**/revisor-token.txt
+**/*.log
+# The rest of wave m's SECRET_SHAPED list. None of these exist in the tree today; they are
+# here so that the .dockerignore is a STRUCTURAL guard rather than one that happens to pass
+# because nothing matched on the day CI ran.
+**/credentials.json
+**/.credentials.json
+**/.netrc
+**/id_rsa
+**/id_ed25519

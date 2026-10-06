@@ -1,0 +1,8 @@
+{
+  "design": "A choice among two named alternatives: one [decision] whose rationale names the rejected option; the rejected option is never an item of its own.",
+  "no_entry": false,
+  "required_labels": ["decision"],
+  "first_item_mentions_any": ["session"],
+  "decisions_mention_all": ["JWT"],
+  "items_mentioning_must_also_mention": {"JWT": ["session"]}
+}

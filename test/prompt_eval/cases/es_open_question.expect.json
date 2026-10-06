@@ -1,0 +1,7 @@
+{
+  "design": "A question the session left undecided goes under '## Open questions' (literal English heading); a settled 'not negotiable' rule is an item. The undecided option is never a [decision].",
+  "no_entry": false,
+  "requires_open_questions": true,
+  "open_questions_mention_any": ["30", "90"],
+  "label_items_must_not_mention": {"decision": ["90"]}
+}

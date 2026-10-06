@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "loom"
+version = "0.1.0"
+description = "Synaptic Loom - base de conocimiento de sesiones de Claude Code para revisiones cruzadas."
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+server = ["fastapi", "uvicorn", "jinja2", "markdown-it-py"]
+client = ["requests"]
+dev = ["pytest", "pytest-httpserver", "httpx"]
+
+[project.scripts]
+loom = "loom.cli:main"
+
+# Monorepo de un solo paquete instalable: `loom` (cliente, en client/loom) y `server`
+# (servidor, en server/). Ver PLAN.md §T1 / DESIGN.md §10.
+[tool.setuptools]
+packages = ["loom", "server"]
+
+[tool.setuptools.package-dir]
+loom = "client/loom"
+server = "server"
+
+[tool.pytest.ini_options]
+testpaths = ["server/tests", "client/tests"]
+# Registered so `-m e2e` / `-m "not e2e"` select reliably and an unregistered-mark warning
+# (which `-W error` turns into a collection ERROR) can never hide the end-to-end suites.
+markers = [
+  "e2e: end-to-end suite — real server, real CLI subprocesses, real install.sh (slow).",
+]

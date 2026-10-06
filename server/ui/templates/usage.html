@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}Loom — usage{% endblock %}
+{% block content %}
+<h1>Usage</h1>
+<nav class="tabs">
+  {% for key, label in windows %}
+  <a href="/ui/usage?since={{ key }}"{% if key == window %} aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>
+<section id="usage">
+  <h2>Recalls</h2>
+  <p><span data-stat="recalls-skill">{{ stats.recalls.skill }}</span> by agents (<code>/loom</code>) · <span data-stat="recalls-cli">{{ stats.recalls.cli }}</span> from the CLI (<code>loom log</code>). Browsing this UI is not counted.</p>
+  <h2>Feedback</h2>
+  <p>
+    {% for verdict, count in stats.feedback.items() %}
+    <span class="badge verdict-{{ verdict }}">{{ verdict|replace("_", " ") }} <span data-stat="feedback-{{ verdict }}">{{ count }}</span></span>
+    {% endfor %}
+  </p>
+</section>
+<section id="top-useful">
+  <h2>Most useful items</h2>
+  <p class="muted">Counted in people, not in feedback rows.</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Item</th><th>Project</th><th>Type</th><th>People</th></tr></thead>
+    <tbody>
+    {% for row in stats.top_useful %}
+      <tr data-item="{{ row.item }}">
+        <td data-col="item"><a href="/ui/items/{{ row.item }}">{{ row.item }}</a></td>
+        <td data-col="project">{{ row.project }}</td>
+        <td data-col="type">{{ row.item_type }}</td>
+        <td data-col="people">{{ row.useful }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="4" class="muted">Nobody has marked an item useful in this window.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endblock %}

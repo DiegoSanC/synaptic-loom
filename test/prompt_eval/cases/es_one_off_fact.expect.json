@@ -1,0 +1,6 @@
+{
+  "design": "A one-off finding that matters to a reviewer is a [fact]: not a choice, not a rule, not pending work.",
+  "no_entry": false,
+  "exact_labels": ["fact"],
+  "label_item_mentions_any": {"fact": ["WSL2", "setsid"]}
+}

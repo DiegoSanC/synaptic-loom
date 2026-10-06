@@ -1,0 +1,45 @@
+<section id="signals">
+  <h2>Signals ({{ view.signals|length }})</h2>
+  <p class="muted">Current items that someone found stale or not applicable, and that no link has replaced yet.</p>
+  {% for item in view.signals %}
+  <article class="item" data-item="{{ item.id }}">
+    <p class="item-head"><a class="item-id" href="/ui/items/{{ item.id }}">{{ item.id }}</a> <span class="muted">{{ item.author }}</span></p>
+    <div class="md">{{ render_md(item.text_md) }}</div>
+    <ul class="feedback">
+      {% for row in item.feedback %}<li>{{ row.who }} · {{ row.verdict|replace("_", " ") }} · {{ row.note }} <span class="muted">{{ row.day }}</span></li>{% endfor %}
+    </ul>
+  </article>
+  {% else %}
+  <p class="muted">None.</p>
+  {% endfor %}
+</section>
+<section id="uncurated">
+  <h2>Current entries without items ({{ view.uncurated|length }})</h2>
+  <p class="muted">Captured before items existed: they can only be curated as whole entries.</p>
+  {% for entry in view.uncurated %}
+  <div class="entry-row" data-entry="{{ entry.id }}"><a href="/ui/entries/{{ entry.id }}">#{{ entry.id }} {{ entry.title }}</a> · {{ entry.author }} · {{ entry.day }}</div>
+  {% else %}
+  <p class="muted">None.</p>
+  {% endfor %}
+</section>
+<section id="link-history">
+  <h2>Item links ({{ view.history|length }})</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Link</th><th>Statement</th><th>By</th><th>Rationale</th><th>State</th></tr></thead>
+    <tbody>
+    {% for link in view.history %}
+      <tr data-link="{{ link.id }}">
+        <td data-col="id">{{ link.id }}</td>
+        <td data-col="statement"><a href="/ui/items/{{ link["from"] }}">{{ link["from"] }}</a> {{ link.kind }} <a href="/ui/items/{{ link.to }}">{{ link.to }}</a></td>
+        <td data-col="by">{{ link.created_by }} <span class="muted">{{ link.day }}</span></td>
+        <td data-col="rationale">{{ link.rationale or "" }}</td>
+        <td data-col="state">{% if link.revoked_at %}revoked by {{ link.revoked_by }} <span class="muted">{{ link.revoked_day }}</span>: {{ link.revoke_reason }}{% else %}active{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No item links.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>

@@ -1,0 +1,5 @@
+[user]: ¿Qué hace `_flatten` en curate.py?
+[assistant]: Colapsa los espacios en blanco a uno solo y trunca el texto al límite que se le pase, añadiendo "…".
+[user]: ¿Y por qué no usa textwrap?
+[assistant]: textwrap.shorten corta por palabras y aquí basta con un corte por caracteres.
+[user]: Vale, era curiosidad. Gracias.

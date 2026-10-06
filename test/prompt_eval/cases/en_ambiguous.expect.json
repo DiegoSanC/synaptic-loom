@@ -1,0 +1,6 @@
+{
+  "design": "A change forced by a constraint, with no alternative considered: under v3 it is a [fact], not the [decision] catch-all (problem 4).",
+  "no_entry": false,
+  "required_labels": ["fact"],
+  "forbidden_labels": ["decision"]
+}

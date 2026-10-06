@@ -1,0 +1,3 @@
+[user]: ¿El host del piloto tiene setsid? El hook lo necesita.
+[assistant]: Lo he comprobado: el host del piloto es WSL2 con Ubuntu 24.04 y `setsid` está en /usr/bin/setsid.
+[user]: Bien, entonces el hook funciona allí.

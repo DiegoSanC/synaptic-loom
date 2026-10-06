@@ -1,0 +1,6 @@
+{
+  "design": "A standing rule / taboo is a [method].",
+  "no_entry": false,
+  "required_labels": ["method"],
+  "label_item_mentions_any": {"method": ["schema.sql"]}
+}

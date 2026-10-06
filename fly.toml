@@ -1,0 +1,93 @@
+# Synaptic Loom pilot API — ONE app, ONE Machine, ONE volume, ONE region (issue #2 AC4).
+#
+# The single-Machine contract lives HERE rather than in a human's memory. `[mounts]` alone
+# suppresses Fly's default two-Machine redundancy, because a Fly volume attaches to one
+# Machine at a time; deploys pass `--ha=false` as a belt to that brace. For the same reason
+# the `bluegreen` deploy strategy is not available to this app — it provisions parallel
+# Machines. Use the default `rolling`, or `immediate`.
+
+# Adapt before your first deploy: `app` is the name you gave `fly apps create <name>`, and
+# `primary_region` the region closest to your users (`fly platform regions`).
+app = "your-loom-app"
+primary_region = "cdg"
+
+# Must stay STRICTLY GREATER than the uvicorn `--timeout-graceful-shutdown` in the
+# Dockerfile's CMD (25s), not merely equal to it. Fly SIGKILLs `kill_timeout` after
+# SIGTERM; if uvicorn's own drain deadline were the same number the two would land at the
+# same instant and the process would be killed exactly as it was about to exit cleanly,
+# which defeats the exec-form CMD entirely. Wave m asserts the 5s headroom.
+kill_timeout = "30s"
+
+[build]
+
+[env]
+  # Must match [mounts].destination below and the image's own ENV default — one decision
+  # written in three files, and `server/db.py` silently falls back to ./loom.db on the
+  # ephemeral disk if they ever disagree.
+  LOOM_DB = "/data/loom.db"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+
+  # A three-way STRING enum in current Fly config ("off" / "stop" / "suspend"), not the
+  # boolean that older examples use.
+  #
+  # "stop", chosen 2026-09-13 over "suspend" AFTER measuring, and for cost certainty
+  # rather than for latency. "suspend" resumes from a memory snapshot in ~hundreds of ms
+  # against ~2+ s for a cold "stop", and the measured resume was 0.69 s total with a
+  # 0.049 s connect — comfortably inside the client's 3.05 s connect budget
+  # (`client/loom/api_client.py` DEFAULT_TIMEOUT). So latency was never the deciding
+  # factor either way.
+  #
+  # What decided it: "suspend" keeps a memory snapshot on disk, and how Fly bills a
+  # suspended Machine's retained RAM is NOT something we verified. Against a small
+  # fixed budget with no spend cap and no billing alerts, an unverified billing mode is
+  # worth more than ~2 s of cold start on a pilot that a small team hits a few times a
+  # day. "stop" has nothing retained and nothing to be unsure about.
+  #
+  # Revisit only if the cold start starts costing something real — the measurement, not
+  # the intuition, should decide it again.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+
+  # Cold start is the accepted owner decision (2026-09-13): between sessions the Machine is
+  # stopped and only the volume bills.
+  min_machines_running = 0
+
+  # NO [[http_service.checks]] block yet, deliberately. Fly's documentation does not state
+  # whether proxy health probes count as traffic for the auto-stop idle determination
+  # (checked 2026-09-13: neither the autostop-autostart guide nor the fly-proxy reference
+  # addresses it). If they do, a 30-second check keeps the Machine awake permanently and
+  # quietly converts the cost model from ~$0.65/mo to always-on (~$2.17/mo). Deploy without
+  # checks, confirm the Machine actually stops, then add checks and confirm it STILL stops.
+  # Don't assume in either direction.
+  #
+  # What this costs until checks exist, and it is NOT only about the bill: with one
+  # Machine, no checks and no HA fallback, a bad release has no automated readiness gate
+  # and nothing to trigger a rollback. The only Machine can be replaced by one that
+  # crash-loops, and the first person to notice is whichever engineer next gets a timeout.
+  # So until this block exists, every deploy is followed by watching `fly status` and
+  # `fly logs` for a minute — that step belongs in the RUNBOOK deploy section, not in
+  # anyone's memory.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+[mounts]
+  source = "loom_data"
+  destination = "/data"
+  initial_size = "1gb"
+  # The pilot's backup IS Fly's daily block-level volume snapshot (DESIGN.md D8, issue #8
+  # re-scoped 2026-09-16). 14 days, matching the retention the phase-1 cron kept. NOTE:
+  # this key only applies to volumes that `fly deploy` CREATES; the existing volume was
+  # set by hand with `fly volumes update <id> --snapshot-retention 14` and
+  # docs/RUNBOOK.md §3 describes the procedure. Restore = a new volume from a snapshot, never
+  # an in-place overwrite — the procedure and what the drills taught live in the same section.
+  snapshot_retention = 14
+  # Nothing signals that this is filling up. `entries.content_md` and the FTS5 index both
+  # live here with no rotation, and the first symptom of a full volume is a wave of 500s
+  # (SQLITE_FULL is at least handled cleanly rather than corrupting anything). `fly volumes
+  # show` belongs in the same recorded monthly check as the cost audit — same cadence, same
+  # owner, one more command.

@@ -1,0 +1,17 @@
+# loom-process.service — one processor pass (PHASE-2-3-SPEC R2.2).
+# User unit: installed to ~/.config/systemd/user/ by client/install.sh on systemd
+# hosts. Triggered by loom-process.timer, never enabled on its own.
+#
+# TEMPLATE, not the installed file. install.sh substitutes as it copies (a user service
+# inherits the user MANAGER's environment, not the installing shell's): ExecStart= becomes
+# the resolved $LOOM_HOME/venv/bin/loom process --quiet, and the service section opens with
+# Environment=LOOM_HOME=<LOOM_HOME> plus Environment=PATH=<the install-time PATH>, the
+# latter so the unattended pass resolves the same secret scanner an interactive run does.
+# `loom doctor`'s unit-integrity row re-derives exactly those substitutions from THIS file
+# to detect drift, so editing it here changes what counts as "unmodified" there too.
+[Unit]
+Description=Synaptic Loom — process pending markers (incl. orphan sweep)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.loom/venv/bin/loom process --quiet

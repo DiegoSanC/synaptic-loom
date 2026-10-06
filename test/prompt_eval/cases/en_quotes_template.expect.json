@@ -1,0 +1,7 @@
+{
+  "design": "The session quotes an output in the OLD format: its fake decision is not an item, its headings are not copied, and the agreed fix is a [task].",
+  "no_entry": false,
+  "required_labels": ["task"],
+  "label_item_mentions_any": {"task": ["README"]},
+  "label_items_must_not_mention": {"decision": ["Kafka"]}
+}

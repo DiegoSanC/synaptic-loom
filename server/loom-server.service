@@ -1,0 +1,24 @@
+# Unidad systemd de USUARIO para el servidor loom del piloto (PLAN §T7.1).
+# Instálala con:
+#   mkdir -p ~/.config/systemd/user
+#   cp server/loom-server.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now loom-server
+#   loginctl enable-linger "$USER"   # para que sobreviva al cierre de sesión
+#
+# Piloto: bind SOLO a 127.0.0.1 (sin TLS — ver fase-3 TODO en docs/RUNBOOK.md).
+# %h es tu HOME; ajusta la ruta del checkout si el repo está en otro sitio.
+[Unit]
+Description=Synaptic Loom API server (piloto, solo localhost)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/synaptic-loom
+Environment=LOOM_DB=%h/.loom-server/loom.db
+ExecStart=%h/synaptic-loom/.venv/bin/python -m uvicorn server.app:app --host 127.0.0.1 --port 8787
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

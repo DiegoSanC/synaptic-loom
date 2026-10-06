@@ -1,0 +1,12 @@
+<article class="item item-{{ item.status }}{% if item.replaced %} replaced{% endif %}" data-item="{{ item.id }}" data-status="{{ item.status }}">
+  <p class="item-head">
+    <a class="item-id" href="/ui/items/{{ item.id }}">{{ item.id }}</a>
+    <span class="muted">{{ item.author }} · {{ item.day }}</span>
+    {% if not item.labelled %}<span class="badge">unlabelled</span>{% endif %}
+    {% for verdict, count in item.feedback %}<span class="badge verdict-{{ verdict }}">{{ verdict|replace("_", " ") }} {{ count }}</span> {% endfor %}
+  </p>
+  <div class="md">{{ render_md(item.text_md) }}</div>
+  {% if item.replacement %}
+  <p class="replacement">→ {{ "replaced by" if item.replacement.kind == "supersedes" else "duplicate of" }} <a href="/ui/items/{{ item.replacement.by }}">{{ item.replacement.by }}</a> · {{ item.replacement.who }} · {{ item.replacement.day }}{% if item.replacement.rationale %} · {{ item.replacement.rationale }}{% endif %}</p>
+  {% endif %}
+</article>

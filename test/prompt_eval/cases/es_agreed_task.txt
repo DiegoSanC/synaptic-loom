@@ -1,0 +1,4 @@
+[user]: Los tests de integración siguen en unittest y son un lío.
+[assistant]: Acordado: los migramos a pytest. Laura se encarga y lo deja hecho antes del viernes 3 de octubre; empieza por client/tests/integration.
+[user]: Vale. Y mientras tanto no se añaden tests nuevos en unittest: a partir de hoy todo test nuevo va en pytest.
+[assistant]: Anotado como norma del proyecto.

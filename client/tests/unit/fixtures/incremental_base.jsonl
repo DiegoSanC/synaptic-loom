@@ -1,0 +1,4 @@
+{"type":"user","uuid":"u1","message":{"role":"user","content":"first prompt"}}
+{"type":"attachment","uuid":"att1","content":"session-start noise"}
+{"type":"assistant","uuid":"a1","message":{"role":"assistant","content":[{"type":"text","text":"first reply"}]}}
+{"type":"user","uuid":"u2","message":{"role":"user","content":"second prompt"}}

@@ -1,0 +1,5 @@
+{"type":"queue-operation","operation":"enqueue","content":"noise"}
+{"type":"attachment","uuid":"att1","content":"has a uuid but is not conversational"}
+{"type":"system","content":"system noise"}
+{"type":"file-history-snapshot","messageId":"x"}
+{"type":"some-future-type-we-have-never-seen","foo":"bar"}

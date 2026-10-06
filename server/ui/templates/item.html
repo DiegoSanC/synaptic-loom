@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Loom — item {{ item.id }}{% endblock %}
+{% block content %}
+<h1>Item {{ item.id }}</h1>
+<section id="item-summary" class="panel">
+  <div class="md">{{ render_md(item.text_md) }}</div>
+  <dl class="fields">
+    <dt>Type</dt><dd data-field="type">{{ item.item_type }}{% if not item.labelled %} <span class="badge">unlabelled</span>{% endif %}</dd>
+    <dt>Status</dt><dd data-field="status"><span class="badge status-{{ item.status }}">{{ item.status_label }}</span></dd>
+    <dt>Project</dt><dd data-field="project"><a href="/ui/projects/{{ item.project.id }}">{{ item.project.name }}</a></dd>
+  </dl>
+</section>
+<section id="lineage">
+  <h2>Lineage</h2>
+  <p class="muted">Active links reachable from this item, in either direction.</p>
+  {% if item.lineage %}
+  <ul>
+    {% for link in item.lineage %}
+    <li data-link="{{ link.id }}"><a href="/ui/items/{{ link["from"] }}">{{ link["from"] }}</a> {{ link.kind }} <a href="/ui/items/{{ link.to }}">{{ link.to }}</a> · {{ link.created_by }} · {{ link.day }}{% if link.rationale %} · {{ link.rationale }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">No active links.</p>
+  {% endif %}
+</section>
+<section id="links">
+  <h2>All links ({{ item.links|length }})</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Link</th><th>Statement</th><th>By</th><th>Rationale</th><th>State</th></tr></thead>
+    <tbody>
+    {% for link in item.links %}
+      <tr data-link="{{ link.id }}">
+        <td data-col="id">{{ link.id }}</td>
+        <td data-col="statement">{{ link["from"] }} {{ link.kind }} {{ link.to }}</td>
+        <td data-col="by">{{ link.created_by }} <span class="muted">{{ link.day }}</span></td>
+        <td data-col="rationale">{{ link.rationale or "" }}</td>
+        <td data-col="state">{% if link.revoked_at %}revoked by {{ link.revoked_by }} <span class="muted">{{ link.revoked_day }}</span>: {{ link.revoke_reason }}{% else %}active{% endif %}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="5" class="muted">No links.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+<section id="provenance">
+  <h2>Provenance</h2>
+  <dl class="fields">
+    <dt>Entry</dt><dd data-field="entry"><a href="/ui/entries/{{ item.entry.id }}">#{{ item.entry.id }}</a> {{ item.entry.title }}</dd>
+    <dt>Author</dt><dd data-field="author">{{ item.entry.author or "?" }}</dd>
+    <dt>Captured</dt><dd data-field="captured">{{ item.entry.created_at }}</dd>
+    <dt>Session</dt><dd data-field="session">{{ item.entry.session_id }}</dd>
+    <dt>Covered</dt><dd data-field="covered">{% if item.entry.covered_from or item.entry.covered_to %}{{ item.entry.covered_from or "start" }} → {{ item.entry.covered_to or "?" }}{% else %}—{% endif %}</dd>
+    <dt>Model · prompt</dt><dd data-field="model">{{ [item.entry.model, item.entry.prompt_version]|select|join(" · ") }}</dd>
+  </dl>
+</section>
+<section id="feedback">
+  <h2>Feedback ({{ item.feedback|length }})</h2>
+  {% if item.feedback %}
+  <ul class="feedback">
+    {% for row in item.feedback %}<li>{{ row.who }} · {{ row.verdict|replace("_", " ") }} · {{ row.note }} <span class="muted">{{ row.day }}</span></li>{% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">Nobody has given feedback on this item.</p>
+  {% endif %}
+</section>
+{% endblock %}

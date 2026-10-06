@@ -1,0 +1,3 @@
+[user]: CI is red after the runner image update.
+[assistant]: The new runner image only ships Python 3.12, so I bumped the CI matrix to 3.12 in .github/workflows/ci.yml. It's green now.
+[user]: Fine.

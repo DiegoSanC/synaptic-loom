@@ -1,0 +1,20 @@
+{
+  "test_mode": "local_process",
+  "container_parity": false,
+  "reason": "CLI tool + localhost pilot service; phase-1 decision (uvicorn under user systemd, no Docker). E2E boots a real uvicorn subprocess on a random port with a temp LOOM_DB.",
+  "e2e_runner": ".venv/bin/python -m pytest test/waves/c/test_goal_e4_e2e.py -q",
+  "e2e_test_path": "test/waves/c/test_goal_e4_e2e.py",
+  "e2e_setup_command": null,
+  "prerequisites": {
+    "binaries": ["git", "jq", "gitleaks (8.30.1 pinned for the pilot)", "uv or python3.12 venv"],
+    "venv": ".venv with -e .[server,client,dev] (created by the bootstrap delta)"
+  },
+  "regression_suite": ".venv/bin/python -m pytest -q",
+  "regression_known_failures": [
+    {
+      "test": "client/tests/integration/test_hook_install.py::test_hook_marks_transcript_and_kicks_processor",
+      "platform": "darwin",
+      "reason": "pre-existing: hook kick uses setsid (absent on macOS); pilot host is WSL2/Linux"
+    }
+  ]
+}

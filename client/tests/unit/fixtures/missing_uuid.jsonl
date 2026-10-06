@@ -1,0 +1,2 @@
+{"type":"attachment","uuid":"att-noise","content":"metadata, no error"}
+{"type":"user","message":{"role":"user","content":"a user line with no top-level uuid"}}

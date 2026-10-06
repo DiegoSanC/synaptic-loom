@@ -1,0 +1,32 @@
+<form class="filters" method="get" action="/ui/projects/{{ project.id }}">
+  <input type="hidden" name="tab" value="timeline">
+  <select name="author" aria-label="Author">
+    <option value="">All authors</option>
+    {% for a in view.authors %}<option value="{{ a }}"{% if a == filters.author %} selected{% endif %}>{{ a }}</option>{% endfor %}
+  </select>
+  <label>Since <input type="date" name="since" value="{{ filters.since_day or '' }}"></label>
+  <button type="submit">Apply</button>
+</form>
+<section id="timeline">
+<div class="table-wrap">
+<table>
+  <thead><tr><th>#</th><th>Title</th><th>Author</th><th>Captured</th><th>Model · prompt</th><th>Items</th><th>Status</th></tr></thead>
+  <tbody>
+  {% for entry in view.entries %}
+    <tr data-entry="{{ entry.id }}">
+      <td data-col="id"><a href="/ui/entries/{{ entry.id }}">#{{ entry.id }}</a></td>
+      <td data-col="title">{{ entry.title }}{% if entry.digest %} <span class="badge">digest</span>{% endif %}</td>
+      <td data-col="author">{{ entry.author or "?" }}</td>
+      <td data-col="day">{{ entry.day }}</td>
+      <td data-col="prompt">{{ entry.prompt }}</td>
+      <td data-col="items">{{ entry.items_label }}</td>
+      <td data-col="status"><span class="badge status-{{ entry.status }}">{{ entry.status_label }}</span></td>
+    </tr>
+  {% else %}
+    <tr><td colspan="7" class="muted">No entries.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% if older_url %}<p><a href="{{ older_url }}">Older entries</a></p>{% endif %}
+</section>

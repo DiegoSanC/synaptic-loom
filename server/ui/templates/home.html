@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Projects</h1>
+<section id="pulse" class="pulse">
+  <h2>Last 7 days</h2>
+  <p>
+    Recalls: <span data-stat="recalls-skill">{{ pulse.recalls.skill }}</span> by agents ·
+    <span data-stat="recalls-cli">{{ pulse.recalls.cli }}</span> from the CLI.
+    Feedback:
+    {% for verdict, count in pulse.feedback.items() %}
+    <span class="badge verdict-{{ verdict }}">{{ verdict|replace("_", " ") }} <span data-stat="feedback-{{ verdict }}">{{ count }}</span></span>
+    {% endfor %}
+  </p>
+</section>
+<section id="projects">
+{% if projects %}
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      <th>Project</th><th>Registered</th><th>Entries</th><th>Current items</th>
+      <th>Replaced</th><th>Open tasks</th><th>Last capture</th><th>Authors (30 d)</th>
+      <th>Curation signals</th>
+    </tr>
+  </thead>
+  <tbody>
+  {% for p in projects %}
+    <tr data-project="{{ p.name }}">
+      <td data-col="name"><a href="/ui/projects/{{ p.id }}">{{ p.name }}</a> <span class="muted">{{ p.canonical_remote or "(no remote)" }}</span></td>
+      <td data-col="registered">{{ p.created_by or "?" }} <span class="muted">{{ p.created_at[:10] }}</span></td>
+      <td data-col="entries">{{ p.entries }}</td>
+      <td data-col="current">{{ p.current }}</td>
+      <td data-col="replaced">{{ p.replaced }}</td>
+      <td data-col="tasks">{{ p.tasks }}</td>
+      <td data-col="last_capture">{% if p.last_capture %}{{ p.last_capture.day }} <span class="muted">{{ p.last_capture.author }}</span>{% else %}—{% endif %}</td>
+      <td data-col="authors_30d">{{ p.authors_30d }}</td>
+      <td data-col="signals">{% if p.signals %}<a class="signal" href="/ui/projects/{{ p.id }}?tab=curation">{{ p.signals }}</a>{% else %}0{% endif %}</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% else %}
+<p>No project registered yet — run <code>loom register</code> in a repository.</p>
+{% endif %}
+</section>
+{% endblock %}

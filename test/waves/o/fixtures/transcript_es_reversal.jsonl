@@ -1,0 +1,8 @@
+{"type": "file-history-snapshot", "messageId": "m0", "snapshot": {}}
+{"type": "user", "uuid": "wave-o-es-u1", "cwd": "/home/dev/proj", "sessionId": "wave-o-es", "message": {"role": "user", "content": "Necesitamos cachear las respuestas de /api/stats, tardan unos 2 segundos."}}
+{"type": "assistant", "uuid": "wave-o-es-a2", "cwd": "/home/dev/proj", "sessionId": "wave-o-es", "message": {"role": "assistant", "content": "Propongo cachearlas en memoria del proceso con un TTL de 60 s, en server/stats.py."}}
+{"type": "user", "uuid": "wave-o-es-u3", "cwd": "/home/dev/proj", "sessionId": "wave-o-es", "message": {"role": "user", "content": "Mejor no en memoria: en Fly podemos tener más de una máquina y cada una tendría su propia caché."}}
+{"type": "assistant", "uuid": "wave-o-es-a4", "cwd": "/home/dev/proj", "sessionId": "wave-o-es", "message": {"role": "assistant", "content": "Cierto. Cambio a una tabla stats_cache en SQLite con TTL de 60 s y descarto la caché en memoria. Queda en server/stats.py."}}
+{"type": "user", "uuid": "wave-o-es-u5", "cwd": "/home/dev/proj", "sessionId": "wave-o-es", "message": {"role": "user", "content": "Vale. El índice por project_id lo dejamos para otro PR; que lo haga Marta la semana que viene."}}
+{"type": "assistant", "uuid": "wave-o-es-a6", "cwd": "/home/dev/proj", "sessionId": "wave-o-es", "message": {"role": "assistant", "content": "Anotado: Marta añadirá el índice por project_id la semana que viene, en otro PR. Queda una duda sin decidir: ¿invalidamos la caché al crear una entrada o esperamos a que caduque el TTL?"}}
+{"type": "user", "uuid": "wave-o-es-u7", "cwd": "/home/dev/proj", "sessionId": "wave-o-es", "message": {"role": "user", "content": "No lo sé todavía, ya lo veremos."}}

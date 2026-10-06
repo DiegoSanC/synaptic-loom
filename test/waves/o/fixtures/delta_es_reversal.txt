@@ -1,0 +1,7 @@
+[user]: Necesitamos cachear las respuestas de /api/stats, tardan unos 2 segundos.
+[assistant]: Propongo cachearlas en memoria del proceso con un TTL de 60 s, en server/stats.py.
+[user]: Mejor no en memoria: en Fly podemos tener más de una máquina y cada una tendría su propia caché.
+[assistant]: Cierto. Cambio a una tabla stats_cache en SQLite con TTL de 60 s y descarto la caché en memoria. Queda en server/stats.py.
+[user]: Vale. El índice por project_id lo dejamos para otro PR; que lo haga Marta la semana que viene.
+[assistant]: Anotado: Marta añadirá el índice por project_id la semana que viene, en otro PR. Queda una duda sin decidir: ¿invalidamos la caché al crear una entrada o esperamos a que caduque el TTL?
+[user]: No lo sé todavía, ya lo veremos.

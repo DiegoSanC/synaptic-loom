@@ -1,0 +1,13 @@
+# loom-process.timer — periodic trigger for loom-process.service (R2.2, 15 min).
+# User unit: installed and enabled by client/install.sh on systemd hosts; cron is
+# the fallback on hosts without systemctl --user (see install.sh).
+[Unit]
+Description=Synaptic Loom — run loom process every 15 minutes
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

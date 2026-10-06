@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Loom — entry #{{ entry.id }}{% endblock %}
+{% block content %}
+<h1>#{{ entry.id }} {{ entry.title }}</h1>
+<section id="entry-summary" class="panel">
+  <p>
+    {% if entry.digest %}<span class="badge">digest</span> {% endif %}
+    <span class="badge status-{{ entry.status }}">{{ entry.status_label }}</span>
+    · <a href="/ui/projects/{{ entry.project.id }}">{{ entry.project.name }}</a>
+    · {{ entry.author or "?" }} · {{ entry.created_at }}
+  </p>
+</section>
+<section id="frontmatter">
+  <h2>Metadata</h2>
+  <p class="muted">The status shown is the served one: the stored frontmatter always says <code>current</code>.</p>
+  <dl class="fields">
+    {% for key, value in entry.frontmatter %}
+    <dt>{{ key }}</dt><dd data-field="{{ key }}">{% if key == "status" %}<span class="badge status-{{ entry.status }}">{{ value }}</span>{% elif "\n" in value %}<pre>{{ value }}</pre>{% else %}{{ value }}{% endif %}</dd>
+    {% else %}
+    <dt>—</dt><dd>No frontmatter (captured before the OKF format).</dd>
+    {% endfor %}
+  </dl>
+</section>
+<section id="entry-links">
+  <h2>Entry links</h2>
+  {% if entry.entry_links %}
+  <ul>
+    {% for link in entry.entry_links %}
+    <li><a href="/ui/entries/{{ link.from_entry }}">#{{ link.from_entry }}</a> {{ link.kind }} <a href="/ui/entries/{{ link.to_entry }}">#{{ link.to_entry }}</a> · {{ link.day }}{% if link.rationale %} · {{ link.rationale }}{% endif %}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted">None.</p>
+  {% endif %}
+</section>
+<section id="entry-items">
+  <h2>Items ({{ entry["items"]|length }})</h2>
+  {% for item in entry["items"] %}{% include "item_row.html" %}{% else %}<p class="muted">This entry has no items.</p>{% endfor %}
+</section>
+<section id="body">
+  <h2>Captured text</h2>
+  <div class="md">{{ render_md(entry.body) }}</div>
+</section>
+{% endblock %}

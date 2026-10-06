@@ -1,0 +1,3 @@
+[user]: Someone edited schema.sql in place again and prod diverged from the repo.
+[assistant]: From now on: never edit server/schema.sql in place; every schema change goes through a new ensure_* migration function that runs at boot. I've added that rule to AGENTS.md.
+[user]: Good.

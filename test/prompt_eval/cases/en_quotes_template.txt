@@ -1,0 +1,10 @@
+[user]: The README example of a logbook entry looks wrong. It shows:
+```
+## Decisions
+- [decision] **Use Kafka for events** — throughput. Evidence: infra.md. Status: current.
+## Open items
+- Benchmark consumers.
+```
+We never used Kafka, did we?
+[assistant]: No, that example was invented for the docs. Events go through the Postgres outbox (server/queue.py). I'll replace the README example with a real entry from our own logbook.
+[user]: Do it, and have it replaced before the pilot starts.

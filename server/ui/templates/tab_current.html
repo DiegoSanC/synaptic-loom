@@ -1,0 +1,41 @@
+{% if view.digest %}
+<section id="digest" class="panel">
+  <p>
+    <a href="/ui/entries/{{ view.digest.id }}">Digest #{{ view.digest.id }}</a>
+    · {{ view.digest.day }} · covers {{ view.digest.range }}
+    {% if view.digest.since %}· <span class="signal">{{ view.digest.since }} {{ "entry" if view.digest.since == 1 else "entries" }} captured since</span>{% endif %}
+  </p>
+</section>
+{% endif %}
+<form class="filters" method="get" action="/ui/projects/{{ project.id }}">
+  <input type="hidden" name="tab" value="current">
+  <select name="type" aria-label="Type">
+    <option value="">All types</option>
+    {% for t in types %}<option value="{{ t }}"{% if t == filters.type %} selected{% endif %}>{{ t }}</option>{% endfor %}
+  </select>
+  <select name="author" aria-label="Author">
+    <option value="">All authors</option>
+    {% for a in view.authors %}<option value="{{ a }}"{% if a == filters.author %} selected{% endif %}>{{ a }}</option>{% endfor %}
+  </select>
+  <input type="search" name="q" value="{{ filters.q or '' }}" placeholder="Search items" aria-label="Search items">
+  <label><input type="checkbox" name="show_replaced" value="1"{% if filters.show_replaced %} checked{% endif %}> Show replaced</label>
+  <button type="submit">Apply</button>
+</form>
+<section id="current-items">
+{% for group in view.groups %}
+  <h2>{{ group.heading }} ({{ group["items"]|length }})</h2>
+  {% for item in group["items"] %}{% include "item_row.html" %}{% endfor %}
+{% else %}
+  <p class="muted">No items match.</p>
+{% endfor %}
+</section>
+{% if not filtering %}
+<section id="unitemized">
+  <h2>Entries without items ({{ view.unitemized|length }})</h2>
+  {% for entry in view.unitemized %}
+  <div class="entry-row" data-entry="{{ entry.id }}"><a href="/ui/entries/{{ entry.id }}">#{{ entry.id }} {{ entry.title }}</a> · {{ entry.author }} · {{ entry.day }} · <span class="badge status-{{ entry.status }}">{{ entry.status_label }}</span></div>
+  {% else %}
+  <p class="muted">None.</p>
+  {% endfor %}
+</section>
+{% endif %}

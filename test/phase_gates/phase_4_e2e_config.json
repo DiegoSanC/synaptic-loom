@@ -1,0 +1,22 @@
+{
+  "test_mode": "local_process",
+  "container_parity": false,
+  "reason": "Same phase-1/2/3 decision: CLI tool + localhost pilot service, uvicorn under user systemd, no Docker. E2E boots a real uvicorn subprocess on a random port with a temp LOOM_DB.",
+  "e2e_runner": ".venv/bin/python -m pytest test/waves/l/test_goal_e17_e2e.py -q",
+  "e2e_test_path": "test/waves/l/test_goal_e17_e2e.py",
+  "e2e_setup_command": null,
+  "prerequisites": {
+    "binaries": ["git", "jq", "gitleaks (8.30.1 pinned for the pilot)", "uv or python3.12 venv"],
+    "venv": ".venv with -e .[server,client,dev] (already present from phase 1)",
+    "sqlite": "stdlib sqlite3 compiled with ENABLE_FTS5 (verified at plan time: sqlite 3.53.1; RT.1 blocks loudly if absent)"
+  },
+  "regression_suite": ".venv/bin/python -m pytest -q",
+  "regression_known_failures": [
+    {
+      "test": "client/tests/integration/test_hook_install.py::test_hook_marks_transcript_and_kicks_processor",
+      "platform": "darwin",
+      "reason": "pre-existing: hook kick uses setsid (absent on macOS); pilot host is WSL2/Linux"
+    }
+  ],
+  "flakiness_note": "Installer-E2E flakiness is pre-existing and environmental (phase-3 waves e/f). A single re-run of a failed installer leg is sanctioned before declaring the gate red. The E14 goal's install leg inherits this sanction."
+}

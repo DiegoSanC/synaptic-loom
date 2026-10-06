@@ -1,0 +1,26 @@
+{
+  "_doc": "Golden manifest for processor.split_items (D13, plan 2026-09-23 slice C, criterion C1). Written BY HAND from the golden summaries named below — never regenerated with split_items. Each item is [ordinal, item_type, labelled, text_md]; text_md is the item's lines verbatim.",
+  "test/waves/i/fixtures/summary_v2_golden.md": {
+    "prompt_version": "v2",
+    "items": [
+      [1, "method", true, "- [method] **Always run `make contract` after CLI updates** — added to the Makefile docs as a standing rule to prevent CLI flags from drifting from the contract again. Evidence: \"always run make contract after CLI updates - that's our standing rule from now on, added to the Makefile docs.\" Status: current."],
+      [2, "decision", true, "- [decision] **Use argparse instead of click for the new subcommand** — to avoid adding a dependency. Evidence: \"we chose argparse over click for the new subcommand to avoid a dependency; see client/loom/cli.py.\" Status: current."],
+      [3, "task", true, "- [task] **Diego to update `docs/RUNBOOK.md` section 7 by Friday** — (rationale not stated). Evidence: \"Diego will update docs/RUNBOOK.md section 7 by Friday.\" Status: current."],
+      [4, "fact", true, "- [fact] **The pilot host is WSL2, where `setsid` is available** — (rationale not stated). Evidence: \"the pilot host is WSL2, so setsid is available there.\" Status: current."]
+    ]
+  },
+  "test/waves/o/fixtures/summary_v3_es_reversal.md": {
+    "prompt_version": "v3",
+    "items": [
+      [1, "decision", true, "- [decision] **Cachear en una tabla `stats_cache` en SQLite con TTL de 60 s, en `server/stats.py`** — se descartó la caché en memoria del proceso porque en Fly puede haber más de una máquina y cada una tendría su propia caché. Evidence: \"Mejor no en memoria: en Fly podemos tener más de una máquina y cada una tendría su propia caché.\""],
+      [2, "task", true, "- [task] **Añadir índice por `project_id` a `stats_cache`** — asignado a Marta, la semana que viene, en otro PR. Evidence: \"El índice por project_id lo dejamos para otro PR; que lo haga Marta la semana que viene.\""]
+    ]
+  },
+  "test/waves/o/fixtures/summary_v3_en_rule_fact.md": {
+    "prompt_version": "v3",
+    "items": [
+      [1, "fact", true, "- [fact] **`setsid` is unavailable on macOS, so the e2e gate fails there** — the pilot host is WSL2, where `setsid` exists and the hook works; on darwin this is treated as the one sanctioned known failure. Evidence: \"macOS has no setsid... on darwin this is the one sanctioned known failure.\""],
+      [2, "method", true, "- [method] **Every new hook test must pass under `LOOM_GATE=1` before it is merged** — standing rule, written into AGENTS.md. Evidence: \"every new hook test must pass under LOOM_GATE=1 before it is merged.\""]
+    ]
+  }
+}

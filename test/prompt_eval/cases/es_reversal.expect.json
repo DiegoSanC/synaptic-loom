@@ -1,0 +1,8 @@
+{
+  "design": "A choice made and reversed in the same session: only the final choice is an item, the discarded option lives in its rationale.",
+  "no_entry": false,
+  "required_labels": ["decision"],
+  "first_item_mentions_any": ["LISTEN", "outbox", "Postgres"],
+  "decisions_mention_all": ["Redis"],
+  "items_mentioning_must_also_mention": {"Redis": ["LISTEN", "outbox", "Postgres"]}
+}

@@ -1,0 +1,25 @@
+# entornos virtuales
+.venv/
+venv/
+
+# caches / bytecode
+__pycache__/
+.pytest_cache/
+
+# artefactos de build / packaging
+*.egg-info/
+build/
+dist/
+
+# datos locales
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.bak
+
+# secretos / config local
+.env
+.env.*

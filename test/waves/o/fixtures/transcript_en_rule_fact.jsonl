@@ -1,0 +1,5 @@
+{"type": "file-history-snapshot", "messageId": "m0", "snapshot": {}}
+{"type": "user", "uuid": "wave-o-en-u1", "cwd": "/home/dev/proj", "sessionId": "wave-o-en", "message": {"role": "user", "content": "The e2e gate failed on my Mac with 'setsid: command not found'."}}
+{"type": "assistant", "uuid": "wave-o-en-a2", "cwd": "/home/dev/proj", "sessionId": "wave-o-en", "message": {"role": "assistant", "content": "Right: macOS has no setsid. The pilot host is WSL2, where setsid is available, so the hook works there; on darwin this is the one sanctioned known failure."}}
+{"type": "user", "uuid": "wave-o-en-u3", "cwd": "/home/dev/proj", "sessionId": "wave-o-en", "message": {"role": "user", "content": "OK. And let's make it a rule: every new hook test must pass under LOOM_GATE=1 before it is merged."}}
+{"type": "assistant", "uuid": "wave-o-en-a4", "cwd": "/home/dev/proj", "sessionId": "wave-o-en", "message": {"role": "assistant", "content": "Agreed, that's a standing rule now. I've written it into AGENTS.md."}}

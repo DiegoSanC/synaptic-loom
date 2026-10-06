@@ -1,0 +1,3 @@
+[user]: For the admin API auth, JWTs or server-side sessions?
+[assistant]: I looked at both. JWTs can't be revoked before they expire unless we keep a denylist, and then we are storing server-side state anyway. Going with opaque server-side sessions in the sessions table; see server/auth.py.
+[user]: Agreed, sessions it is.
