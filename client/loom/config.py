@@ -11,7 +11,7 @@ here out of ``LOOM_HOME``:
   ``{"server_url", "token", "cache_ttl_s": 3600,
      "summarizer": {"model": "sonnet", "timeout_s": 300, "prompt_version": "v2"},
      "sweep": {"enabled": true, "settle_s": 1800, "transcripts_root": "~/.claude/projects"},
-     "scanner": {"engine": "auto", "gitleaks_version": null},
+     "scanner": {"engine": "gitleaks", "gitleaks_version": "8.30.1"},
      "processor": {"tear_ratio_threshold": 0.5},
      "curation": {"candidate_k": 8, "timeout_s": 900, "digest_threshold": 15},
      "log": {"char_budget": 8000},
@@ -80,10 +80,12 @@ DEFAULT_SWEEP_ENABLED = True
 DEFAULT_SWEEP_SETTLE_S = 1800
 DEFAULT_SWEEP_TRANSCRIPTS_ROOT = "~/.claude/projects"
 
-# Phase 2 (R2.3): scanner engine selection. "auto" = gitleaks when the binary is
-# available, regex fallback otherwise; gitleaks_version pins the expected binary
-# (None = unpinned, doctor warns).
-DEFAULT_SCANNER_ENGINE = "auto"
+# Phase 2 (R2.3) scanner engine selection, changed by D16 (2026-10-15): gitleaks is
+# mandatory for capture. "gitleaks" is the default; "auto" is read as a legacy alias of
+# it (no fallback); "regex" is refused — capture pauses and doctor shows ✗.
+# gitleaks_version pins the expected binary (None = unpinned, doctor warns); init and
+# enroll write the pin install.sh downloads (scan_engine.GITLEAKS_PINNED_VERSION).
+DEFAULT_SCANNER_ENGINE = "gitleaks"
 DEFAULT_GITLEAKS_VERSION: str | None = None
 
 # Phase 3/P3.F5 (E10): the torn/(torn+parsed) ratio at or above which a processed
@@ -378,6 +380,11 @@ class Config:
     def auth_rejected_path(self) -> Path:
         """Record of the last credential rejection on an unattended path (issue #20)."""
         return self.loom_home / "auth_rejected.json"
+
+    @property
+    def scanner_paused_path(self) -> Path:
+        """Record of the last pass the D16 scanner gate paused (cleared by a healthy one)."""
+        return self.loom_home / "scanner_paused.json"
 
     @property
     def sweep_last_run_path(self) -> Path:

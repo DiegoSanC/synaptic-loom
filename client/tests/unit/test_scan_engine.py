@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -93,23 +94,34 @@ def test_cfg_none_is_pure_regex(shims, tmp_path):
     assert not sentinel.exists()
 
 
-def test_engine_regex_never_invokes_the_binary(shims, tmp_path):
+def test_engine_regex_is_refused_and_never_invokes_the_binary(shims, tmp_path):
+    """D16: ``regex`` is no longer a production engine. It is REFUSED (the caller pauses
+    capture / fails closed) — and refusing it still never executes the binary."""
     sentinel = tmp_path / "called"
     _write_shim(shims, f"import pathlib, sys\n"
                        f"pathlib.Path({str(sentinel)!r}).write_text('x')\nsys.exit(99)\n")
     cfg = _cfg(tmp_path, "regex")
-    assert {f.kind for f in scan_engine.scan("password=hunter2", cfg)} == {"password_assignment"}
-    assert scan_engine.active_engine(cfg) == scan_engine.EngineInfo(
-        name="regex", version=None, pinned_version="8.30.1"
-    )
+    with pytest.raises(scan_engine.ScannerUnavailable) as scan_exc:
+        scan_engine.scan("password=hunter2", cfg)
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.active_engine(cfg)
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.ensure_ready(cfg)
+    assert "regex" in str(scan_exc.value)
+    assert "hunter2" not in str(scan_exc.value)
     assert not sentinel.exists()
 
 
-def test_auto_without_binary_falls_back_to_regex(no_binary, tmp_path):
+def test_auto_without_binary_no_longer_falls_back_to_regex(no_binary, tmp_path):
+    """D16: ``auto`` is a legacy alias of ``gitleaks`` — no binary is an ERROR, never a
+    silent downgrade to the regex set."""
     cfg = _cfg(tmp_path, "auto")
-    assert {f.kind for f in scan_engine.scan("sk-AbCdEfGhIjKlMnOpQrStUv", cfg)} == {"openai_key"}
-    info = scan_engine.active_engine(cfg)
-    assert (info.name, info.version, info.pinned_version) == ("regex", None, "8.30.1")
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.scan("sk-AbCdEfGhIjKlMnOpQrStUv", cfg)
+    with pytest.raises(FileNotFoundError):
+        scan_engine.active_engine(cfg)
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.ensure_ready(cfg)
 
 
 def test_explicit_gitleaks_without_binary_raises(no_binary, tmp_path):
@@ -398,3 +410,164 @@ def test_active_engine_with_cfg_none(tmp_path):
     assert scan_engine.active_engine() == scan_engine.EngineInfo(
         name="regex", version=None, pinned_version=None
     )
+
+
+# --- D16: gitleaks is mandatory; $LOOM_HOME/bin first ------------------------------
+
+def _home_gitleaks(tmp_path: Path, body: str) -> Path:
+    """An executable ``gitleaks`` at ``$LOOM_HOME/bin`` — where install.sh puts it.
+
+    Absolute interpreter in the shebang: the point of some of these tests is a PATH with
+    nothing on it, where ``/usr/bin/env python3`` could not start the shim.
+    """
+    path = tmp_path / "home" / "bin" / "gitleaks"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!{sys.executable}\n" + body, encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _recording_body(tag: str, record: Path, version: str = "8.30.1") -> str:
+    return (
+        "import pathlib, sys\n"
+        f"pathlib.Path({str(record)!r}).open('a').write({tag!r} + ' ' + ' '.join(sys.argv[1:2]) + '\\n')\n"
+        "if sys.argv[1:2] == ['version']:\n"
+        f"    sys.stdout.write({version!r} + '\\n')\n"
+        "    sys.exit(0)\n"
+        "sys.stdin.read()\n"
+        "sys.stdout.write('[]')\n"
+        "sys.exit(0)\n"
+    )
+
+
+def test_default_engine_is_gitleaks(tmp_path):
+    """A Config with no scanner choice, and a config.json with no scanner section, both
+    mean gitleaks (D16) — not the old ``auto``-with-fallback."""
+    assert Config(loom_home=tmp_path, server_url="u", token="t").scanner_engine == "gitleaks"
+    home = tmp_path / "h"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({"server_url": "u", "token": "t"}))
+    assert Config.load(home).scanner_engine == "gitleaks"
+
+
+def test_loom_home_bin_gitleaks_is_preferred_over_path(shims, tmp_path):
+    record = tmp_path / "calls.txt"
+    _write_shim(shims, _recording_body("path", record))
+    _home_gitleaks(tmp_path, _recording_body("home", record))
+    assert scan_engine.scan("nothing here\n", _cfg(tmp_path, "gitleaks")) == []
+    calls = record.read_text().split()
+    assert calls == ["home", "stdin"], calls
+
+
+def test_loom_home_bin_gitleaks_needs_no_path_at_all(no_binary, tmp_path):
+    """The cron/systemd minimal-PATH problem (P2.F5) cannot reach $LOOM_HOME/bin."""
+    record = tmp_path / "calls.txt"
+    home_bin = _home_gitleaks(tmp_path, _recording_body("home", record))
+    cfg = _cfg(tmp_path, "auto")
+    assert scan_engine.scan("nothing here\n", cfg) == []
+    assert scan_engine.ensure_ready(cfg).name == "gitleaks"
+    assert scan_engine.resolve_gitleaks(cfg) == str(home_bin)
+
+
+def test_non_executable_loom_home_bin_falls_through_to_path(shims, tmp_path):
+    record = tmp_path / "calls.txt"
+    _write_shim(shims, _recording_body("path", record))
+    _home_gitleaks(tmp_path, _recording_body("home", record)).chmod(0o644)
+    scan_engine.scan("nothing here\n", _cfg(tmp_path, "gitleaks"))
+    assert record.read_text().split()[0] == "path"
+
+
+def test_ensure_ready_raises_when_version_cannot_run(shims, tmp_path):
+    """Resolvable but not executable as a scanner (``gitleaks version`` fails) = paused."""
+    _write_shim(shims, "import sys\nsys.exit(7)\n")
+    with pytest.raises(scan_engine.ScannerUnavailable) as exc:
+        scan_engine.ensure_ready(_cfg(tmp_path, "gitleaks"))
+    assert "version" in str(exc.value)
+
+
+def test_ensure_ready_raises_for_an_unknown_engine(no_binary, tmp_path):
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.ensure_ready(_cfg(tmp_path, "gitleeks"))
+
+
+def test_ensure_ready_accepts_a_version_that_differs_from_the_pin(shims, tmp_path):
+    """A different version is doctor's WARNING, never a pause."""
+    _gitleaks_shim(shims, version="8.18.0")
+    info = scan_engine.ensure_ready(_cfg(tmp_path, "gitleaks", pin="8.30.1"))
+    assert (info.name, info.version, info.pinned_version) == ("gitleaks", "8.18.0", "8.30.1")
+
+
+def test_ensure_ready_accepts_an_unparseable_version_line(shims, tmp_path):
+    """It RAN: an odd version line is doctor's warning (version unknown), not a pause."""
+    _gitleaks_shim(shims, version="dev-build")
+    assert scan_engine.ensure_ready(_cfg(tmp_path, "gitleaks")).version is None
+
+
+def test_pinned_version_constant_matches_the_installer():
+    """One pin: what init/enroll write is what install.sh downloads (D16)."""
+    install = (Path(__file__).resolve().parents[2] / "install.sh").read_text()
+    assert scan_engine.GITLEAKS_PINNED_VERSION == "8.30.1"
+    assert f'GITLEAKS_VERSION="{scan_engine.GITLEAKS_PINNED_VERSION}"' in install
+
+
+# --- D16: redaction before the summarizer -----------------------------------------
+
+def _report(*entries: tuple[str, str, str]) -> str:
+    return json.dumps([{"RuleID": rule, "Secret": secret, "Match": match}
+                       for rule, secret, match in entries])
+
+
+def test_redact_replaces_every_occurrence_of_every_value(shims, tmp_path):
+    text = (f'api_key = "{SECRET}"\nlater the same value again: {SECRET}\n'
+            "mail dev2@example.test\npassword=hunter2 and hunter2 once more\n")
+    _gitleaks_shim(shims, report=_report(("generic-api-key", SECRET, f'api_key = "{SECRET}"')),
+                   exit_code=scan_engine.GITLEAKS_LEAKS_EXIT_CODE)
+    redacted, findings = scan_engine.redact(text, _cfg(tmp_path, "gitleaks"))
+    for value in (SECRET, "dev2@example.test", "hunter2"):
+        assert value not in redacted
+    assert redacted.count("[REDACTED:generic-api-key]") == 2
+    assert "[REDACTED:email]" in redacted
+    # The whole `password=…` assignment goes, and the bare value elsewhere too.
+    assert redacted.count("[REDACTED:password_assignment]") == 2
+    assert {f.kind for f in findings} == {"generic-api-key", "email", "password_assignment"}
+    for f in findings:
+        assert SECRET not in f.redacted and "hunter2" not in f.redacted
+
+
+def test_redact_replaces_the_longest_value_first(shims, tmp_path):
+    """A value that contains another is replaced WHOLE, never as a shorter label plus a
+    surviving tail."""
+    short, long_ = "Qm8vR2nLx7TtW4zPa8bC", "Qm8vR2nLx7TtW4zPa8bC3dE5fG6hJ7kLz"
+    _gitleaks_shim(shims, report=_report(("short-rule", short, short),
+                                         ("long-rule", long_, long_)),
+                   exit_code=scan_engine.GITLEAKS_LEAKS_EXIT_CODE)
+    redacted, _ = scan_engine.redact(f"x {long_} y {short} z\n", _cfg(tmp_path, "gitleaks"))
+    assert redacted == "x [REDACTED:long-rule] y [REDACTED:short-rule] z\n"
+
+
+def test_redact_of_clean_text_returns_it_unchanged(shims, tmp_path):
+    _gitleaks_shim(shims, report="[]")
+    text = "Decided to keep bearer tokens.\n"
+    assert scan_engine.redact(text, _cfg(tmp_path, "gitleaks")) == (text, [])
+
+
+def test_redact_spans_the_whole_private_key_block(shims, tmp_path):
+    """The regex family only matches the PEM header; redaction must not leave the body."""
+    body = "MIICdgIBADANBgkqhkiG9w0BAQEFAASCAmAwggJcAgEAAoGBAL"
+    block = f"-----BEGIN RSA PRIVATE KEY-----\n{body}\n-----END RSA PRIVATE KEY-----"
+    _gitleaks_shim(shims, report="[]")
+    redacted, findings = scan_engine.redact(f"key:\n{block}\ndone\n", _cfg(tmp_path, "gitleaks"))
+    assert body not in redacted and "PRIVATE KEY" not in redacted
+    assert redacted == "key:\n[REDACTED:private_key]\ndone\n"
+    assert [f.kind for f in findings] == ["private_key"]
+
+
+def test_redact_propagates_a_scanner_failure(shims, tmp_path):
+    _write_shim(shims, "import sys\nsys.stdin.read()\nsys.exit(3)\n")
+    with pytest.raises(scan_engine.GitleaksError):
+        scan_engine.redact(PLANTED, _cfg(tmp_path, "gitleaks"))
+
+
+def test_redact_refuses_without_gitleaks(no_binary, tmp_path):
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.redact(PLANTED, _cfg(tmp_path, "gitleaks"))

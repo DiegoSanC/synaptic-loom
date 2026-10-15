@@ -1,9 +1,14 @@
-"""Deterministic secret scanning over the summarizer's output (PLAN.md §P3).
+"""Deterministic secret scanning — the phase-1 regex set (PLAN.md §P3).
 
-Home-grown regex set (no external dependencies; gitleaks is left for phase 2). It runs
-**before** any POST; a hit (or a failure of the scan itself, treated as a hit by the
-caller — fail-closed, I4) diverts the entry to ``quarantine/`` and nothing leaves the
-machine.
+Home-grown regex set, no external dependencies. Since phase 2 it is never called on its
+own by production code: :mod:`loom.scan_engine` runs it UNIONED with gitleaks, which D16
+(2026-10-15) made mandatory — the set alone misses whole families (vendor keys,
+``X_PASSWORD=``, bearer headers), so a config that asks for it alone pauses capture. The
+union runs over the transcript extract before the summarizer (step 5b, redaction) and
+over the summary before any POST (step 8); a hit there (or a failure of the scan itself,
+treated as a hit by the caller — fail-closed, I4) diverts the entry to ``quarantine/`` and
+nothing leaves the machine. ``scan_engine`` also reads ``_PATTERNS`` to compute the
+redaction spans, so this table is the single definition of the families.
 
 Families covered (each with a positive and a negative test):
 - ``aws_access_key``  — ``AKIA`` + 16 uppercase alphanumerics.
