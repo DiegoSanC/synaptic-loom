@@ -3,6 +3,13 @@
 #
 # Idempotent. It does, in order:
 #   1. Creates the $LOOM_HOME/{queue,quarantine,failed,log,prompts,hooks} tree.
+#  1b. Installs gitleaks 8.30.1, the MANDATORY secret scanner (D16), into $LOOM_HOME/bin:
+#      downloads the official release asset for darwin/linux × x64/arm64, verifies its
+#      sha256 against the values PINNED below (no env var or flag can change or skip that
+#      check), and only then installs it — no sudo. Skipped when $LOOM_HOME/bin/gitleaks
+#      already reports 8.30.1. A mismatch or an unsupported platform aborts the install
+#      before step 2 with nothing installed. An existing config.json is then set to
+#      scanner = {"engine": "gitleaks", "gitleaks_version": "8.30.1"}.
 #   2. Creates the venv in $LOOM_HOME/venv and installs the package editable (a git pull
 #      updates the code without reinstalling — DESIGN §7). Prefers `uv` (this machine has no
 #      ensurepip, so `python3 -m venv` fails); falls back to `python3 -m venv` without uv.
@@ -16,8 +23,9 @@
 #      crontab is backed up to $LOOM_HOME/backup/crontab.<ts> before every write.
 #      The trigger carries the environment the unattended pass needs (P2.F5): LOOM_HOME, so
 #      it works on the right queue/config/token, and the install-time PATH, so it resolves
-#      the same secret scanner an interactive run does instead of silently degrading to the
-#      regex engine under cron's minimal PATH (docs/RUNBOOK.md §2).
+#      the same binaries an interactive run does under cron's minimal PATH (docs/RUNBOOK.md
+#      §2). The scanner no longer depends on it: loom runs $LOOM_HOME/bin/gitleaks by
+#      absolute path (D16), and with no gitleaks at all capture PAUSES instead of degrading.
 #   +  Adds the loom instruction block to ~/.claude/CLAUDE.md (D10): the one user-level
 #      rule that makes the agent run `loom check` at the start of a task. Between
 #      `<!-- loom:start -->` / `<!-- loom:end -->` markers; creates the file when absent,
@@ -44,6 +52,11 @@
 #   LOOM_SKIP_TRIGGER=1  (env) Skips step 5 (for CI / hosts where the scheduler is managed
 #                        elsewhere; it keeps a test run from touching the real user crontab).
 #   LOOM_SKIP_CLAUDE_MD=1 (env) Skips the CLAUDE.md block.
+#   LOOM_SKIP_GITLEAKS=1 (env) Skips step 1b (tests / hosts that manage gitleaks themselves).
+#                        Installs NOTHING: without a gitleaks, capture stays PAUSED (D16).
+#   LOOM_GITLEAKS_TARBALL=<path> (env) Uses a local copy of the release asset instead of
+#                        downloading it (offline installs, tests). It is verified against the
+#                        pinned sha256 EXACTLY like a download; there is no way to skip that.
 #
 # The host schedulers (`systemctl`, `crontab`) are always invoked THROUGH PATH, never by
 # absolute path, so tests can shim them.
@@ -68,6 +81,9 @@ for arg in "$@"; do
       echo "  --uninstall-trigger   remove the periodic trigger (timer and/or cron) and exit"
       echo "  (env) LOOM_SKIP_VENV=1     skip creating the venv"
       echo "  (env) LOOM_SKIP_TRIGGER=1  skip installing the periodic trigger"
+      echo "  (env) LOOM_SKIP_GITLEAKS=1 skip installing gitleaks (capture stays paused)"
+      echo "  (env) LOOM_GITLEAKS_TARBALL=<path>  install gitleaks from a local release"
+      echo "        asset (still verified against the pinned sha256)"
       exit 0
       ;;
     *)
@@ -111,14 +127,18 @@ LOOM_BIN="$LOOM_HOME/venv/bin/loom"
 # ---- trigger environment parity (P2.F5) --------------------------------------------------
 # Both schedulers start the periodic pass with a MINIMAL environment: cron gives it
 # `/usr/bin:/bin`, and a systemd *user* service inherits the user manager's environment, not
-# the installing shell's. `loom process` resolves its secret scanner through PATH
-# (`scanner.engine = auto` → gitleaks when the binary is reachable, regex otherwise), so on a
-# host where gitleaks lives outside that minimal PATH — /opt/homebrew on darwin, ~/.local/bin
-# on many Linux boxes — the unattended pass silently downgrades to the weaker engine while
-# the interactive `loom doctor` reports `✓ gitleaks` (RUNBOOK §7, finding 1).
+# the installing shell's. Before D16, `loom process` resolved its secret scanner through
+# PATH only (`scanner.engine = auto` → gitleaks when reachable, regex otherwise), so on a
+# host where gitleaks lived outside that minimal PATH — /opt/homebrew on darwin, ~/.local/bin
+# on many Linux boxes — the unattended pass silently downgraded to the weaker engine while
+# the interactive `loom doctor` reported `✓ gitleaks` (RUNBOOK §7, finding 1). Since D16 the
+# scanner is $LOOM_HOME/bin/gitleaks (step 1b), run by absolute path, so it no longer depends
+# on this PATH at all; PATH stays the fallback for a host that installed gitleaks itself, and
+# with no gitleaks anywhere capture PAUSES rather than degrading.
 #
-# The fix is to carry the install-time PATH into the trigger, so the unattended pass resolves
-# the same binaries the operator resolved when they ran this script. The value goes into an
+# The PATH carry-over is kept: the unattended pass still resolves git, jq and that fallback
+# gitleaks through it, so it should resolve the same binaries the operator resolved when they
+# ran this script. The value goes into an
 # ENVIRONMENT ASSIGNMENT (a crontab `PATH=` line, a unit `Environment=PATH=`), never into the
 # command field, which is why it gets its OWN whitelist: cron reads an assignment value
 # literally (no /bin/sh), so ':' — mandatory in a PATH — is safe there, while the command
@@ -176,6 +196,149 @@ build_trigger_path() {
   fi
   TRIGGER_PATH_VALUE="$out"
   return 0
+}
+
+# ---- gitleaks, the mandatory secret scanner (D16) ----------------------------------------
+GITLEAKS_VERSION="8.30.1"
+GITLEAKS_DIR="$LOOM_HOME/bin"
+GITLEAKS_BIN="$GITLEAKS_DIR/gitleaks"
+GITLEAKS_RELEASE_URL="https://github.com/gitleaks/gitleaks/releases/download/v$GITLEAKS_VERSION"
+
+# sha256 of the OFFICIAL release assets, copied verbatim from the release's own
+#   https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_checksums.txt
+# (fetched 2026-10-15; the darwin_arm64 and linux_x64 assets were downloaded and re-hashed to
+# the same values). They are LITERALS on purpose: no environment variable, flag or downloaded
+# file can change which bytes are accepted. A new gitleaks version is a code change here,
+# reviewed like any other, together with scan_engine.GITLEAKS_PINNED_VERSION.
+gitleaks_pinned_sha256() {
+  case "$1" in
+    darwin_arm64) echo "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5" ;;
+    darwin_x64) echo "dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709" ;;
+    linux_arm64) echo "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080" ;;
+    linux_x64) echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb" ;;
+    *) return 1 ;;
+  esac
+}
+
+# `<os>_<arch>` as the release names its assets, or failure for anything else.
+gitleaks_platform() {
+  local os arch
+  case "$(uname -s 2>/dev/null || true)" in
+    Darwin) os=darwin ;;
+    Linux) os=linux ;;
+    *) return 1 ;;
+  esac
+  case "$(uname -m 2>/dev/null || true)" in
+    x86_64 | amd64) arch=x64 ;;
+    arm64 | aarch64) arch=arm64 ;;
+    *) return 1 ;;
+  esac
+  printf '%s_%s' "$os" "$arch"
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+# First line of `<binary> version`, without a leading "v"; empty when it cannot run.
+gitleaks_version_of() {
+  [ -f "$1" ] && [ -x "$1" ] || return 0
+  ("$1" version 2>/dev/null || true) | head -n 1 | tr -d '[:space:]' | sed 's/^v//'
+}
+
+GITLEAKS_TMP=""
+gitleaks_abort() {
+  echo "install.sh: $1" >&2
+  echo "     Nothing was installed; $GITLEAKS_BIN is unchanged." >&2
+  if [ -n "$GITLEAKS_TMP" ]; then rm -rf "$GITLEAKS_TMP"; fi
+  GITLEAKS_TMP=""
+  return 1
+}
+
+install_gitleaks() {
+  local current plat expected asset actual
+  current="$(gitleaks_version_of "$GITLEAKS_BIN")"
+  if [ "$current" = "$GITLEAKS_VERSION" ]; then
+    echo "     gitleaks $GITLEAKS_VERSION already installed at $GITLEAKS_BIN; nothing to download."
+    return 0
+  fi
+  if ! plat="$(gitleaks_platform)" || ! expected="$(gitleaks_pinned_sha256 "$plat")"; then
+    gitleaks_abort "unsupported platform for gitleaks ($(uname -s 2>/dev/null || echo ?)/$(uname -m 2>/dev/null || echo ?)); this installer ships darwin/linux x64/arm64 only. Install gitleaks $GITLEAKS_VERSION yourself (on PATH) and re-run with LOOM_SKIP_GITLEAKS=1."
+    return 1
+  fi
+  asset="gitleaks_${GITLEAKS_VERSION}_${plat}.tar.gz"
+  GITLEAKS_TMP="$(mktemp -d "${TMPDIR:-/tmp}/loom-gitleaks.XXXXXX")" ||
+    { gitleaks_abort "could not create a temporary directory"; return 1; }
+  if [ -n "${LOOM_GITLEAKS_TARBALL:-}" ]; then
+    echo "     Using the local release asset LOOM_GITLEAKS_TARBALL (verified like a download)."
+    cp "$LOOM_GITLEAKS_TARBALL" "$GITLEAKS_TMP/$asset" ||
+      { gitleaks_abort "could not read LOOM_GITLEAKS_TARBALL"; return 1; }
+  else
+    command -v curl >/dev/null 2>&1 ||
+      { gitleaks_abort "'curl' is required to download gitleaks ($GITLEAKS_RELEASE_URL/$asset)"; return 1; }
+    echo "     Downloading $GITLEAKS_RELEASE_URL/$asset ..."
+    curl -fsSL --proto =https --tlsv1.2 --retry 2 -o "$GITLEAKS_TMP/$asset" \
+      "$GITLEAKS_RELEASE_URL/$asset" ||
+      { gitleaks_abort "the download of $asset failed"; return 1; }
+  fi
+  actual="$(sha256_of "$GITLEAKS_TMP/$asset")" ||
+    { gitleaks_abort "neither 'sha256sum' nor 'shasum' is available to verify $asset"; return 1; }
+  if [ "$actual" != "$expected" ]; then
+    gitleaks_abort "CHECKSUM MISMATCH for $asset: expected sha256 $expected, got $actual. The file is not the official gitleaks $GITLEAKS_VERSION release; refusing it."
+    return 1
+  fi
+  echo "     sha256 verified ($actual = the pinned value for $plat)."
+  mkdir -p "$GITLEAKS_TMP/x" &&
+    tar -xzf "$GITLEAKS_TMP/$asset" -C "$GITLEAKS_TMP/x" gitleaks ||
+    { gitleaks_abort "could not extract gitleaks from $asset"; return 1; }
+  if [ ! -f "$GITLEAKS_TMP/x/gitleaks" ] || [ -L "$GITLEAKS_TMP/x/gitleaks" ]; then
+    gitleaks_abort "$asset holds no regular 'gitleaks' file"
+    return 1
+  fi
+  chmod 755 "$GITLEAKS_TMP/x/gitleaks"
+  # Run it BEFORE it replaces anything: a verified binary that cannot run on this host must
+  # not take the place of one that can.
+  if [ "$(gitleaks_version_of "$GITLEAKS_TMP/x/gitleaks")" != "$GITLEAKS_VERSION" ]; then
+    gitleaks_abort "the verified gitleaks does not run on this host or does not report $GITLEAKS_VERSION"
+    return 1
+  fi
+  mkdir -p "$GITLEAKS_DIR" &&
+    cp "$GITLEAKS_TMP/x/gitleaks" "$GITLEAKS_BIN.tmp" &&
+    chmod 755 "$GITLEAKS_BIN.tmp" &&
+    mv -f "$GITLEAKS_BIN.tmp" "$GITLEAKS_BIN" ||
+    { rm -f "$GITLEAKS_BIN.tmp"; gitleaks_abort "could not write $GITLEAKS_BIN"; return 1; }
+  rm -rf "$GITLEAKS_TMP"
+  GITLEAKS_TMP=""
+  echo "     gitleaks $GITLEAKS_VERSION installed at $GITLEAKS_BIN ✓"
+  return 0
+}
+
+# An existing config.json gets the mandatory engine and the pin (D16): "auto" was the old
+# default and "regex" would keep capture paused. Atomic, owner-only (it holds the token);
+# every other key is kept. A config that is not valid JSON is left alone (doctor says why).
+pin_scanner_in_config() {
+  local cfg="$LOOM_HOME/config.json" new
+  [ -f "$cfg" ] || return 0
+  if ! new="$(jq --arg v "$GITLEAKS_VERSION" \
+    '.scanner = ((.scanner // {}) + {"engine": "gitleaks", "gitleaks_version": $v})' \
+    "$cfg" 2>/dev/null)"; then
+    echo "     WARNING: $cfg is not valid JSON; scanner settings not updated (see loom doctor)." >&2
+    return 0
+  fi
+  if [ "$new" = "$(jq . "$cfg")" ]; then
+    return 0
+  fi
+  (
+    umask 077
+    printf '%s\n' "$new" >"$cfg.tmp"
+  ) && chmod 600 "$cfg.tmp" && mv -f "$cfg.tmp" "$cfg" &&
+    echo "     config.json: scanner.engine = gitleaks, scanner.gitleaks_version = $GITLEAKS_VERSION"
 }
 
 # ---- periodic-trigger helpers (used by step 5 and by --uninstall-trigger) ----------------
@@ -531,6 +694,21 @@ mkdir -p \
   "$LOOM_HOME/log" \
   "$LOOM_HOME/prompts" \
   "$LOOM_HOME/hooks"
+
+# ---- 1b. gitleaks (D16) ------------------------------------------------------------------
+# Before anything else is changed, so a refused download leaves the host as it was (bar the
+# empty tree above). Under --update this runs after the pull, so an update installs or
+# upgrades gitleaks as well.
+echo "1b/5 Installing gitleaks $GITLEAKS_VERSION, the mandatory secret scanner (D16), in $GITLEAKS_DIR ..."
+if [ "${LOOM_SKIP_GITLEAKS:-0}" = "1" ]; then
+  echo "     LOOM_SKIP_GITLEAKS=1 → skipping gitleaks. Without one, capture stays PAUSED (loom doctor ✗)."
+else
+  if ! install_gitleaks; then
+    echo "install.sh: aborting — loom does not capture without gitleaks (D16). See docs/RUNBOOK.md §1." >&2
+    exit 1
+  fi
+  pin_scanner_in_config
+fi
 
 # ---- 2. venv + editable install ---------------------------------------------------------
 # p4-reinstall-idempotent (P3.F6). A plain re-install must CONVERGE the venv, never refuse

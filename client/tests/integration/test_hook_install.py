@@ -606,7 +606,7 @@ def _run_install(home: Path, *args: str) -> subprocess.CompletedProcess:
         **os.environ,
         "HOME": str(home),
         "LOOM_HOME": str(_loom_home(home)),
-        "LOOM_SKIP_VENV": "1",  # don't build a real venv in every test
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",  # don't build a real venv in every test
         # These phase-1 tests run install.sh with the REAL PATH, so step 5 would reach
         # the host scheduler and write the developer's actual crontab (or systemd user
         # units) on every run — HOME being a tmpdir does not isolate `crontab`. The

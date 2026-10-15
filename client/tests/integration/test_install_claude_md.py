@@ -25,7 +25,7 @@ def _run(tmp_path: Path, *args: str, stdin: str = "") -> subprocess.CompletedPro
         **os.environ,
         "HOME": str(home),
         "LOOM_HOME": str(home / ".loom"),
-        "LOOM_SKIP_VENV": "1",
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
         "LOOM_SKIP_TRIGGER": "1",
         "PATH": _sandbox_path(tmp_path),
         **GIT_ENV,
@@ -141,7 +141,7 @@ def test_install_skips_the_block_with_the_env_seam(tmp_path):
     home.mkdir(exist_ok=True)
     env = {
         **os.environ, "HOME": str(home), "LOOM_HOME": str(home / ".loom"),
-        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_TRIGGER": "1", "LOOM_SKIP_CLAUDE_MD": "1",
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1", "LOOM_SKIP_TRIGGER": "1", "LOOM_SKIP_CLAUDE_MD": "1",
         "PATH": _sandbox_path(tmp_path), **GIT_ENV,
     }
     proc = subprocess.run(["bash", str(INSTALL_SCRIPT), "--yes"], env=env,

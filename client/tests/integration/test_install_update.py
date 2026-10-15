@@ -191,7 +191,7 @@ def _run(tmp_path: Path, *args: str, script: Path | None = None,
         **os.environ,
         "HOME": str(home),
         "LOOM_HOME": str(home / ".loom"),
-        "LOOM_SKIP_VENV": "1",
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
         "PATH": _sandbox_path(tmp_path),
         **GIT_ENV,
     }
@@ -706,7 +706,7 @@ def test_update_without_yes_aborts_when_declined(tmp_path, home):
     proc = subprocess.run(
         ["bash", str(work / "client" / "install.sh"), "--update"],
         env={**os.environ, "HOME": str(home), "LOOM_HOME": str(home / ".loom"),
-             "LOOM_SKIP_VENV": "1", "PATH": _sandbox_path(tmp_path), **GIT_ENV},
+             "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1", "PATH": _sandbox_path(tmp_path), **GIT_ENV},
         input="n\n", capture_output=True, text=True, timeout=180,
     )
 

@@ -45,7 +45,7 @@ def test_install_copies_skills_to_claude_dir(tmp_path):
         **os.environ,
         "HOME": str(home),
         "LOOM_HOME": str(home / ".loom"),
-        "LOOM_SKIP_VENV": "1",
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
         # HOME is a tmpdir but `crontab` is not isolated by it: without this seam the
         # installer's step 5 would write the developer's REAL crontab on every run.
         "LOOM_SKIP_TRIGGER": "1",

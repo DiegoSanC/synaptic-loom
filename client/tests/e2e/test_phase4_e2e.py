@@ -1015,7 +1015,9 @@ def test_e2e_reinstall_with_real_uv_keeps_the_venv_and_rearms_the_trigger(
     def run_install(*args: str) -> subprocess.CompletedProcess:
         return subprocess.run(
             ["bash", str(INSTALL_SH), *args],
-            env=_base_env(home=safe_home, path=path, LOOM_HOME=str(loom_home)),
+            # D16: step 1b would download gitleaks; this leg is about the venv.
+            env=_base_env(home=safe_home, path=path, LOOM_HOME=str(loom_home),
+                          LOOM_SKIP_GITLEAKS="1"),
             capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=900,
         )
 

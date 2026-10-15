@@ -111,7 +111,7 @@ def _run(tmp_path: Path, home: Path, *args: str) -> subprocess.CompletedProcess:
         **os.environ,
         "HOME": str(home),
         "LOOM_HOME": str(home / ".loom"),
-        "LOOM_SKIP_VENV": "1",
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
         "PATH": _sandbox_path(tmp_path),
     }
     return subprocess.run(
@@ -331,7 +331,7 @@ def test_uninstall_under_a_different_loom_home_leaves_no_path_residue(tmp_path):
             **os.environ,
             "HOME": str(home),
             "LOOM_HOME": str(home / ".loom"),
-            "LOOM_SKIP_VENV": "1",
+            "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
             "PATH": _sandbox_path(tmp_path),
         }
         return subprocess.run(
@@ -374,7 +374,7 @@ def test_uninstall_matches_our_path_line_verbatim_not_through_awk_escapes(tmp_pa
         **os.environ,
         "HOME": str(odd_home),
         "LOOM_HOME": spelled,
-        "LOOM_SKIP_VENV": "1",
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
         "PATH": _sandbox_path(tmp_path),
     }
     proc = subprocess.run(

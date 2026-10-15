@@ -650,7 +650,7 @@ sys.exit(0)
 """)
 
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(loom_home),
-           "LOOM_SKIP_VENV": "1", "PATH": _isolated_path(tmp_path, shims)}
+           "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1", "PATH": _isolated_path(tmp_path, shims)}
 
     installed = subprocess.run(["bash", str(INSTALL_SH), "--yes"], env=env,
                                capture_output=True, text=True,
