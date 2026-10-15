@@ -41,7 +41,7 @@ def _run_install(tmp_path, *args, with_systemctl: bool, extra_env=None,
         **os.environ,
         "HOME": str(home),
         "LOOM_HOME": str(home / ".loom"),
-        "LOOM_SKIP_VENV": "1",
+        "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
         "PATH": kit.base_path_with(shims, include_gitleaks=False),
     }
     if extra_env:
@@ -84,7 +84,7 @@ def test_cron_branch_preserves_existing_user_crontab(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(home / ".loom"),
-           "LOOM_SKIP_VENV": "1",
+           "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
            "PATH": kit.base_path_with(shims, include_gitleaks=False)}
     proc = subprocess.run(["bash", str(INSTALL), "--yes"], env=env,
                           capture_output=True, text=True,
@@ -162,7 +162,7 @@ def test_update_pulls_recopies_and_runs_doctor(tmp_path):
 
     shims = kit.shim_dir(tmp_path)
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(home / ".loom"),
-           "LOOM_SKIP_VENV": "1",
+           "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
            "PATH": kit.base_path_with(shims, include_gitleaks=False)}
     upd = subprocess.run(["bash", str(work / "client" / "install.sh"),
                           "--yes", "--update"],
@@ -278,10 +278,16 @@ def test_doctor_warns_on_stale_or_absent_sweep(tmp_path, httpserver):
     assert "⚠" in _line_with(proc.stdout, "sweep")
 
 
-def test_doctor_scanner_fallback_is_a_warn(tmp_path, httpserver):
+def test_doctor_without_gitleaks_is_a_fail_capture_paused(tmp_path, httpserver):
+    """AMENDED by D16 (2026-10-15; was ``test_doctor_scanner_fallback_is_a_warn``:
+    rc 0 and a ⚠/"regex" scanner line). gitleaks is mandatory: with none reachable the
+    ``auto`` config no longer degrades to regex — capture PAUSES, and doctor must say so
+    with a ✗ on the scanner line and a failing exit code."""
     env = _doctor_env(tmp_path, httpserver, cron_line=True, last_run_age_s=60,
                       gitleaks=False)
     proc = _doctor(env)
-    assert proc.returncode == 0, "auto-fallback to regex is a WARN, never a FAIL"
+    assert proc.returncode == 1, "no gitleaks is a FAIL since D16: capture is paused"
     scanner = _line_with(proc.stdout, "scan")
-    assert "⚠" in scanner or "regex" in scanner.lower()
+    assert scanner.startswith("✗"), scanner
+    assert "paused" in scanner.lower() and "gitleaks" in scanner.lower()
+    assert "regex" not in scanner.lower().replace("scanner.engine", "")

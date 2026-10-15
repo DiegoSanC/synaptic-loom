@@ -148,7 +148,7 @@ def _mk_home(tmp: Path, srv, mode: str) -> tuple[Path, Path]:
                     encoding="utf-8")
     stub.chmod(0o755)
     kit.write_config(home, server_url=srv["base"], token=srv["tok"],
-                     claude_bin=str(stub), scanner_engine="regex",
+                     claude_bin=str(stub), scanner_engine="gitleaks",
                      gitleaks_version=None)
     return home, rec
 
@@ -303,7 +303,7 @@ def test_ac_rt3_hostile_verdicts_fail_closed(srv, tmp_path, mode, capsys):
         from loom.config import Config
 
         cfg = Config(loom_home=tmp_path, server_url="http://x", token="t",
-                     scanner_engine="regex")
+                     scanner_engine="gitleaks")
         assert scan_engine.scan(f"key {PLANTED_AWS}", cfg), (
             "precondition: the planted rationale secret must be detectable"
         )

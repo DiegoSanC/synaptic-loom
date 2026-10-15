@@ -208,7 +208,7 @@ def mk_cfg(tmp_path: Path, server_url: str, *, claude_stdout: str = CANNED_SUMMA
         # The sweep is OFF: this wave is about the hook→marker→processor path, and a
         # sweep pass would enqueue synthetic markers that are not what is under test.
         sweep_enabled=False,
-        scanner_engine="regex",
+        scanner_engine="gitleaks",
     )
 
 

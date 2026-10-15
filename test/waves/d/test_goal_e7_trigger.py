@@ -266,7 +266,7 @@ def _pythonpath() -> str:
 def _run_install(args: list[str], *, home: Path, loomhome: Path, path: str,
                  timeout: int = 180) -> subprocess.CompletedProcess:
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(loomhome),
-           "LOOM_SKIP_VENV": "1", "PATH": path, "PYTHONPATH": _pythonpath()}
+           "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1", "PATH": path, "PYTHONPATH": _pythonpath()}
     return subprocess.run(["bash", str(INSTALL), *args], env=env,
                           capture_output=True, text=True,
                           stdin=subprocess.DEVNULL, timeout=timeout)
@@ -827,7 +827,9 @@ def _green_systemd_doctor_env(tmp_path, httpserver):
                      scanner_engine="auto")
     (loomhome / "config.json").chmod(0o600)
     _seed_fresh_sweep_record(loomhome)
-    ipath = _interactive_path(tmp_path, shims, with_gitleaks=False)
+    # AMENDED by D16 (2026-10-15; was `with_gitleaks=False`): a "doctor-green" host has
+    # gitleaks now — without one capture is paused and the scanner row is a ✗.
+    ipath = _interactive_path(tmp_path, shims, with_gitleaks=True)
     _assert_host_safe(ipath, shims, systemd_shimmed=True)
     ins = _run_install(["--yes"], home=home, loomhome=loomhome, path=ipath)
     assert ins.returncode == 0, ins.stderr

@@ -120,7 +120,7 @@ def _mk_cfg(tmp_path, *, settle_s: int = 1800,
         loom_home=home, server_url=server_url, token="goal-token",
         claude_bin=claude_bin, prompt_path=home / "prompts" / "summarizer_v1.md",
         sweep_enabled=True, sweep_settle_s=settle_s, sweep_transcripts_root=root,
-        scanner_engine="regex",
+        scanner_engine="gitleaks",
     )
 
 

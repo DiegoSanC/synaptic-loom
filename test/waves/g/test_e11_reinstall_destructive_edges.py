@@ -54,7 +54,7 @@ def _uv_home(tmp: Path) -> tuple[Path, Path, str, Path]:
 def _install(args, *, home, loomhome, path, **kw):
     """Plain install with the scheduler step switched off: these legs are about step 2,
     and LOOM_SKIP_TRIGGER=1 is a second belt over the PATH already hiding crontab."""
-    extra = {"LOOM_SKIP_TRIGGER": "1"}
+    extra = {"LOOM_SKIP_TRIGGER": "1", "LOOM_SKIP_GITLEAKS": "1"}  # D16: no download
     extra.update(kw.pop("extra_env", None) or {})
     env = {**os.environ}
     env.pop("LOOM_SKIP_VENV", None)

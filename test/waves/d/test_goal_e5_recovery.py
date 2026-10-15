@@ -181,7 +181,7 @@ def _mk_cfg(tmp_path, *, server_url: str = "http://127.0.0.1:9",
     root.mkdir(exist_ok=True)
     kit.write_config(home, server_url=server_url, claude_bin=claude_bin,
                      settle_s=settle_s, transcripts_root=root,
-                     sweep_enabled=sweep_enabled, scanner_engine="regex",
+                     sweep_enabled=sweep_enabled, scanner_engine="gitleaks",
                      gitleaks_version=None)
     return Config.load(home)
 

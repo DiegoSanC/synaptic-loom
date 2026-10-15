@@ -326,7 +326,7 @@ def test_b2_a_v3_capture_posts_its_items(srv, tmp_path, name, session):
     home = kit.loom_home(tmp_path)
     shutil.copyfile(PROMPT_V3, home / "prompts" / "summarizer_v3.md")
     kit.write_config(home, server_url=srv["base"], token=srv["tok"], claude_bin=stub,
-                     scanner_engine="regex", gitleaks_version=None)
+                     scanner_engine="gitleaks", gitleaks_version=None)
     cfg = json.loads((home / "config.json").read_text())
     cfg["summarizer"]["prompt_version"] = "v3"
     cfg.pop("prompt_path", None)

@@ -128,7 +128,7 @@ def _replay(tmp: Path, base_url: str, case: tuple[str, str]):
     home = kit.loom_home(tmp)
     shutil.copyfile(PROMPT_V3, home / "prompts" / "summarizer_v3.md")
     kit.write_config(home, server_url=base_url, claude_bin=stub,
-                     scanner_engine="regex", gitleaks_version=None)
+                     scanner_engine="gitleaks", gitleaks_version=None)
     cfg = json.loads((home / "config.json").read_text())
     cfg["summarizer"]["prompt_version"] = "v3"
     cfg.pop("prompt_path", None)   # derived from the version, as on a pilot machine
@@ -318,7 +318,7 @@ def test_b4_install_ships_v3_additively(tmp_path):
     fake_loom.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(0)\n")
     fake_loom.chmod(0o755)
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(loomhome),
-           "PATH": path, "LOOM_SKIP_VENV": "1"}
+           "PATH": path, "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1"}
     cp = subprocess.run(
         ["bash", str(kit.REPO_ROOT / "client" / "install.sh"), "--yes"],
         env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=300,

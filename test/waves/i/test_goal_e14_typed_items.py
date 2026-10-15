@@ -94,7 +94,7 @@ def _v2_home(tmp: Path, base_url: str, claude_bin: str) -> Path:
     shutil.copyfile(kit.REPO_ROOT / "prompts" / "summarizer_v2.md",
                     home / "prompts" / "summarizer_v2.md")
     kit.write_config(home, server_url=base_url, claude_bin=claude_bin,
-                     scanner_engine="regex", gitleaks_version=None)
+                     scanner_engine="gitleaks", gitleaks_version=None)
     cfg = json.loads((home / "config.json").read_text())
     cfg["summarizer"]["prompt_version"] = "v2"
     cfg["prompt_path"] = str(home / "prompts" / "summarizer_v2.md")
@@ -334,7 +334,7 @@ def test_install_ships_v2_additively(tmp_path):
     fake_loom.write_text(f"#!{sys.executable}\nimport sys\nsys.exit(0)\n")
     fake_loom.chmod(0o755)
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(loomhome),
-           "PATH": path, "LOOM_SKIP_VENV": "1"}
+           "PATH": path, "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1"}
     cp = subprocess.run(
         ["bash", str(kit.REPO_ROOT / "client" / "install.sh"), "--yes"],
         env=env, capture_output=True, text=True, stdin=subprocess.DEVNULL,

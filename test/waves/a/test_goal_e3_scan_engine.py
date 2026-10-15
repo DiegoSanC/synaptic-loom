@@ -94,14 +94,23 @@ def test_active_engine_reports_gitleaks_and_pin(tmp_path):
 # --------------------------------------------------------------------------- #
 # Engine selection under PATH manipulation                                     #
 # --------------------------------------------------------------------------- #
-def test_auto_without_binary_falls_back_to_regex(tmp_path, monkeypatch):
+def test_auto_without_binary_no_longer_falls_back_to_regex(tmp_path, monkeypatch):
+    """AMENDED by D16 (2026-10-15; was ``test_auto_without_binary_falls_back_to_regex``,
+    which asserted the regex-only scan and ``active_engine().name == "regex"``). ``auto``
+    is now a legacy alias of ``gitleaks``: no binary is an ERROR for every entry point,
+    never a silent downgrade — the caller pauses capture or fails closed."""
     shims = kit.shim_dir(tmp_path)
     monkeypatch.setenv("PATH", kit.base_path_with(shims, include_gitleaks=False))
     cfg = _cfg(tmp_path, engine="auto")
     text = "token sk-AbCdEfGhIjKlMnOpQrStUv\n"
-    kinds = {f.kind for f in scan_engine.scan(text, cfg)}
-    assert "openai_key" in kinds  # the regex families still protect
-    assert scan_engine.active_engine(cfg).name == "regex"
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.scan(text, cfg)
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.active_engine(cfg)
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.ensure_ready(cfg)
+    with pytest.raises(scan_engine.ScannerUnavailable):
+        scan_engine.redact(text, cfg)
 
 
 def test_explicit_gitleaks_without_binary_raises(tmp_path, monkeypatch):
@@ -114,8 +123,13 @@ def test_explicit_gitleaks_without_binary_raises(tmp_path, monkeypatch):
         scan_engine.scan(PLANTED, cfg)
 
 
-def test_explicit_regex_never_invokes_gitleaks(tmp_path, monkeypatch):
-    """engine='regex' must not touch the binary at all (poisoned shim proves it)."""
+def test_explicit_regex_is_refused_and_never_invokes_gitleaks(tmp_path, monkeypatch):
+    """engine='regex' must not touch the binary at all (poisoned shim proves it).
+
+    AMENDED by D16 (2026-10-15; was ``test_explicit_regex_never_invokes_gitleaks``, which
+    also asserted a regex-only scan returning ``password_assignment``). ``regex`` is no
+    longer accepted for capture: every entry point REFUSES it (capture pauses, the other
+    callers fail closed) — and the refusal still never executes the binary."""
     shims = kit.shim_dir(tmp_path)
     sentinel = tmp_path / "gitleaks_was_called"
     kit.write_shim(shims, "gitleaks", f"""
@@ -125,8 +139,13 @@ sys.exit(99)
 """)
     monkeypatch.setenv("PATH", f"{shims}:{Path('/usr/bin')}:{Path('/bin')}")
     cfg = _cfg(tmp_path, engine="regex")
-    kinds = {f.kind for f in scan_engine.scan("password=hunter2\n", cfg)}
-    assert "password_assignment" in kinds
+    for call in (lambda: scan_engine.scan("password=hunter2\n", cfg),
+                 lambda: scan_engine.redact("password=hunter2\n", cfg),
+                 lambda: scan_engine.active_engine(cfg),
+                 lambda: scan_engine.ensure_ready(cfg)):
+        with pytest.raises(scan_engine.ScannerUnavailable) as exc:
+            call()
+        assert "hunter2" not in str(exc.value)
     assert not sentinel.exists(), "regex engine must never execute gitleaks"
 
 

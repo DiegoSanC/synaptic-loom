@@ -954,7 +954,8 @@ def _run_install(args: list[str], *, home: Path, loom_home: Path, path: str,
                  timeout: int = 240) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["bash", str(INSTALL_SH), *args],
-        env=_base_env(home=home, path=path, LOOM_HOME=str(loom_home), LOOM_SKIP_VENV="1"),
+        env=_base_env(home=home, path=path, LOOM_HOME=str(loom_home), LOOM_SKIP_VENV="1",
+                       LOOM_SKIP_GITLEAKS="1"),
         capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout,
     )
 
@@ -1000,9 +1001,11 @@ def test_ac_f9_3_triggered_pass_under_a_minimal_path_still_quarantines_via_gitle
     the installer carry its install-time PATH into the trigger.
 
     Both legs run the very command line the installer wrote, under the same gitleaks-free
-    minimal PATH. The control leg applies only ``LOOM_HOME=`` and shows the degradation for
-    real (the secret is published). The parity leg applies the assignments the recorded block
-    actually carries, and the secret must instead be quarantined by the **gitleaks** engine —
+    minimal PATH. The control leg applies only ``LOOM_HOME=``; before D16 it showed the
+    degradation for real (the secret was published), since D16 it shows the PAUSE (nothing
+    leaves, the session waits). The install runs with ``LOOM_SKIP_GITLEAKS=1`` so there is
+    no ``$LOOM_HOME/bin/gitleaks`` and the PATH carry-over is still what is under test. The
+    parity leg applies the assignments the recorded block actually carries, and the secret must instead be quarantined by the **gitleaks** engine —
     asserted on the finding's rule id, which the regex set cannot produce.
     """
     token = _adduser(server.db, "e2e-parity")
@@ -1051,19 +1054,29 @@ def test_ac_f9_3_triggered_pass_under_a_minimal_path_still_quarantines_via_gitle
     # --- control leg: the scheduler's own minimal PATH, no carried assignments ----------
     # Documents (rather than assumes) that this PATH genuinely degrades the engine, which is
     # what makes the parity leg below a real result instead of a coincidence.
-    _seed_leaky_session(client, "sess-parity-control")
+    control_transcript = _seed_leaky_session(client, "sess-parity-control")
     control_env = {"HOME": str(safe_home), "SHELL": "/bin/sh", "LOGNAME": "e2e",
                    "PATH": minimal_path, "LOOM_HOME": str(client.loom_home)}
     control = subprocess.run(["/bin/sh", "-c", cron_cmd], env=control_env,
                              cwd=str(safe_home), capture_output=True, text=True,
                              timeout=600)
-    assert control.returncode == 0, control.stdout + control.stderr
+    # AMENDED by D16 (2026-10-15). Before it, this leg showed the degradation for real:
+    # exit 0 and the secret PUBLISHED by the regex fallback. Since D16 a pass that finds
+    # no gitleaks PAUSES capture: non-zero exit, nothing published, nothing quarantined,
+    # and the session left unread for the next healthy pass (asserted below).
+    assert control.returncode == 1, control.stdout + control.stderr
+    assert "PAUSED" in control.stderr and "gitleaks" in control.stderr, control.stderr
     published = _entries(server.url, token, project_id)
-    assert len(published) == 1 and PLANTED_SECRET in published[0]["content_md"], (
-        "control leg: without the carried PATH the engine falls back to regex and the "
-        f"secret is published — if that stopped being true, rewrite this leg:\n{published}"
+    assert published == [], (
+        "control leg: without gitleaks the pass must publish NOTHING (D16 pause), "
+        f"never fall back to regex:\n{published}"
     )
     assert list((client.loom_home / "quarantine").glob("*.json")) == []
+    state_path = client.loom_home / "state.json"
+    state = _read_json(state_path) if state_path.exists() else {}
+    assert str(control_transcript) not in state, (
+        "a paused pass must not read (or advance a pointer over) any session"
+    )
 
     # --- parity leg: the same command, plus exactly the block's own assignments ---------
     _seed_leaky_session(client, "sess-parity-trigger")
@@ -1088,25 +1101,28 @@ def test_ac_f9_3_triggered_pass_under_a_minimal_path_still_quarantines_via_gitle
         "quarantining it — trigger-context parity is broken"
     )
     quarantined = sorted((client.loom_home / "quarantine").glob("*.json"))
-    assert len(quarantined) == 1, f"expected one quarantine record: {quarantined}"
-    record = _read_json(quarantined[0])
-    assert record["reason"] == "secret_scan", record
-    # The load-bearing assertion: quarantine METADATA, not a file count. The rule id is
-    # gitleaks' own RuleID, so it is only present if the gitleaks engine produced the
-    # verdict — the regex set finds nothing at all in this text, and a scanner that could
-    # not run at all would show up as a `scan_error` finding (fail-closed, I4).
-    kinds = [f["kind"] for f in record["findings"]]
-    assert kinds, "the quarantine record must name what was found"
-    assert GITLEAKS_RULE_ID in kinds, (
-        f"AC-F9.3: the findings must come from the gitleaks engine, got kinds={kinds}"
-    )
-    assert "scan_error" not in kinds, (
-        f"a fail-closed scan_error is not parity — the binary was not resolved: {kinds}"
-    )
-    for finding in record["findings"]:
-        assert PLANTED_SECRET not in finding["redacted"], (
-            "quarantine metadata must not repeat the secret verbatim (I5/I6)"
+    # D16: TWO records — the session the paused control pass left unread is captured by
+    # this healthy pass too (nothing was lost while capture was paused).
+    assert len(quarantined) == 2, f"expected two quarantine records: {quarantined}"
+    for path in quarantined:
+        record = _read_json(path)
+        assert record["reason"] == "secret_scan", record
+        # The load-bearing assertion: quarantine METADATA, not a file count. The rule id
+        # is gitleaks' own RuleID, so it is only present if the gitleaks engine produced
+        # the verdict — the regex set finds nothing at all in this text, and a scanner that
+        # could not run at all would show up as a `scan_error` finding (fail-closed, I4).
+        kinds = [f["kind"] for f in record["findings"]]
+        assert kinds, "the quarantine record must name what was found"
+        assert GITLEAKS_RULE_ID in kinds, (
+            f"AC-F9.3: the findings must come from the gitleaks engine, got kinds={kinds}"
         )
+        assert "scan_error" not in kinds, (
+            f"a fail-closed scan_error is not parity — the binary was not resolved: {kinds}"
+        )
+        for finding in record["findings"]:
+            assert PLANTED_SECRET not in finding["redacted"], (
+                "quarantine metadata must not repeat the secret verbatim (I5/I6)"
+            )
     assert PLANTED_SECRET in record["entry"]["content_md"], (
         "the quarantined payload keeps the secret on purpose, for local review"
     )

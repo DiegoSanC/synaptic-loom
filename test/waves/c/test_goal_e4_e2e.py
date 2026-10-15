@@ -207,7 +207,7 @@ sys.exit(0)
     # anywhere, install.sh and doctor take the cron branch on EVERY platform, and the only
     # `crontab` they can find is the file-backed recorder shim above.
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(loomhome),
-           "LOOM_SKIP_VENV": "1",
+           "LOOM_SKIP_VENV": "1", "LOOM_SKIP_GITLEAKS": "1",
            "PATH": kit.scheduler_free_path_with_gitleaks(shims)}
     assert shutil.which("systemctl", path=env["PATH"]) is None, (
         "the host systemctl must be unreachable: install.sh would arm a real user timer"

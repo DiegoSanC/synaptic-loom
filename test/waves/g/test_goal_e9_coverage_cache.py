@@ -134,7 +134,7 @@ def _mk_cfg(tmp: Path, *, settle_s: int = 1800) -> Config:
         loom_home=home, server_url="http://127.0.0.1:9", token="goal-token",
         claude_bin="claude", prompt_path=home / "prompts" / "summarizer_v1.md",
         sweep_enabled=True, sweep_settle_s=settle_s, sweep_transcripts_root=root,
-        scanner_engine="regex",
+        scanner_engine="gitleaks",
     )
 
 

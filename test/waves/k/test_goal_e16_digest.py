@@ -135,7 +135,7 @@ def _mk_home(tmp: Path, srv, *, secret: bool = False) -> tuple[Path, Path]:
         encoding="utf-8")
     stub.chmod(0o755)
     kit.write_config(home, server_url=srv["base"], token=srv["tok"],
-                     claude_bin=str(stub), scanner_engine="regex",
+                     claude_bin=str(stub), scanner_engine="gitleaks",
                      gitleaks_version=None)
     return home, rec
 

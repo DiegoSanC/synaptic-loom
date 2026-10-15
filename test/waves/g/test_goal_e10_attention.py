@@ -179,7 +179,7 @@ def _mk_cfg(base: Path, *, server_url: str = "http://127.0.0.1:9",
     root.mkdir(parents=True, exist_ok=True)
     kit.write_config(home, server_url=server_url, claude_bin=claude_bin,
                      settle_s=1800, transcripts_root=root, sweep_enabled=False,
-                     scanner_engine="regex", gitleaks_version=None)
+                     scanner_engine="gitleaks", gitleaks_version=None)
     return Config.load(home)
 
 

@@ -59,6 +59,19 @@ host whose PATH has no usable `systemctl --user` (macOS) so the cron branch is t
 executable boundary — the systemd branch is verified in wave b via the recorder shim
 and manually on the WSL2 pilot host (AC-2.2c).
 
+**D16 amendments (2026-10-15, owner decision; DESIGN.md D16).** D16 superseded the
+phase-2 "``auto`` → regex fallback" behaviour these goals pinned: gitleaks is mandatory,
+``auto`` is a legacy alias of ``gitleaks``, ``regex`` is refused, and capture PAUSES without
+gitleaks. The goals were amended only to assert the new behaviour with equal or greater
+strength, never to drop an assertion: in ``a/test_goal_e3_scan_engine.py`` the two fallback
+tests now assert the refusal (and still that ``regex`` never executes the binary); in
+``b/test_goal_e2_install_doctor.py`` the no-gitleaks doctor is a ✗ "capture paused", not a
+⚠; in ``d/test_goal_e7_trigger.py`` the "doctor-green" environment includes gitleaks. The
+environment of every goal that ran capture with ``scanner_engine="regex"`` now runs it with
+the real ``gitleaks``, and every goal that runs ``install.sh`` sets ``LOOM_SKIP_GITLEAKS=1``
+(the installer's new step 1b downloads gitleaks; tests never touch the network — that step
+is covered by ``client/tests/integration/test_install_gitleaks.py``).
+
 Planted-secret trap (E3/E4): validated empirically at plan time — gitleaks rule
 `generic-api-key` (entropy 5.29) catches it; the phase-1 regex set returns `[]`.
 

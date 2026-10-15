@@ -266,8 +266,10 @@ def _homes(tmp: Path) -> tuple[Path, Path]:
 def _run_install(args: list[str], *, home: Path, loomhome: Path, path: str,
                  extra_env: dict | None = None, script: Path = INSTALL,
                  timeout: int = 180) -> subprocess.CompletedProcess:
+    # D16 accessory: step 1b would download gitleaks (no network in tests); this wave
+    # is about step 2, so the gitleaks step is skipped through its own seam.
     env = {**os.environ, "HOME": str(home), "LOOM_HOME": str(loomhome),
-           "PATH": path}
+           "PATH": path, "LOOM_SKIP_GITLEAKS": "1"}
     env.pop("LOOM_SKIP_VENV", None)   # the venv path IS the surface under test
     env.pop("LOOM_SKIP_TRIGGER", None)
     if extra_env:
