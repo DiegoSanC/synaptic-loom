@@ -103,7 +103,7 @@ def _decision(entry_id: int, text: str) -> dict:
 
 def _cfg(tmp_path, **kw) -> Config:
     return Config(loom_home=tmp_path / "home", server_url="http://x", token="t",
-                  scanner_engine="regex", **kw)
+                  scanner_engine="gitleaks", **kw)
 
 
 @pytest.fixture()

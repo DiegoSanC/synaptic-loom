@@ -15,6 +15,7 @@ from loom import cli
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PINNED_VERSION = (REPO_ROOT / "contract" / "VERSION").read_text(encoding="utf-8").strip()
+REAL_GITLEAKS = shutil.which("gitleaks")
 
 
 def _fakebin(tmp_path):
@@ -82,6 +83,12 @@ def _prepare(env, monkeypatch, tmp_path, *, include_hook: bool) -> None:
     env.config("claude")  # server_url = mock; claude_bin = "claude" (resolved in fakebin)
     for sub in ("queue", "quarantine", "failed", "log"):
         (env.home / sub).mkdir(parents=True, exist_ok=True)
+    # D16: gitleaks is mandatory and its absence is a ✗. It sits where install.sh puts it
+    # ($LOOM_HOME/bin, run by absolute path), so the tests below that narrow PATH to probe
+    # OTHER rows keep a usable scanner. The suite requires the real binary (AGENTS.md).
+    assert REAL_GITLEAKS, "the suite requires the real gitleaks (AGENTS.md)"
+    (env.home / "bin").mkdir(exist_ok=True)
+    (env.home / "bin" / "gitleaks").symlink_to(REAL_GITLEAKS)
 
     env.httpserver.expect_request("/api/health", method="GET").respond_with_json(
         {"status": "ok", "version": "0.1.0"}

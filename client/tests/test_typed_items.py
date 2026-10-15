@@ -364,7 +364,7 @@ def _pipeline(tmp_path: Path, summary: str) -> tuple[Config, Path, dict]:
     cfg = Config(
         loom_home=tmp_path / "loom_home", server_url="http://127.0.0.1:9", token="t",
         claude_bin=str(stub), prompt_path=PROMPT_V2, prompt_version="v2",
-        scanner_engine="regex", sweep_transcripts_root=tmp_path / "transcripts",
+        scanner_engine="gitleaks", sweep_transcripts_root=tmp_path / "transcripts",
     )
     cfg.ensure_dirs()
     marker_path = cfg.queue_dir / "s1.json"

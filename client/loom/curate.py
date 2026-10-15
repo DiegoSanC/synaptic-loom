@@ -1265,6 +1265,15 @@ def run_curate(cfg: Config, project: str | None = None, *,
             # `lock`, not this one) is never blocked by curation at all.
             print("loom curate: another curate pass holds the lock; nothing to do.")
             return 0
+        # D16: every rationale and the digest are scanned with gitleaks before they
+        # are posted. With no usable gitleaks that scan can only fail, so refuse HERE —
+        # before the state file, the server or the LLM — rather than pay for a pass
+        # whose every verdict would then fail closed and park the project.
+        reason = processor.scanner_pause_reason(cfg)
+        if reason is not None:
+            print(f"loom curate: refusing to run: {reason}. Nothing was sent to the "
+                  "model or posted, and no attempt was charged.", file=sys.stderr)
+            return 1
         try:
             return _curate_locked(cfg, project, seed_from=seed_from, reset=reset,
                                   redigest=redigest)

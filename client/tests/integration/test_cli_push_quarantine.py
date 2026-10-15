@@ -6,6 +6,9 @@ Rescans the payload (possibly hand-edited): if it is still dirty it refuses (I4)
 from __future__ import annotations
 
 import json
+import shutil
+
+import pytest
 
 from loom import cli
 
@@ -162,3 +165,37 @@ def test_push_of_an_unlabelled_entry_sends_no_items(env, monkeypatch):
     [posted] = env.posted_entries()
     assert "items" not in posted
     assert LEAKED not in json.dumps(posted)
+
+
+# --- D16: no gitleaks → the rescan cannot run → refuse, even with --force ------------
+
+def _no_gitleaks(tmp_path, monkeypatch):
+    safe = tmp_path / "safe_bin"
+    safe.mkdir()
+    for name in ("git", "python3"):
+        target = shutil.which(name)
+        if target:
+            (safe / name).symlink_to(target)
+    monkeypatch.setenv("PATH", str(safe))
+
+
+@pytest.mark.parametrize("argv_tail", [[], ["--force"]])
+@pytest.mark.parametrize("engine", ["gitleaks", "auto", "regex"])
+def test_push_without_a_usable_scanner_refuses_and_says_why(env, monkeypatch, capsys, tmp_path,
+                                                            engine, argv_tail):
+    _setup(env, monkeypatch)
+    data = env.config_json()
+    data["scanner"] = {"engine": engine, "gitleaks_version": "8.30.1"}
+    (env.home / "config.json").write_text(json.dumps(data), encoding="utf-8")
+    _no_gitleaks(tmp_path, monkeypatch)
+    path = _quarantine_file(env, "sess-q-d16", CLEAN_MD)
+
+    rc = cli.main(["push-quarantine", "sess-q-d16", *argv_tail])
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert path.exists()
+    assert env.posted_entries() == []
+    assert "NOT uploading" in err
+    assert ("regex" if engine == "regex" else "gitleaks") in err
+    assert "install.sh" in err  # the remedy, not just the refusal

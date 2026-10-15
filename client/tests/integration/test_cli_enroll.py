@@ -79,6 +79,8 @@ def test_enroll_reads_the_code_hidden_and_writes_config_600(monkeypatch, tmp_pat
     # D15: a fresh enrolment captures with v4 (D11's v3, in English); `Config()`'s own
     # default stays v2.
     assert data["summarizer"] == {"model": "sonnet", "timeout_s": 300, "prompt_version": "v4"}
+    # D16: gitleaks is mandatory, pinned to what install.sh downloads.
+    assert data["scanner"] == {"engine": "gitleaks", "gitleaks_version": "8.30.1"}
     for sub in ("queue", "quarantine", "failed", "log", "prompts", "hooks"):
         assert (home / sub).is_dir()
 
@@ -107,9 +109,34 @@ def test_enroll_merges_into_an_existing_config(monkeypatch, tmp_path, httpserver
     assert data["token_expires_at"] == ENROL_BODY["expires_at"]
     assert data["cache_ttl_s"] == 42                      # kept
     assert data["summarizer"] == {"model": "opus", "timeout_s": 120, "prompt_version": "v1"}
-    assert data["scanner"] == {"engine": "auto", "gitleaks_version": "8.30.1"}
+    # D16 (was: the legacy {"engine": "auto", …} kept verbatim): the scanner section is
+    # the one setting enrolment normalizes, because no other engine value captures.
+    assert data["scanner"] == {"engine": "gitleaks", "gitleaks_version": "8.30.1"}
     assert data["sweep"] == {"transcripts_root": "/tmp/x"}
     assert stat.S_IMODE((home / "config.json").stat().st_mode) == 0o600
+
+
+@pytest.mark.parametrize("scanner", [
+    {"engine": "regex", "gitleaks_version": None},
+    {"engine": "auto"},
+    {"engine": "gitleaks", "gitleaks_version": "8.18.0", "note": "kept"},
+])
+def test_enroll_normalizes_the_scanner_section_to_mandatory_gitleaks(monkeypatch, tmp_path,
+                                                                    httpserver, scanner):
+    home = tmp_path / "loom_home"
+    home.mkdir()
+    (home / "config.json").write_text(json.dumps({
+        "server_url": "http://127.0.0.1:8787", "token": "old", "scanner": scanner,
+    }), encoding="utf-8")
+    monkeypatch.setenv("LOOM_HOME", str(home))
+    _mock(httpserver)
+    _hidden_prompt(monkeypatch)
+
+    assert cli.main(["enroll", "--server-url", httpserver.url_for(""), "--device-name", "m"]) == 0
+
+    data = json.loads((home / "config.json").read_text(encoding="utf-8"))
+    expected = {k: v for k, v in scanner.items() if k not in ("engine", "gitleaks_version")}
+    assert data["scanner"] == {**expected, "engine": "gitleaks", "gitleaks_version": "8.30.1"}
 
 
 def test_enroll_has_no_code_flag(monkeypatch, tmp_path, capsys):

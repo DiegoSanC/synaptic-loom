@@ -252,11 +252,19 @@ def test_secret_in_summary_quarantines_and_does_not_post(env):
 
 
 def test_secret_scan_crash_is_fail_closed(env, monkeypatch):
-    """If the scanner raises, it counts as a hit (fail-closed, I4): quarantine, no POST."""
-    env.register_projects()
+    """If the scanner raises, it counts as a hit (fail-closed, I4): quarantine, no POST.
 
-    def boom(_text):
-        raise RuntimeError("scanner exploded")
+    D16: the extract is scanned too (step 5b), so the crash is armed for the STEP-8 scan
+    only — the one over the summary — to keep this the step-8 guarantee it always was.
+    A crash at step 5b is covered by ``test_pre_summary_redaction.py``.
+    """
+    env.register_projects()
+    real_scan = processor.secret_scan.scan
+
+    def boom(text):
+        if "Usar SQLite" in text:  # the summary: this is the step-8 scan
+            raise RuntimeError("scanner exploded")
+        return real_scan(text)
 
     monkeypatch.setattr(processor.secret_scan, "scan", boom)
     cfg = env.config(env.make_stub(stdout=CANNED_SUMMARY))

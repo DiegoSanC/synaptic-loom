@@ -7,7 +7,9 @@ invoke these subcommands and show their output (P2).
 Subcommands and exit semantics:
 
 - ``process [--quiet]`` — one processor pass. Human-readable summary of the ``RunReport``;
-  ``--quiet`` prints nothing on a clean pass. Exit 0; **2** if the config is missing.
+  ``--quiet`` prints nothing on a clean pass. Exit 0; **2** if the config is missing;
+  **1** if capture is PAUSED because gitleaks is unavailable (D16) — the reason is
+  printed even under ``--quiet``, and every marker stays queued untouched.
 - ``register`` — registers the cwd's repo (by its git remote) on the server. Exit 0 if it
   ends up registered or already was; **1** with no remote/git or an unreachable server.
 - ``log [<project>] [--limit N] [--grep TERMS] [--type LABEL] [--all] [--no-digest]
@@ -28,16 +30,20 @@ Subcommands and exit semantics:
   neighbours by ONE tool-less LLM pass, and the verdicts become ``entry_links`` rows.
   Exit 0 (including when another curate holds the lock); **1** if anything about the
   batch failed validation — in which case NOTHING was posted and the watermark did not
-  move. After ``curate.MAX_ATTEMPTS`` consecutive failures the project is PARKED and no
+  move — or if no usable gitleaks is available (D16: refused before any model call).
+  After ``curate.MAX_ATTEMPTS`` consecutive failures the project is PARKED and no
   pass runs for it at all: ``--reset`` clears the counter, ``--from`` also seeds the
   watermark forward (the way out of a backlog the listing cannot page down to).
 - ``status`` — informational panel (markers, failed/, quarantine, errors, cache,
-  version). Always exit 0; **2** only if the config is missing.
+  version; first, a ``✗ CAPTURE PAUSED`` line when D16's scanner gate stops capture).
+  Always exit 0; **2** only if the config is missing.
 - ``push-quarantine <file|id> [--force]`` — rescans a quarantined entry and, if it is
   clean (or ``--force``), uploads it and deletes the file. Exit 0; **1** if it is still
   dirty without ``--force``, if the rescan itself fails (fail-closed, I4: a scanner error
   counts as a hit and ``--force`` does not override it) or if the POST fails.
-- ``init`` — writes ``config.json`` (chmod 600) and creates the ``LOOM_HOME`` tree.
+- ``init`` — writes ``config.json`` (chmod 600) and creates the ``LOOM_HOME`` tree. Like
+  ``enroll``, it writes ``scanner = {"engine": "gitleaks", "gitleaks_version": "8.30.1"}``
+  (D16).
 - ``doctor`` — ✓/⚠/✗ checklist of the environment. Exit 0 if there is no ✗, **1** if there is.
 
 `api_client` (T4) is frozen and does not expose a method for every endpoint; for those
@@ -357,6 +363,14 @@ def cmd_process(args: argparse.Namespace) -> int:
         print(f"loom process: config not available: {exc}", file=sys.stderr)
         return 2
     report = processor.run_once(cfg)
+    if report.paused is not None:
+        # D16: loud even under --quiet — this is the failure the unattended run exists
+        # to surface, and a non-zero exit marks the systemd unit failed.
+        print(f"loom process: capture PAUSED — {report.paused}", file=sys.stderr)
+        print("  Every marker stays in queue/ untouched (nothing is lost); run "
+              "'loom doctor', then 'loom process' once gitleaks is in place.",
+              file=sys.stderr)
+        return 1
     if args.quiet:
         # Clean pass (no errors) → total silence; if there were errors, a minimal notice.
         if report.errors:
@@ -1770,6 +1784,29 @@ def _print_curation(cfg: Config) -> None:
               f"{curate._UNDIGEST_HINT}")
 
 
+SCANNER_PAUSE_HINT = (
+    "Capture is stopped: no marker is summarized or uploaded, and none is lost — they "
+    "wait in queue/. Install gitleaks with 'bash client/install.sh --yes --update' "
+    "(checksum-verified, into $LOOM_HOME/bin), check with 'loom doctor', then run "
+    "'loom process'."
+)
+
+
+def _print_scanner_pause(cfg: Config) -> None:
+    recorded = processor.read_scanner_paused(cfg)
+    live = processor.scanner_pause_reason(cfg)
+    if recorded:
+        print(f"\u2717 CAPTURE PAUSED since {recorded.get('since', '?')} (last pass "
+              f"{recorded.get('at', '?')}): {recorded.get('reason', '?')}")
+        if live is None:
+            print("  gitleaks is usable from this shell now; the next pass resumes capture.")
+    elif live is not None:
+        print(f"\u2717 CAPTURE PAUSED (the next pass will stop here): {live}")
+    else:
+        return
+    print(f"  {SCANNER_PAUSE_HINT}\n")
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     try:
         cfg = Config.load()
@@ -1785,6 +1822,12 @@ def cmd_status(args: argparse.Namespace) -> int:
     if rejected:
         print(f"\u2717 AUTH REJECTED since {rejected.get('at', '?')}: {rejected.get('detail', '?')}")
         print(f"  {auth.REJECTED_HINT}\n")
+
+    # D16: capture paused because gitleaks is unavailable. As loud as the auth row and
+    # for the same reason: every marker below is waiting on it. The record is what the
+    # last (possibly unattended) pass saw; with none, the live check says whether the
+    # NEXT pass would pause.
+    _print_scanner_pause(cfg)
 
     # Markers pending in the queue.
     markers = _list_markers(cfg.queue_dir)
@@ -1947,7 +1990,14 @@ def cmd_push_quarantine(args: argparse.Namespace) -> int:
         # into an upload. --force does NOT override this — it means "upload despite
         # findings I have reviewed", and here there are no findings to review.
         # Only the exception TYPE is printed: an engine's error text is not a channel the
-        # scanned content (or a secret inside it) may escape through (I5/I6).
+        # scanned content (or a secret inside it) may escape through (I5/I6). The one
+        # exception is ScannerUnavailable (D16), whose text scan_engine builds from the
+        # config and the binary lookup alone — it names the reason and the remedy.
+        if isinstance(exc, scan_engine.ScannerUnavailable):
+            print(f"The rescan cannot run: {' '.join(str(exc).split())}.", file=sys.stderr)
+            print("NOT uploading (D16: gitleaks is mandatory; a scanner failure counts "
+                  "as a hit, I4).", file=sys.stderr)
+            return 1
         print(
             f"The rescan could not be completed ({type(exc).__name__}); NOT uploading "
             "(a scanner failure counts as a hit, I4).",
@@ -1989,6 +2039,12 @@ def cmd_push_quarantine(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 # init                                                                         #
 # --------------------------------------------------------------------------- #
+# What init and enroll write as `scanner` (D16): gitleaks, pinned to the version
+# install.sh downloads and checksum-verifies.
+_MANDATORY_SCANNER = {"engine": scan_engine.ENGINE_GITLEAKS,
+                      "gitleaks_version": scan_engine.GITLEAKS_PINNED_VERSION}
+
+
 def _write_config_600(path: Path, config: dict) -> None:
     """Writes ``config.json``, creating it with 0600 permissions (it holds the token)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2040,6 +2096,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "timeout_s": DEFAULT_TIMEOUT_S,
             "prompt_version": DEFAULT_PROMPT_VERSION,
         },
+        "scanner": _MANDATORY_SCANNER,
     }
     config_path = loom_home / "config.json"
     _write_config_600(config_path, config)
@@ -2119,6 +2176,11 @@ def cmd_enroll(args: argparse.Namespace) -> int:
         "token": token,
         "token_issued_at": issued_at,
         "token_expires_at": expires_at,
+        # D16: the one existing setting enrolment rewrites — no other engine value
+        # captures ("auto" is a legacy alias, "regex" pauses capture). Other keys a
+        # human put in the section are kept.
+        "scanner": {**(existing.get("scanner") if isinstance(existing.get("scanner"), dict)
+                       else {}), **_MANDATORY_SCANNER},
     }
     config_path = loom_home / "config.json"
     _write_config_600(config_path, config)
@@ -2575,26 +2637,35 @@ def _trigger_env_path(loom_home: Path) -> str | None:
 
 
 def _trigger_parity_check(cfg: Config | None) -> tuple[str, str]:
-    """Would the unattended pass resolve the SAME scanner engine as this shell? (P2.F5)
+    """Would the unattended pass resolve the SAME gitleaks as this shell? (P2.F5, D16)
 
-    RUNBOOK §7 finding 1: cron's minimal PATH silently degrades ``engine = auto`` to regex
-    on a darwin/homebrew host while the interactive doctor happily reports ``✓ gitleaks``.
-    Both rows were individually honest and the picture they painted together was false, so
-    the divergence gets a row of its own. ``⚠``: the trigger still runs and still scans,
-    just with the weaker engine.
+    RUNBOOK §7 finding 1: cron's minimal PATH hid a homebrew gitleaks from the periodic
+    pass while the interactive doctor reported ``✓ gitleaks``. Before D16 that pass
+    silently downgraded to regex; since D16 it PAUSES capture instead. A gitleaks at
+    ``$LOOM_HOME/bin`` (install.sh's place for it) is run by absolute path and makes
+    the trigger's PATH irrelevant; only a PATH-resolved gitleaks needs the trigger's
+    PATH to reach it. ``⚠``, not ``✗``: the kick from the SessionEnd hook runs with the
+    session's own environment and still captures.
     """
     if cfg is None:
         return "warn", "trigger scanner parity not checked (no config)"
     try:
         info = scan_engine.active_engine(cfg)
+    except scan_engine.ScannerUnavailable:
+        info = None
     except Exception as exc:  # noqa: BLE001 — total row (LOW-8); `_scanner_check` reports why.
         return "warn", f"trigger scanner parity could not be determined ({type(exc).__name__})"
-    if info.name != "gitleaks":
-        # Nothing to diverge from: this shell resolves no stronger engine than the minimal
-        # environment the scheduler provides.
+    if info is None or info.name != scan_engine.ENGINE_GITLEAKS:
+        return "warn", (
+            "trigger scanner parity not checked: this shell resolves no usable 'gitleaks' "
+            "either (see the scanner row)"
+        )
+    # The same first lookup `scan_engine.resolve_gitleaks` makes.
+    home_bin = cfg.loom_home / "bin" / scan_engine.GITLEAKS_BINARY
+    if home_bin.is_file() and os.access(home_bin, os.X_OK):
         return "ok", (
-            "trigger scanner parity: this shell resolves no 'gitleaks' either, so the "
-            "periodic pass runs the same engine an interactive run would"
+            f"trigger scanner parity: the periodic pass runs {home_bin} by absolute path, "
+            "whatever PATH its scheduler gives it"
         )
     try:
         trigger_path = _trigger_env_path(cfg.loom_home)
@@ -2602,15 +2673,16 @@ def _trigger_parity_check(cfg: Config | None) -> tuple[str, str]:
         return "warn", f"trigger scanner parity could not be determined ({type(exc).__name__})"
     if trigger_path is None:
         return "warn", (
-            "trigger scanner parity: the periodic trigger carries no PATH of its own, so "
-            "the unattended pass would fall back to the regex engine while this shell uses "
-            "'gitleaks' (re-run install.sh)"
+            "trigger scanner parity: the periodic trigger carries no PATH of its own and "
+            "there is no $LOOM_HOME/bin/gitleaks, so the unattended pass would find no "
+            "'gitleaks' and capture would be PAUSED while this shell scans fine (re-run "
+            "install.sh, which installs gitleaks into $LOOM_HOME/bin)"
         )
     if shutil.which(scan_engine.GITLEAKS_BINARY, path=trigger_path) is None:
         return "warn", (
             "trigger scanner parity: the PATH the periodic trigger carries does not resolve "
-            "'gitleaks', so the unattended pass would fall back to the regex engine "
-            "(re-run install.sh)"
+            "'gitleaks', so the unattended pass would PAUSE capture (re-run install.sh, "
+            "which installs gitleaks into $LOOM_HOME/bin)"
         )
     return "ok", (
         "trigger scanner parity: the periodic trigger resolves the same 'gitleaks' engine "
@@ -2619,48 +2691,34 @@ def _trigger_parity_check(cfg: Config | None) -> tuple[str, str]:
 
 
 def _scanner_check(cfg: Config | None) -> tuple[str, str]:
-    """Which engine a real scan would use, and whether it matches the pin (R2.4.2, check 3).
+    """Is capture able to run, which gitleaks, does it match the pin (R2.4.2, D16).
 
-    ``scan_engine.active_engine`` RAISES for the two config states this row exists to
-    report — an explicit ``gitleaks`` with no binary (``FileNotFoundError``) and an unknown
-    engine value (``ValueError``) — so calling it bare would make doctor die with a
-    traceback exactly where it owes the user a ✗ row (wave-a finding F6).
+    ``✗`` exactly when the processor's D16 gate would PAUSE capture: no gitleaks at
+    ``$LOOM_HOME/bin`` nor on PATH, a ``gitleaks version`` that cannot run, or an engine
+    value capture no longer accepts (``regex``, a typo). The gate's reasons are built by
+    ``scan_engine`` from the config and the lookup alone, so they are printed as is;
+    anything unexpected is named by type only (the push-quarantine disclosure policy).
+    A version that differs from the pin, or cannot be parsed, is a ``⚠``.
     """
     if cfg is None:
         return "warn", "scanner engine not checked (no config)"
     try:
-        info = scan_engine.active_engine(cfg)
-    except FileNotFoundError:
-        return "fail", (
-            "scanner.engine is 'gitleaks' but no 'gitleaks' binary is on PATH: every scan "
-            "fails closed (install it, or set scanner.engine to 'auto'/'regex')"
-        )
-    except ValueError:
-        # Not in R2.4.2's enumeration, which only foresaw the missing-binary ✗. Reported as
-        # a ✗ all the same: an unusable engine value makes EVERY scan raise, and the
-        # fail-closed policy (I4) then quarantines everything — nothing gets published.
-        return "fail", (
-            f"unknown scanner.engine {cfg.scanner_engine!r} (expected 'auto', 'gitleaks' or "
-            "'regex'): every scan fails closed"
-        )
+        info = scan_engine.ensure_ready(cfg)
+    except (scan_engine.ScannerUnavailable, FileNotFoundError, ValueError) as exc:
+        reason = " ".join(str(exc).split()) if isinstance(
+            exc, scan_engine.ScannerUnavailable) else (
+            f"scanner.engine {cfg.scanner_engine!r} is unusable ({type(exc).__name__})")
+        return "fail", (f"scanner engine unusable (scanner.engine = {cfg.scanner_engine!r}) "
+                        f"— capture is PAUSED (D16): {reason}")
     except Exception as exc:  # noqa: BLE001 — a doctor row must never become a traceback.
-        # The two handlers above cover everything `_resolve` raises, but `active_engine` also
-        # probes the binary's version, which makes a temp dir and spawns a process: a full or
-        # read-only /tmp (or a MemoryError) still escapes and reproduces F6's symptom exactly.
-        # The sibling rows cannot raise at all; this one is made equally total. `warn`, not
-        # `fail`: nothing was learned about the engine, so nothing was disproved either.
-        # Type name only, same disclosure policy as the push-quarantine handler.
-        return "warn", f"scanner engine could not be determined ({type(exc).__name__})"
-
-    if info.name != "gitleaks":
-        if (cfg.scanner_engine or "").strip().lower() == "auto":
-            return "warn", (
-                "scanner engine: regex fallback — scanner.engine is 'auto' and no 'gitleaks' "
-                "binary is on PATH (entropy/vendor rules are not applied)"
-            )
-        return "ok", "scanner engine: regex (explicitly configured)"
+        # Same verdict as the processor gate, which pauses on any failed probe: a full or
+        # read-only /tmp (the version probe makes a temp dir) stops capture just the same.
+        return "fail", (
+            f"scanner engine could not be checked ({type(exc).__name__}; scanner.engine = "
+            f"{cfg.scanner_engine!r}) — capture is PAUSED (D16) until it can"
+        )
     if info.version is None:
-        return "warn", "scanner engine gitleaks (its version could not be queried)"
+        return "warn", "scanner engine gitleaks (its version could not be parsed)"
     if info.pinned_version is None:
         return "warn", (
             f"scanner engine gitleaks {info.version} (unpinned; set scanner.gitleaks_version "

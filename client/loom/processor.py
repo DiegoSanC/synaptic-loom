@@ -2,14 +2,17 @@
 
 Walks the markers in ``queue/`` (oldest first) and applies, to each one, the 9-step
 pipeline: transcript exists → remote gate → registry cache → delta from the pointer →
-summarizer (subprocess with no tools) → fail-closed secret scan → ``POST /api/entries``.
+pre-summary redaction (step 5b, D16) → summarizer (subprocess with no tools) →
+fail-closed secret scan → ``POST /api/entries``. A pass with no usable gitleaks stops
+before the first marker (D16: capture pauses, nothing is touched).
 The pointer (``state.json``) advances **only** after a confirmed push, ``NO_ENTRY`` or
 quarantine (I2/I6). A ``flock`` on ``lock`` serializes concurrent runs.
 
 Invariants materialized here:
 - **I1**: the summarizer runs with ``cwd = LOOM_HOME`` (never inside a project).
 - **I3**: only this script talks to the API; the summarizer gets ``--tools ""`` (no net/shell).
-- **I4**: if the secret scan fails or raises, it counts as a hit (quarantine).
+- **I4**: if the secret scan fails or raises, it counts as a hit (quarantine); if the
+  pre-summary redaction fails or does not reach a fixpoint, the summarizer is not run.
 - **I6**: reprocessing does not duplicate (pointer + unique ``content_hash`` server-side).
 
 Normative behavior: the error matrix in PLAN.md §T4.
@@ -122,8 +125,12 @@ _CATEGORY: dict[str, str] = {
     "kept_network_error": _ERRORS,
     "kept_auth_rejected": _ERRORS,   # 401/403: the credential, not the network (issue #20)
     "kept_registry_error": _ERRORS,
+    # D16: the pass stopped before touching any marker — gitleaks is unavailable.
+    "paused_no_scanner": _ERRORS,
     "error": _ERRORS,
 }
+# The outcome (and run-log action) of a pass that D16 paused.
+PAUSED_NO_SCANNER = "paused_no_scanner"
 
 
 @dataclass
@@ -141,12 +148,16 @@ class RunReport:
 
     ``sweep`` is additive (phase 2, R2.1): the orphan-sweep's counters when the sweep
     ran in this pass, ``None`` when it did not (disabled, lock held, or it crashed).
+
+    ``paused`` is additive (D16): the reason capture is paused when the pass stopped at
+    the scanner gate before touching any marker, ``None`` otherwise.
     """
 
     outcomes: list[MarkerOutcome] = field(default_factory=list)
     server_unreachable: bool = False
     lock_held: bool = False
     sweep: "sweep.SweepReport | None" = None
+    paused: str | None = None
 
     def _count(self, category: str) -> int:
         return sum(1 for o in self.outcomes if _CATEGORY.get(o.action) == category)
@@ -1389,9 +1400,19 @@ def _process_marker(
 
     delta_text = render_for_summarizer(delta)
 
+    # Step 5b (D16): redact the extract BEFORE the summarizer reads it. Invariant: the
+    # summarizer never receives text in which the scanner finds a secret. `delta_text`
+    # stays the RAW extract — it is what `content_hash` is computed over below, so I6
+    # dedupe is unchanged for ranges captured before D16 and does not depend on which
+    # gitleaks version did the redacting.
+    summarizer_input = _redact_for_summarizer(cfg, report, marker, marker_path,
+                                              session_id, delta_text, identity)
+    if summarizer_input is None:
+        return
+
     # Step 6: summarizer.
     try:
-        cp = _run_summarizer(cfg, delta_text)
+        cp = _run_summarizer(cfg, summarizer_input)
     except subprocess.TimeoutExpired:
         _handle_summarizer_failure(cfg, report, marker, marker_path, session_id,
                                    "timeout", identity)
@@ -1526,6 +1547,44 @@ def _process_marker(
 
     # Other 4xx (401/403/422): likely misconfig/bug. Keep and report (visible in status).
     _record(report, cfg, session_id, "error", f"unexpected status {resp.status_code}")
+
+
+def _kinds_detail(findings) -> str:
+    """``n finding(s): kind×count, …`` — kinds and counts, never a value or a preview."""
+    counts: dict[str, int] = {}
+    for finding in findings:
+        counts[finding.kind] = counts.get(finding.kind, 0) + 1
+    kinds = ", ".join(f"{kind}x{n}" for kind, n in sorted(counts.items()))
+    return f"{len(findings)} finding(s): {_flatten(kinds)}"
+
+
+def _redact_for_summarizer(cfg: Config, report: RunReport, marker: dict,
+                           marker_path: Path, session_id: str, delta_text: str,
+                           identity: tuple | None) -> str | None:
+    """Step 5b (D16): the redacted extract, or ``None`` when the summarizer must not run.
+
+    Every value gitleaks ∪ regex detects is replaced, everywhere, by
+    ``[REDACTED:<kind>]``; then the result is scanned AGAIN. Anything still found, or
+    a scan that raises, is fail-closed (I4): the summarizer does not run and the marker
+    takes the bounded-attempts path of any other pipeline failure — kept, attempts
+    counted, parked in ``failed/`` at the limit, the pointer untouched. Only kinds and
+    counts reach the marker and the log (I5/I6).
+    """
+    try:
+        redacted, findings = scan_engine.redact(delta_text, cfg)
+        leftover = scan_engine.scan(redacted, cfg)
+    except Exception as exc:  # noqa: BLE001 — no verdict == a hit (I4).
+        detail = f"pre-summary redaction failed: {type(exc).__name__}"
+    else:
+        if not leftover:
+            if findings:
+                _log(cfg, session_id, "redacted_before_summary", _kinds_detail(findings))
+            return redacted
+        detail = f"pre-summary redaction incomplete: {_kinds_detail(leftover)} left"
+    marker["pipeline_error"] = detail
+    _bound_attempts(cfg, report, marker, marker_path, session_id,
+                    "kept_pipeline_error", detail, identity)
+    return None
 
 
 def _turns_before(messages: list, since: datetime | None) -> int:
@@ -1712,6 +1771,57 @@ def _renew_device_token(cfg: Config, api: ApiClient) -> None:
     _log(cfg, "auth", "token_renewal_failed", f"HTTP {resp.status_code}")
 
 
+def scanner_pause_reason(cfg: Config) -> str | None:
+    """Why capture is paused under ``cfg`` (D16), or ``None`` when gitleaks is usable.
+
+    ``ScannerUnavailable`` messages are built by ``scan_engine`` from the config and the
+    lookup alone (reason + remedy, never content); anything else is reported by type.
+    Shared by the pass and by ``loom status``/``doctor``, so all three agree.
+    """
+    try:
+        scan_engine.ensure_ready(cfg)
+    except scan_engine.ScannerUnavailable as exc:
+        return _flatten(str(exc))
+    except Exception as exc:  # noqa: BLE001 — an unexpected probe failure also pauses.
+        return f"the secret scanner could not be checked ({type(exc).__name__})"
+    return None
+
+
+def _write_scanner_paused(cfg: Config, reason: str) -> None:
+    """The pause as the UNATTENDED pass saw it, for ``loom status`` (D16).
+
+    Kept from the first paused pass on (``since``) so status can say how long capture
+    has been stopped; diagnostics never fail a pass, like the run log.
+    """
+    try:
+        previous = json.loads(cfg.scanner_paused_path.read_text(encoding="utf-8"))
+        since = previous.get("since") if isinstance(previous, dict) else None
+    except (OSError, ValueError):
+        since = None
+    try:
+        _atomic_write_json(cfg.scanner_paused_path,
+                           {"since": since or _now_iso(), "at": _now_iso(),
+                            "reason": reason})
+    except OSError:
+        pass
+
+
+def _clear_scanner_paused(cfg: Config) -> None:
+    try:
+        cfg.scanner_paused_path.unlink()
+    except OSError:
+        pass
+
+
+def read_scanner_paused(cfg: Config) -> dict | None:
+    """The record the last paused pass left, or ``None`` (no pause, or unreadable)."""
+    try:
+        data = json.loads(cfg.scanner_paused_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def run_once(cfg: Config) -> RunReport:
     """Processes every pending marker once. Serialized by ``flock``.
 
@@ -1729,6 +1839,20 @@ def run_once(cfg: Config) -> RunReport:
         except OSError:
             report.lock_held = True
             return report
+
+        # D16 scanner gate: FIRST, before the token renewal, the registry, the sweep or
+        # any marker. With no usable gitleaks nothing can be redacted (step 5b) nor
+        # scanned (step 8), so the pass does nothing at all: every marker stays in the
+        # queue byte-identical, no attempt is counted, and the next pass with a working
+        # scanner picks them all up. Pausing — not quarantining marker by marker — is
+        # the owner's choice: a missing binary is an install problem, not a secret.
+        reason = scanner_pause_reason(cfg)
+        if reason is not None:
+            report.paused = reason
+            _record(report, cfg, "scanner", PAUSED_NO_SCANNER, reason)
+            _write_scanner_paused(cfg, reason)
+            return report
+        _clear_scanner_paused(cfg)
 
         api = ApiClient(cfg.server_url, cfg.token)
         # Silent device-token renewal (issue #20) rides on a pass that was already going
@@ -1765,7 +1889,10 @@ def run_once(cfg: Config) -> RunReport:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """``python -m loom.processor`` — one processor pass. Exits 0 unless the config fails."""
+    """``python -m loom.processor`` — one processor pass.
+
+    Exits 0, **2** if the config fails, **1** if capture is paused (D16).
+    """
     argv = sys.argv[1:] if argv is None else argv
     quiet = "--quiet" in argv
     try:
@@ -1774,6 +1901,11 @@ def main(argv: list[str] | None = None) -> int:
         print(f"loom.processor: config not available: {exc}", file=sys.stderr)
         return 2
     report = run_once(cfg)
+    if report.paused is not None:
+        # Even under --quiet: a paused capture is the failure an unattended run exists
+        # to surface (systemd marks the unit failed, cron mails the line).
+        print(f"loom.processor: capture PAUSED: {report.paused}", file=sys.stderr)
+        return 1
     if not quiet:
         if report.lock_held:
             print("loom.processor: another processor holds the lock; nothing to do.")

@@ -39,6 +39,8 @@ def test_init_noninteractive_writes_config_600_and_dirs(monkeypatch, tmp_path, h
     assert data["cache_ttl_s"] == 3600
     # A fresh config captures with the TYPED prompt (T.F3); install.sh ships it.
     assert data["summarizer"] == {"model": "sonnet", "timeout_s": 300, "prompt_version": "v2"}
+    # D16: gitleaks is mandatory, pinned to what install.sh downloads.
+    assert data["scanner"] == {"engine": "gitleaks", "gitleaks_version": "8.30.1"}
 
     for sub in ("queue", "quarantine", "failed", "log", "prompts", "hooks"):
         assert (home / sub).is_dir()

@@ -279,57 +279,67 @@ def _engine(monkeypatch, info=None, exc=None):
     monkeypatch.setattr(scan_engine, "active_engine", fake)
 
 
+def _ready(monkeypatch, info=None, exc=None):
+    """Stand-in for the D16 gate the scanner row reads (``scan_engine.ensure_ready``)."""
+    def fake(cfg):
+        if exc is not None:
+            raise exc
+        return info
+    monkeypatch.setattr(scan_engine, "ensure_ready", fake)
+
+
 def test_scanner_pin_matched_is_ok_with_the_version(tmp_path, monkeypatch):
-    _engine(monkeypatch, scan_engine.EngineInfo("gitleaks", "8.30.1", "8.30.1"))
+    _ready(monkeypatch, scan_engine.EngineInfo("gitleaks", "8.30.1", "8.30.1"))
     level, msg = cli._scanner_check(_config(tmp_path, scanner_engine="auto"))
     assert level == "ok"
     assert "gitleaks 8.30.1" in msg
 
 
 def test_scanner_unpinned_is_a_warn(tmp_path, monkeypatch):
-    _engine(monkeypatch, scan_engine.EngineInfo("gitleaks", "8.30.1", None))
+    _ready(monkeypatch, scan_engine.EngineInfo("gitleaks", "8.30.1", None))
     level, msg = cli._scanner_check(_config(tmp_path))
     assert level == "warn"
     assert "gitleaks_version" in msg
 
 
 def test_scanner_pin_mismatch_is_a_warn(tmp_path, monkeypatch):
-    _engine(monkeypatch, scan_engine.EngineInfo("gitleaks", "8.29.0", "8.30.1"))
+    _ready(monkeypatch, scan_engine.EngineInfo("gitleaks", "8.29.0", "8.30.1"))
     level, msg = cli._scanner_check(_config(tmp_path))
     assert level == "warn"
     assert "8.29.0" in msg and "8.30.1" in msg
 
 
 def test_scanner_unqueryable_version_is_a_warn(tmp_path, monkeypatch):
-    _engine(monkeypatch, scan_engine.EngineInfo("gitleaks", None, "8.30.1"))
+    _ready(monkeypatch, scan_engine.EngineInfo("gitleaks", None, "8.30.1"))
     assert cli._scanner_check(_config(tmp_path))[0] == "warn"
 
 
-def test_scanner_regex_fallback_under_auto_is_a_warn(tmp_path, monkeypatch):
-    _engine(monkeypatch, scan_engine.EngineInfo("regex", None, None))
-    level, msg = cli._scanner_check(_config(tmp_path, scanner_engine="auto"))
-    assert level == "warn"
-    assert "regex" in msg.lower()
+@pytest.mark.parametrize("engine", ["auto", "gitleaks"])
+def test_scanner_without_gitleaks_is_a_fail_naming_the_pause(tmp_path, bindir, engine):
+    """D16 (was: 'auto' degraded to regex with a ⚠). No gitleaks = capture PAUSED = ✗."""
+    level, msg = cli._scanner_check(_config(tmp_path, scanner_engine=engine))
+    assert level == "fail"
+    assert "PAUSED" in msg and "gitleaks" in msg
+    assert "install.sh" in msg
 
 
-def test_scanner_explicit_regex_is_ok(tmp_path, monkeypatch):
-    """A deliberate choice is not a defect; only the silent 'auto' fallback warns."""
-    _engine(monkeypatch, scan_engine.EngineInfo("regex", None, None))
+def test_scanner_explicit_regex_is_a_fail(tmp_path, bindir):
+    """D16 (was: an explicit 'regex' was ✓). The regex set alone is refused for capture."""
     level, msg = cli._scanner_check(_config(tmp_path, scanner_engine="regex"))
-    assert level == "ok"
-    assert "regex" in msg.lower()
+    assert level == "fail"
+    assert "regex" in msg.lower() and "PAUSED" in msg
 
 
 def test_scanner_explicit_gitleaks_without_binary_is_a_fail_not_a_crash(tmp_path, monkeypatch):
-    """F6: active_engine RAISES here — doctor owes the user a ✗ row, not a traceback."""
-    _engine(monkeypatch, exc=FileNotFoundError("no gitleaks"))
+    """F6: the gate RAISES here — doctor owes the user a ✗ row, not a traceback."""
+    _ready(monkeypatch, exc=FileNotFoundError("no gitleaks"))
     level, msg = cli._scanner_check(_config(tmp_path, scanner_engine="gitleaks"))
     assert level == "fail"
     assert "gitleaks" in msg
 
 
 def test_scanner_unknown_engine_value_is_a_fail_not_a_crash(tmp_path, monkeypatch):
-    _engine(monkeypatch, exc=ValueError("unknown engine"))
+    _ready(monkeypatch, exc=ValueError("unknown engine"))
     level, msg = cli._scanner_check(_config(tmp_path, scanner_engine="gitleeks"))
     assert level == "fail"
     assert "gitleeks" in msg
@@ -340,23 +350,24 @@ def test_scanner_without_config_is_a_warn():
 
 
 @pytest.mark.parametrize("exc", [
-    # `active_engine` also probes the binary's version, which makes a temp dir and spawns a
-    # process: a full or read-only /tmp raises a bare OSError past the specific handlers.
+    # The version probe makes a temp dir and spawns a process: a full or read-only /tmp
+    # raises a bare OSError past the specific handlers.
     OSError("[Errno 30] Read-only file system: '/tmp/loom-gitleaks-x'"),
     MemoryError(),
     RuntimeError("boom"),
 ])
-def test_scanner_any_other_failure_is_a_warn_not_a_traceback(tmp_path, monkeypatch, exc):
-    """LOW-8: the row is TOTAL — its siblings cannot raise, and neither may this one."""
-    _engine(monkeypatch, exc=exc)
+def test_scanner_any_other_failure_is_a_fail_not_a_traceback(tmp_path, monkeypatch, exc):
+    """LOW-8: the row is TOTAL. D16 (was: ⚠): the processor gate pauses on any failed
+    probe, so the row that explains the pause is a ✗ too — never a traceback."""
+    _ready(monkeypatch, exc=exc)
     level, msg = cli._scanner_check(_config(tmp_path))
-    assert level == "warn"
+    assert level == "fail"
     assert type(exc).__name__ in msg
 
 
 def test_scanner_failure_message_discloses_the_type_only(tmp_path, monkeypatch):
     """Same disclosure policy as push-quarantine: never the engine's error text."""
-    _engine(monkeypatch, exc=OSError("choked on sk-live-DO-NOT-PRINT-1234567890"))
+    _ready(monkeypatch, exc=OSError("choked on sk-live-DO-NOT-PRINT-1234567890"))
     _, msg = cli._scanner_check(_config(tmp_path))
     assert "sk-live" not in msg
 
@@ -429,7 +440,8 @@ def test_parity_warns_when_the_block_carries_no_path(tmp_path, bindir, monkeypat
                      f"*/15 * * * * {cfg.loom_home}/venv/bin/loom process --quiet")
     level, msg = cli._trigger_parity_check(cfg)
     assert level == "warn"
-    assert "gitleaks" in msg and "regex" in msg
+    # D16 (was: '"regex" in msg' — the pass fell back to regex). It now PAUSES capture.
+    assert "gitleaks" in msg and "PAUSED" in msg
 
 
 def test_parity_warns_when_the_block_path_cannot_resolve_gitleaks(tmp_path, bindir,
@@ -523,11 +535,26 @@ def test_parity_reads_the_systemd_unit_on_a_systemd_host(tmp_path, bindir, monke
     assert cli._trigger_parity_check(cfg)[0] == "warn"
 
 
-def test_parity_is_ok_when_this_shell_has_no_gitleaks_either(tmp_path, bindir, monkeypatch):
-    """Nothing diverges: the interactive run is regex too, so the trigger is not weaker."""
-    _engine(monkeypatch, scan_engine.EngineInfo("regex", None, None))
+def test_parity_defers_to_the_scanner_row_when_this_shell_has_no_gitleaks(tmp_path, bindir):
+    """D16 (was: '✓, the interactive run is regex too'). There is no regex engine to be
+    equal with any more: with no gitleaks anywhere capture is paused, the scanner row is
+    the ✗ that says so, and this row does not claim a parity it cannot check."""
     _crontab(bindir, None)
-    assert cli._trigger_parity_check(_config(tmp_path, scanner_engine="auto"))[0] == "ok"
+    level, msg = cli._trigger_parity_check(_config(tmp_path, scanner_engine="auto"))
+    assert level == "warn"
+    assert "scanner row" in msg
+
+
+def test_parity_is_ok_for_a_loom_home_gitleaks_whatever_the_trigger_path(tmp_path, bindir):
+    """D16: install.sh puts gitleaks in $LOOM_HOME/bin and the pass runs it by absolute
+    path — a trigger with no PATH of its own (the finding-1 block) is fine then."""
+    cfg = _config(tmp_path, scanner_engine="gitleaks")
+    _stub(cfg.loom_home / "bin", "gitleaks", "echo 8.30.1\n")
+    _crontab(bindir, f"{cli.TRIGGER_CRON_TAG}\nLOOM_HOME={cfg.loom_home}\n"
+                     f"*/15 * * * * {cfg.loom_home}/venv/bin/loom process --quiet")
+    level, msg = cli._trigger_parity_check(cfg)
+    assert level == "ok"
+    assert str(cfg.loom_home / "bin" / "gitleaks") in msg
 
 
 def test_parity_without_config_is_a_warn():

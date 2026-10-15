@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 
 import pytest
 
@@ -43,7 +44,7 @@ NOISE = ("## Decisions\n- [fact] **CI runs on 3.12** — the runners were upgrad
 @pytest.fixture
 def cfg(tmp_path) -> Config:
     return Config(loom_home=tmp_path / "home", server_url="http://x", token="t",
-                  scanner_engine="regex")
+                  scanner_engine="gitleaks")
 
 
 # --------------------------------------------------------------------------- #
@@ -1545,3 +1546,32 @@ def test_an_un_itemized_entry_is_never_offered_an_itemized_candidate(cfg, tmp_pa
     block_3 = payload.split("### ENTRY 3\n", 1)[1]
     assert "- CANDIDATE 2: " in block_3
     assert "- CANDIDATE 1: " not in payload, "entry 1 is itemized"
+
+
+# --- D16: no usable gitleaks → curate refuses up front -------------------------------
+
+@pytest.mark.parametrize("engine", ["gitleaks", "regex"])
+def test_curate_without_a_usable_scanner_refuses_before_any_llm_call(tmp_path, monkeypatch,
+                                                                     capsys, engine):
+    """Rationales and the digest are scanned with gitleaks (D16). With none usable the
+    pass refuses BEFORE the server, the LLM or the state file is touched: no money
+    spent, no attempt charged, nothing parked — and it says why."""
+    empty = tmp_path / "empty_bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    sentinel = tmp_path / "llm_ran"
+    stub = tmp_path / "claude_stub"
+    stub.write_text(f"#!{sys.executable}\nimport pathlib\n"
+                    f"pathlib.Path({str(sentinel)!r}).write_text('x')\n", encoding="utf-8")
+    stub.chmod(0o755)
+    cfg = Config(loom_home=tmp_path / "home", server_url="http://127.0.0.1:9", token="t",
+                 claude_bin=str(stub), scanner_engine=engine)
+
+    rc = curate.run_curate(cfg, "proj")
+
+    err = capsys.readouterr().err
+    assert rc == 1
+    assert not sentinel.exists()
+    assert not cfg.curation_state_path.exists()
+    assert ("regex" if engine == "regex" else "gitleaks") in err
+    assert "install.sh" in err
