@@ -54,7 +54,9 @@ drives `client/tests/e2e/test_blockt_e2e.py`, whose regression leg sweeps `test/
 boundary per §10 — under that flag a missing `docker` is a FAILURE, not a skip, by design.
 The dependency is introduced two subprocess levels below the Makefile, so it is recorded
 here rather than left to be discovered from a stack trace. `gitleaks` (pinned 8.30.1) is
-required for the same reason and has been since phase 2.
+required for the same reason and has been since phase 2; since D16 every processor/doctor
+test needs it too. Any test that runs `client/install.sh` must set `LOOM_SKIP_GITLEAKS=1`
+(or supply `LOOM_GITLEAKS_TARBALL`), or the installer's step 1b tries to download gitleaks.
 
 **A git worktree needs its own `.venv` before the suite will run.** The doctrine above
 says to work in a worktree, and `make test` resolves `PYTHON` as

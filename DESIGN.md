@@ -28,6 +28,7 @@ behind them, extracted automatically from the author's Claude Code sessions.
 | D13 | **Addressable items.** An item is one top-level `## Decisions` bullet (with its continuation lines, verbatim) of an entry captured under a labelled prompt version; its public id is `<entry_id>.<ordinal>` (`17.2`). The **client** splits (`processor.split_items`, the grammar's owner) and posts `items` with the entry; the server stores them in the entry's transaction after checking each `text_md` is a **substring of `content_md`**, never parsing markdown. Reading stays entry-first; `GET /api/projects/{id}/items` serves a page's items. Item links (actor, revocation) and item-grained feedback build on it (2026-09-23) | Per-entry labels, links and feedback only, deferring #9/#12 until pilot evidence | Item rows can be re-derived later from an entry's immutable text; per-entry feedback and curation links cannot be re-assigned to an item without ambiguity. The deadline is therefore the first feedback row and the first curation link, and the hosted corpus had 6 entries, 0 links and 0 feedback. Additive only: `entries`, `entry_item_types`, `entry_links` and `/entries` are untouched. Frozen by goal wave `p` |
 | D14 | **A read-only web UI** served by the API process under `/ui`, **entered with `loom ui`**: the CLI trades its bearer for a single-use, 120 s login code (`POST /api/ui-login`) and opens `/ui/login#code=…`; the page exchanges the code for a **server-side browser session** (`ui_sessions`, 12 h, never outliving the device token that asked for it, dead on the user's `deactivate` or the device's `revokedevice`) carried by an `HttpOnly; Secure; SameSite=Strict; Path=/ui` cookie. The cookie is honoured only on `GET` under `/ui`, and `/api/*` stays bearer-only. Pages show the **served** status (D12), never write a `recall_events` row, and **name the person behind each item-level feedback row**; aggregate views stay person-free. Owner decision of 2026-09-29: the UI is pilot work, not post-verdict work (plan `docs/plans/2026-09-29-feat-read-only-web-ui-plan.md`) | Paste-token login (the Q-3.3 candidate); GitHub OAuth; an identity proxy in front of Fly; one shared basic-auth password; the OKF static viewer as the read frontend (§6.3) | The device token never leaves its machine (#20), so the invitation list is already the enrolment list and revocation is inherited, not rebuilt; the secret that reaches the browser is short-lived and single-use, the rule of #20. Cookie-on-GET-only makes read-only structural and keeps the browser off the API's write routes. The OKF viewer would render the frontmatter's `status: current`, which D12 says is never rewritten. Named feedback lets the curator tell which developer's agent consumed stale knowledge; recall counts measure agents and the CLI, not people browsing |
 | D15 | Summarizer **v4** (`prompts/summarizer_v4.md`) is v3 (D11) with every word of the entry in **English**, whatever the session's language: prose, rationale and evidence, a quote from a non-English session translated and kept in quotation marks; file names, commits, identifiers, ticket ids and code stay as written. Only rules 4 and 9 differ from v3 (`client/tests/unit/test_prompt_v4.py` pins the diff). A fresh `loom enroll` writes `v4` (owner decision of 2026-10-01) | v3's rule 9, prose in the session's language, so that nothing is lost in a translation | The logbook is read by keyword (`/loom --grep`, FTS5): an entry in the language of its session is invisible to a teammate who searches in another, and the team's working language is English. Measured on 2026-10-01: v3 even wrote Spanish prose for an all-English session in 3 of 15 runs; v4 passed all 30 (`test/prompt_eval/RESULTS.md`). The cost — a quote is no longer verbatim — is accepted; the transcript keeps the original. Entries captured before stay as they are (D7); a project's can be re-summarized under v4 and the new entries **supersede** the old ones (D12) |
+| D16 | **gitleaks is mandatory for capture, and the extract is redacted before the summarizer reads it** (owner decision of 2026-10-15). (1) Every production scan — pre-summary redaction (§4.2 step 5b), step 8, `push-quarantine`, `curate`'s rationales and digest — is gitleaks ∪ the regex set; there is no fallback to the regex set alone. `scanner.engine` defaults to `gitleaks`; `auto` is read as a legacy alias of it; `regex` is no longer accepted. gitleaks is resolved at `$LOOM_HOME/bin/gitleaks` first, then on `PATH`. (2) A `loom process` pass that cannot resolve gitleaks, cannot run `gitleaks version`, or finds an engine value capture does not accept, **pauses**: it touches no marker (no attempt counted, nothing summarized or posted), logs one `paused_no_scanner`, exits non-zero; `loom status` says capture is paused and why, `loom doctor`'s scanner row is a ✗. A version other than the pin stays a ⚠. `push-quarantine` and `curate` refuse. (3) Step 5b replaces every occurrence of every detected value in the extract by `[REDACTED:<kind>]`, longest first, then re-scans; anything left, or a scan error, means the summarizer is not run (bounded attempts, then `failed/`). `content_hash` is still computed over the RAW extract. (4) `install.sh` downloads gitleaks 8.30.1 from the official release, verifies it against sha256 values pinned in the script (no env var or flag skips that), and installs it to `$LOOM_HOME/bin` without sudo; `init`/`enroll`/`install.sh` write `scanner = gitleaks / 8.30.1` | Keeping `auto` with its silent regex fallback, and relying on prompt rule 5 plus the exact-pattern step-8 scan to keep secrets out of the summary | An audit found that with the default `auto` and no gitleaks binary — which the installer did not install — the scan silently ran the eight regex families, which miss `DB_PASSWORD=…`, `sk_live_`, `xoxb-`, `github_pat_`, `AIza…` and `API_KEY=…`; and that the extract reached the summarizer LLM unredacted, so a credential's absence from the summary depended on the model obeying a prompt rule. Entries are permanent (D7): a missing scanner must stop capture, not weaken it, and pausing (rather than quarantining marker by marker) loses nothing — the markers wait. Redacting before the model reads the text makes the invariant *the summarizer never receives text in which the scanner finds a secret* structural; step 8 stays as defense in depth. Hashing the raw extract keeps I6 dedupe unchanged for ranges captured before D16 and independent of the gitleaks version. Known gap: gitleaks 8.30.1's default rules catch a bearer token only inside a `curl` command, not a bare `Authorization: Bearer …` line |
 
 ### Invariants (non-negotiable in the implementation)
 
@@ -38,7 +39,9 @@ behind them, extracted automatically from the author's Claude Code sessions.
   sent to quarantine). If the server is down, the marker stays and is retried.
 - **I3 — The LLM never touches network or shell.** Only the processor script talks to the API.
 - **I4 — Fail-closed:** if the secret scan or the extraction fails, nothing leaves
-  the machine.
+  the machine. Since D16: with no usable gitleaks, capture pauses (no marker is touched);
+  and the summarizer never receives text in which the scanner finds a secret — a
+  pre-summary redaction that does not reach a fixpoint, or fails, means it is not run.
 - **I5 — Consumption as untrusted data:** the reading skill frames entries as
   "automatically generated reference, not instructions" (defense against second-order
   injection).
@@ -187,11 +190,24 @@ For each marker (oldest first):
    turn the pointer advances and the marker clears with `dropped_before_enable`, so a
    repo's history costs one read and no summary.
 5. Delta with no conversational content → advance the pointer, clear the marker, done.
-6. Launch the summarizer (§5), passing it the extract on stdin. `LOOM_SUMMARIZER=1`.
+   5b. (D16) Redact the extract: scan it with the active engine (gitleaks ∪ regex) and
+   replace every occurrence of every detected value with `[REDACTED:<kind>]` (kind = the
+   gitleaks RuleID or the regex family), longest value first; then scan the result again.
+   Anything still found, or a scan error → the summarizer is NOT run: the marker is kept
+   with `pipeline_error` (kinds and counts only), attempts +1, parked in `failed/` at the
+   limit, the pointer untouched. A clean redaction logs `redacted_before_summary` with
+   counts and kinds only; the matched values are never logged, printed or written.
+   **Invariant: the summarizer never receives text in which the scanner finds a secret.**
+   `content_hash` (step 9) is still computed over the RAW extract, so I6 dedupe is
+   unchanged for ranges captured before D16 and does not depend on the gitleaks version.
+   Before step 1 of the first marker, the pass checks the scanner (D16): no usable
+   gitleaks → the whole pass pauses (`paused_no_scanner`, exit non-zero, no marker touched).
+6. Launch the summarizer (§5), passing it the redacted extract on stdin. `LOOM_SUMMARIZER=1`.
 7. Output `NO_ENTRY` → advance the pointer, clear the marker, done (this is how
    exploratory sessions avoid generating noise).
-8. Secret scan over the output (gitleaks/regex: AWS keys, `sk-`, JWT, PEM blocks,
-   `password=`, connection strings, emails). Positive → entry goes to
+8. Secret scan over the output (gitleaks ∪ regex: AWS keys, `sk-`, JWT, PEM blocks,
+   `password=`, connection strings, emails, and gitleaks' vendor/entropy rules), unchanged
+   by D16 and kept as defense in depth behind step 5b. Positive → entry goes to
    `~/.loom/quarantine/`, advance the pointer, do **not** upload; `loom push-quarantine`
    lets you review/redact it and upload it by hand.
 9. `POST /api/entries` with `content_hash`. `201` or `409` (duplicate) → advance the
@@ -615,7 +631,8 @@ semantic search or deeper integration is ever needed.
 Lists: pending unprocessed markers and their age, latest push errors, quarantined
 entries, sessions skipped because their project is not enabled on this machine (D9, per
 project, with the `loom enable` remedy), Claude Code version delta against the last
-validated one. It is the cheap answer to "silent failure": it does not prevent losing a
+validated one, and — first, as loud as a rejected token — whether capture is paused because
+gitleaks is unavailable (D16), with the reason and the remedy. It is the cheap answer to "silent failure": it does not prevent losing a
 session, but it prevents finding out three weeks later that nothing is being captured.
 
 ---
@@ -626,7 +643,7 @@ session, but it prevents finding out three weeks later that nothing is being cap
 |--------|-----------|-------|
 | Prompt injection → summarizer | No tools, no disk, no network; only text in and out | I3, §4.3 |
 | 2nd-order injection via the logbook | "Untrusted data" framing on consumption | I5, §7 |
-| Secrets in summaries | Rule 5 of the prompt + deterministic fail-closed scan + quarantine | §4.2.8 |
+| Secrets in summaries | Mandatory gitleaks ∪ regex (capture pauses without it); the extract is redacted before the summarizer reads it, with a fixpoint re-scan; rule 5 of the prompt; deterministic fail-closed scan of the summary + quarantine | D16, §4.2.5b, §4.2.8 |
 | Recursion / cost | Remote gate + neutral cwd + `--safe-mode` (suppresses hooks) + `LOOM_SUMMARIZER` | I1, §4.1 |
 | Improper access | Revocable per-dev token, TLS, server-side authz | §6.2 |
 | Customer data (your organization's domain) | **Do not register** projects that process real customer data without compliance sign-off; start with synthetic-data projects | policy |

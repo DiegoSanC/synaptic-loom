@@ -92,7 +92,9 @@ credential formats.
 
 - **R2.3.1** Integrate gitleaks as the primary scanner over the final wrapped
   `content_md`, keeping the current regex set as a built-in fallback when gitleaks is
-  not installed (doctor reports which engine is active).
+  not installed (doctor reports which engine is active). *Superseded by DESIGN.md D16
+  (2026-10-15): there is no fallback any more — gitleaks is mandatory, installed by
+  install.sh, and capture pauses without it.*
 - **R2.3.2** Fail-closed semantics preserved exactly (I4): scanner error == positive.
   Findings map to the existing quarantine flow unchanged.
 - **R2.3.3** gitleaks version pinned in config; contract-test-style check that the

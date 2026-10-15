@@ -507,17 +507,21 @@ resolve its binaries on cron's `/usr/bin:/bin`. They apply from their line to th
 file, which is why the block is always appended **last**. If you add your own entries
 afterwards, put them *above* the block.
 
-**Scanner parity (why the `PATH=` line exists).** `loom process` picks its secret scanner
-through `PATH`: with `scanner.engine = auto` it uses `gitleaks` when the binary is reachable
-and silently falls back to the weaker regex set when it is not. Under cron's `/usr/bin:/bin`
-a homebrew (`/opt/homebrew/bin`) or per-user (`~/.local/bin`) gitleaks is invisible, so the
-**unattended** passes — the ones that do most of the capturing — ran with half the
-defense-in-depth while an interactive `loom doctor` reported `✓ gitleaks` (§7, finding 1).
-install.sh therefore carries the install-time `PATH` into the trigger, so an unattended pass
-resolves the same binaries the operator resolved when they ran the installer. `loom doctor`
-has a **trigger scanner parity** row that re-checks this and warns if the trigger's `PATH`
-cannot resolve the engine this shell resolves. If you install gitleaks *after* loom, re-run
-`bash client/install.sh --yes` so the new location is picked up.
+**Scanner parity (why the `PATH=` line exists).** Before D16, `loom process` picked its
+secret scanner through `PATH` only: with `scanner.engine = auto` it used `gitleaks` when the
+binary was reachable and silently fell back to the weaker regex set when it was not. Under
+cron's `/usr/bin:/bin` a homebrew (`/opt/homebrew/bin`) or per-user (`~/.local/bin`) gitleaks
+is invisible, so the **unattended** passes — the ones that do most of the capturing — ran
+with half the defense-in-depth while an interactive `loom doctor` reported `✓ gitleaks` (§7,
+finding 1). Since D16 (2026-10-15) that cannot happen: install.sh installs a checksum-verified
+gitleaks 8.30.1 into `$LOOM_HOME/bin/gitleaks`, loom runs it **by absolute path** (PATH is
+only the fallback for a gitleaks you installed yourself), and with no gitleaks at all capture
+**pauses** instead of degrading (§6, "Capture paused"). install.sh still carries the
+install-time `PATH` into the trigger, so an unattended pass resolves the same `git`, `jq` and
+fallback gitleaks the operator resolved when they ran the installer. `loom doctor` has a
+**trigger scanner parity** row: `✓` when the pass will run `$LOOM_HOME/bin/gitleaks`, and a
+warning when only a PATH gitleaks exists and the trigger's `PATH` cannot reach it (that pass
+would pause). Re-run `bash client/install.sh --yes` to fix either.
 
 > **Trust note.** This deliberately trades cron's minimal `PATH` — a small hardening measure
 > — for a scanner that actually runs. The unattended pass now resolves binaries from the same
@@ -526,7 +530,8 @@ cannot resolve the engine this shell resolves. If you install gitleaks *after* l
 > trailing `:`) are dropped rather than carried, since "the current directory" means
 > something different in a 15-minute cron job than it does under your fingers. If your `PATH`
 > is not something you would hand to a scheduler, edit the block's `PATH=` line down to what
-> the pass needs (`$LOOM_HOME/venv/bin`, git, jq, gitleaks) — install.sh replaces the whole
+> the pass needs (`$LOOM_HOME/venv/bin`, git, jq — gitleaks lives in `$LOOM_HOME/bin` and is
+> run by absolute path) — install.sh replaces the whole
 > block on its next run, so keep a note of the edit.
 
 ```bash
@@ -759,7 +764,15 @@ running passes; a machine idle for longer than that re-enrols with a fresh invit
 
 Requirements: `git`, `jq`, `uv` (or `python3 -m venv`), `claude` (same version as
 `contract/VERSION`), a session-detach launcher for the kick (`setsid` **or** `python3` —
-see "Supported platforms" below), and HTTPS access to `<app>.fly.dev`. Before this
+see "Supported platforms" below), `curl`, `tar` and `sha256sum` or `shasum` (install.sh
+downloads gitleaks with them), and HTTPS access to `<app>.fly.dev` and to `github.com`.
+**gitleaks is mandatory (D16)**: install.sh downloads the official gitleaks **8.30.1**
+release asset for darwin/linux × x64/arm64, verifies its sha256 against the values pinned
+in the script, and installs it as `~/.loom/bin/gitleaks` (no sudo). A checksum mismatch or
+another platform aborts the install with nothing installed; on another platform install
+gitleaks 8.30.1 on your `PATH` yourself and run the installer with `LOOM_SKIP_GITLEAKS=1`.
+An offline machine can be given the asset with `LOOM_GITLEAKS_TARBALL=<path to
+gitleaks_8.30.1_<os>_<arch>.tar.gz>` — it is verified exactly like a download. Before this
 flow, the operator runs `invite` for this machine through §2 → “Administering users”
 (inside the Fly Machine, against the mounted database) and sends the **enrolment code**
 through the team's agreed channel. The code is single-use and expires (24 h by default);
@@ -770,9 +783,10 @@ pass it on the command line, so it cannot land in shell history.
 # 1. Clone the tool's repo
 git clone <repo-url> loom && cd loom
 
-# 2. Install the client (creates ~/.loom, the venv, the hook in settings.json with a backup,
-#    the skills, the 15-min periodic trigger — systemd user timer, or cron, see §2 — and the
-#    loom block in ~/.claude/CLAUDE.md that makes the agent run `loom check` at task start)
+# 2. Install the client (creates ~/.loom, installs the checksum-verified gitleaks 8.30.1 in
+#    ~/.loom/bin, the venv, the hook in settings.json with a backup, the skills, the 15-min
+#    periodic trigger — systemd user timer, or cron, see §2 — and the loom block in
+#    ~/.claude/CLAUDE.md that makes the agent run `loom check` at task start)
 bash client/install.sh            # asks to confirm each merge; --yes for non-interactive
 
 # 3. Enrol this machine: paste the enrolment code at the hidden prompt. The machine mints
@@ -1036,12 +1050,37 @@ you the verbose pass). To force one pass immediately:
   last orphan sweep is. A stale/absent sweep is a `⚠`, never a failure — the timer may not
   have fired yet, and after a WSL2 resume it is expected for one period (§2). A **missing**
   trigger is a `✗`: re-run `bash client/install.sh --yes` to reinstall it.
+- **Scanner** (the first row): `✓ scanner engine gitleaks 8.30.1 (pin matched)` is the
+  healthy state. A version other than the pin, or one it cannot parse, is a `⚠` — capture
+  still runs. A `✗ scanner engine unusable … capture is PAUSED (D16)` means the next
+  `loom process` will stop before touching any marker; see "Capture paused" below.
 - **Trigger scanner parity**: a row of its own, because "the scanner is fine" and "the
   trigger is armed" were both true on the day the *triggered* scans were running with the
-  weaker engine (§2 "scanner parity", §7 finding 1). It compares what the installed trigger's
-  environment can resolve with what your shell resolves; a `⚠` means the unattended pass
-  would fall back to regex — re-run `bash client/install.sh --yes`. It is never a `✗`: the
-  pass still runs and still scans.
+  weaker engine (§2 "scanner parity", §7 finding 1). With gitleaks in `~/.loom/bin` it is a
+  `✓` (the pass runs it by absolute path); with only a `PATH` gitleaks it compares what the
+  installed trigger's environment can resolve with what your shell resolves, and a `⚠`
+  means the unattended pass would find no gitleaks and pause capture — re-run
+  `bash client/install.sh --yes`. It is never a `✗`: the kick from the SessionEnd hook runs
+  with your session's environment and still captures.
+- **Capture paused (D16)**: gitleaks is mandatory. When it is missing (no
+  `~/.loom/bin/gitleaks` and none on `PATH`), when `gitleaks version` cannot run, or when
+  `scanner.engine` is anything but `gitleaks` (`auto` is read as `gitleaks`; `regex` is no
+  longer accepted), every `loom process` pass stops **before the first marker**: nothing is
+  summarized or uploaded, every marker stays in `queue/` byte-identical and no attempt is
+  counted, so nothing is lost and nothing is parked. The pass logs one `paused_no_scanner`
+  line and exits 1 (the systemd unit shows as failed); `loom status` opens with
+  `✗ CAPTURE PAUSED since <time>: <reason>`, and `loom doctor`'s scanner row is a `✗`.
+  `loom push-quarantine` and `loom curate` refuse to run for the same reason. To recover:
+  `bash client/install.sh --yes --update` (it downloads and verifies gitleaks 8.30.1 into
+  `~/.loom/bin` and sets `scanner` in `config.json` to `gitleaks` / `8.30.1`), check
+  `loom doctor`, then run `~/.loom/venv/bin/loom process` once — the queued markers are
+  captured in that pass.
+- **Redaction before the summarizer (D16, step 5b)**: the transcript extract is scanned
+  (gitleaks ∪ the regex set) and every detected value is replaced by `[REDACTED:<kind>]`
+  before the summarizer reads it; the run log records `redacted_before_summary` with the
+  kinds and counts only. If the redacted text still trips the scanner, or the scan fails,
+  the summarizer is not run: the marker is kept with a `pipeline_error` naming kinds and
+  counts, retried, and parked in `failed/` after 3 attempts like any pipeline failure.
 - **Unit integrity** (systemd hosts): compares the installed
   `~/.config/systemd/user/loom-process.{service,timer}` against the templates shipped in
   `client/timer/`, after resolving the substitutions install.sh makes (`ExecStart`,
@@ -1053,8 +1092,9 @@ you the verbose pass). To force one pass immediately:
   on disk match the checkout, not that what ran was what the files say.
 
 > **`loom doctor` is a configuration check, not an attestation.** It resolves `crontab`,
-> `systemctl` and `gitleaks` through `PATH`, by design, so anyone who can write to an early
-> `PATH` entry for your user can decide what it reports — a fake `gitleaks` that prints the
+> `systemctl` and (as a fallback to `~/.loom/bin`) `gitleaks` through `PATH`, by design, so
+> anyone who can write to an early `PATH` entry — or to `~/.loom` — for your user can decide
+> what it reports — a fake `gitleaks` that prints the
 > pinned version and exits clean makes every scanner line green while nothing is scanned.
 > A green doctor means "this machine looks configured the way we expect", and it must never
 > be cited as evidence that secret scanning ran or that the trigger fired. For that, look at
@@ -1302,7 +1342,8 @@ LOOM_SKIP_LIVE=1 .venv/bin/python contract/verify.py               # -> 0 failur
 
 - The gate needs the **real `gitleaks`** (8.30.1 is what the pilot is validated against) and
   `git`, `jq` and the `.venv`; without gitleaks the phase-2 e2e tests **skip** rather than
-  fail, so read the skip count, not just the exit code.
+  fail, so read the skip count, not just the exit code. Since D16 the processor, doctor and
+  redaction tests need it as well, and there its absence is a failure.
 - The repo's own phase-2 e2e lives in `client/tests/e2e/test_phase2_e2e.py` and runs as part
   of step 2. It covers the same ground as the gate (swept-orphan capture across a server
   outage, planted-secret quarantine → `push-quarantine`, fresh install → green doctor) plus
@@ -1363,7 +1404,7 @@ machine's own evidence, the rest is the human signal the decision rule needs.
 | 9 | Trust incidents | count of "a false entry taken as true" | **zero** — this one is a veto, not a percentage |
 | 10 | Decision recorded | the decision rule above, written down with its evidence | continue / iterate the prompt / stop |
 | 11 | Transient-I/O parking reviewed | after **several days** of real pilot use: `ls ~/.loom/failed/` and read each parked marker's `adapter_error` | either empty, or every parked session has a *genuinely* corrupt transcript — **not** a transient I/O error (see below) |
-| 12 | Trigger-context scanner parity | `loom doctor`'s trigger-parity row, then confirm it by hand: read the trigger's own environment (the `PATH=` line in `crontab -l` on a cron host, or `systemctl --user show -p Environment loom-process.service` on a timer host) and check that value resolves the scanner — `PATH=<that value> command -v gitleaks` | the row is `✓`, and the trigger's PATH resolves the **same gitleaks** (8.30.1, pin matched) that an interactive `command -v gitleaks` does. A `⚠`, or a `command -v` that finds nothing, means the unattended pass scans with the weaker regex engine |
+| 12 | Trigger-context scanner parity | `loom doctor`'s trigger-parity row, then confirm it by hand: read the trigger's own environment (the `PATH=` line in `crontab -l` on a cron host, or `systemctl --user show -p Environment loom-process.service` on a timer host) and check that value resolves the scanner — `PATH=<that value> command -v gitleaks` | the row is `✓`, and the trigger's PATH resolves the **same gitleaks** (8.30.1, pin matched) that an interactive `command -v gitleaks` does. Since D16, with `~/.loom/bin/gitleaks` installed (the default) the row is `✓` by construction and the hand check is `~/.loom/bin/gitleaks version` → `8.30.1`. A `⚠`, or a `command -v` that finds nothing when there is no `~/.loom/bin/gitleaks`, means the unattended pass would pause capture (before D16: scan with the weaker regex engine) |
 
 Checks 1–4 take about five minutes and are also the right thing to run after **any**
 `install.sh --update`, independently of the gate. Check 11 is different: it needs days of
@@ -1382,7 +1423,10 @@ under a minimal gitleaks-free PATH, must still quarantine a planted high-entropy
 **gitleaks** rule id in the quarantine record's findings. This row is the same property
 checked on the real host, because a test can only prove the installer's logic, never that this
 machine's scheduler kept the environment it was handed. Doctor's row is a configuration check
-(see the box in §6): the `command -v` confirmation is what makes it evidence.
+(see the box in §6): the `command -v` confirmation is what makes it evidence. D16 removed the
+failure mode at its root — gitleaks now lives in `~/.loom/bin` and is run by absolute path,
+and a pass with no gitleaks pauses instead of downgrading — so the same e2e test now proves
+the control leg PAUSES (nothing published, the session left for the next healthy pass).
 
 **Why check 11 exists (phase-3 wave-d review, deferred to phase 4).** Adapter-class failures
 are bounded — three attempts, then the session is parked in `~/.loom/failed/` and skipped by
@@ -1421,7 +1465,8 @@ first rehearsal, recorded as follow-ups:
    to `/usr/bin`, present in systemd's user-manager PATH), but on any cron host check where
    gitleaks lives, and either add a `PATH=` assignment to the crontab block by hand or set
    `scanner.engine` to `gitleaks` explicitly (fail-closed: a missing binary then quarantines
-   instead of downgrading).
+   instead of downgrading). *Superseded by D16 (2026-10-15):* install.sh installs gitleaks
+   into `~/.loom/bin`, `auto` means `gitleaks`, and a missing binary pauses capture.
 2. **`--uninstall-trigger` leaves an installed-but-empty crontab** when our block was the
    only content (original state was "no crontab at all"). Harmless — zero jobs — but not a
    byte-exact restore; `crontab -r` afterwards removes the residue if you care.
@@ -1534,6 +1579,10 @@ crontab -l > ~/crontab.bak && \
   **done**: `scanner.engine` (`auto`/`gitleaks`/`regex`), pinned to gitleaks 8.30.1 for the
   pilot, fail-closed (a scanner that cannot produce a verdict quarantines), with the same
   engine selection on `push-quarantine`'s rescan. `loom doctor` reports the engine in force.
+  **Tightened by D16 (2026-10-15):** gitleaks is mandatory — install.sh installs a
+  checksum-verified 8.30.1 into `~/.loom/bin`, `auto` is a legacy alias of `gitleaks`,
+  `regex` is refused, capture pauses without gitleaks, and the extract is redacted before
+  the summarizer reads it (§6).
 - ~~Packaging the installer and a systemd timer/cron for the processor~~ — **done**:
   `install.sh` installs `loom-process.timer` (or the cron fallback) and gained `--update`;
   see §2. The kick is no longer the only path to a processed marker.

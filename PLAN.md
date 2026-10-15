@@ -178,8 +178,11 @@ subprocess.run(
 | marker file is not a JSON object (durable corruption) | move it to `failed/` unread | `loom status` |
 | `_process_marker` raised (bug or environment) | keep the marker, `attempts+1`, flag `pipeline_error`; ≥3 → move to `failed/` | `loom status` |
 | a second concurrent processor | flock → exit 0 | — |
+| (D16) no usable gitleaks at the start of the pass (missing, `gitleaks version` fails, engine `regex`/unknown) | the pass touches **no** marker (no attempts), logs `paused_no_scanner`, exits 1 | `loom status`: "✗ CAPTURE PAUSED"; `loom doctor` scanner row ✗ |
+| (D16) pre-summary redaction (step 5b) leaves a finding, or its scan fails | summarizer NOT run; keep the marker, `attempts+1`, flag `pipeline_error` (kinds/counts only); ≥3 → move to `failed/` | `loom status` |
 
-The last two rows were added on 2026-09-19 (issues #22, #23). They close the matrix's only
+The two D16 rows were added on 2026-10-15 (DESIGN.md D16). The two rows before them were
+added on 2026-09-19 (issues #22, #23). They close the matrix's only
 gap: before them, an exception escaping `_process_marker` was the one failure class with no
 attempts counter and no parking rule, retried unchanged forever, and a file whose top-level
 JSON is not an object aborted the whole pass before any marker was processed. Both now join
