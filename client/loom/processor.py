@@ -1550,7 +1550,7 @@ def _process_marker(
 
 
 def _kinds_detail(findings) -> str:
-    """``n finding(s): kind×count, …`` — kinds and counts, never a value or a preview."""
+    """``n finding(s): <kind>x<count>, …`` — kinds and counts, never a value or a preview."""
     counts: dict[str, int] = {}
     for finding in findings:
         counts[finding.kind] = counts.get(finding.kind, 0) + 1
