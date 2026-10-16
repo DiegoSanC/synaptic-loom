@@ -25,6 +25,10 @@ kill_timeout = "30s"
   # written in three files, and `server/db.py` silently falls back to ./loom.db on the
   # ephemeral disk if they ever disagree.
   LOOM_DB = "/data/loom.db"
+  # The client address that keys the rate limits and the audit line (D17). Behind the Fly
+  # proxy the TCP peer is the proxy, so the image's `peer` default would put every client
+  # in one bucket; Fly sets Fly-Client-IP on every request it forwards.
+  LOOM_CLIENT_IP_SOURCE = "fly-client-ip"
 
 [http_service]
   internal_port = 8080

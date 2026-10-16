@@ -1711,18 +1711,18 @@ def test_blockt_scenario_d_regression_goals():
             f"{result.stdout[-1500:]}\n"
             f"counts={counts} FAILED IN THE DRIVEN WAVE RUN: {_failed_ids(result)}"
         )
-    # 350 tests collect under `test/waves` today — 248 before wave m (Fly packaging) added
+    # 351 tests collect under `test/waves` today — 248 before wave m (Fly packaging) added
     # 27, 275 before wave n (issue #4 attribution) added 21, 296 before wave o (D11,
     # summarizer v3) added 7, 303 before wave p (D13, entry items) added 14, 317
     # before wave q (D13 slice E, item links) added 13, and 333 (measured; this comment
-    # said 330) before wave r (D17, Compose + Caddy) added 17. The floor is close enough
+    # said 330) before wave r (D17, Compose + Caddy) added 18. The floor is close enough
     # to that number that no whole goal file can be deleted under it: wave j's is 10 tests
     # and wave i's is 26, and `assert (REPO_ROOT / wave).is_dir()` above would happily pass
     # over an EMPTY directory. A floor with 48 tests of slack is not a regression leg, it is
     # a slogan — so the floor MOVES WITH THE COUNT, by the exact number a new wave adds, in
     # the same commit that adds the wave. Leaving it behind would grow the slack back and
     # quietly lose the property it was chosen for.
-    assert counts["passed"] >= 339, (
+    assert counts["passed"] >= 340, (
         f"the goal waves must actually have RUN, and all of them (a collection failure, "
         f"an emptied wave or a deleted goal file is not a pass): {counts}\n"
         f"{result.stdout[-1200:]}"

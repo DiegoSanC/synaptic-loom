@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -60,6 +61,7 @@ COMPOSE_DIR = REPO_ROOT / "deploy" / "compose"
 COMPOSE_FILE = COMPOSE_DIR / "docker-compose.yml"
 ENV_EXAMPLE = COMPOSE_DIR / ".env.example"
 DOCKERFILE = REPO_ROOT / "Dockerfile"
+FLY_TOML = REPO_ROOT / "fly.toml"
 GOAL_OVERRIDE = Path(__file__).with_name("compose.goal.yml")
 PROBE = Path(__file__).with_name("fixtures") / "probe.py"
 
@@ -189,6 +191,13 @@ def test_compose_refuses_to_render_without_a_domain(tmp_path_factory):
                  "-f", str(COMPOSE_FILE), "config"], env=env)
     assert done.returncode != 0
     assert "LOOM_DOMAIN" in done.stderr, done.stderr
+
+
+def test_fly_keeps_reading_the_fly_proxy_header():
+    """The image's default is `peer`, which behind the Fly proxy would be the proxy: the
+    Fly deployment keeps its behaviour only because fly.toml says so."""
+    env = tomllib.loads(FLY_TOML.read_text(encoding="utf-8"))["env"]
+    assert env.get("LOOM_CLIENT_IP_SOURCE") == "fly-client-ip", env
 
 
 def test_the_env_example_carries_only_a_generic_domain():
