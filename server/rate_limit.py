@@ -17,23 +17,6 @@ class RateLimiter:
         self._requests: OrderedDict[str, deque[float]] = OrderedDict()
         self._lock = Lock()
 
-    def retry_after(self, key: str) -> int | None:
-        """Return the wait for an already-full window without consuming a slot."""
-        now = monotonic()
-        cutoff = now - self.window_seconds
-        with self._lock:
-            requests = self._requests.get(key)
-            if requests is None:
-                return None
-
-            while requests and requests[0] <= cutoff:
-                requests.popleft()
-            if not requests:
-                self._requests.pop(key, None)
-                return None
-            self._requests.move_to_end(key)
-            return self._retry_after(requests, now)
-
     def record(self, key: str) -> int | None:
         """Record one event, or return the wait when its window is already full."""
         now = monotonic()
