@@ -192,14 +192,17 @@ CLI cannot prove it.
 |---|---|
 | Fly account 2FA | **Manual** — enable it on the account; nothing here can check it |
 | Failed-auth audit | Security-audit lines log `outcome`, UTC `timestamp` and validated `client_ip`; never a bearer value |
-| Failed-auth limit | 10 failures per validated `Fly-Client-IP` in 60 seconds; then `429` + `Retry-After` |
-| Public health limit | 120 requests per validated `Fly-Client-IP` in 60 seconds; remains unauthenticated |
+| Failed-auth limit | 10 failures per validated client IP (`Fly-Client-IP` here, D17) in 60 seconds; then `429` + `Retry-After` for further failures — a valid credential is still accepted |
+| Public health limit | 120 requests per validated client IP in 60 seconds; remains unauthenticated |
 | Transport header | `Strict-Transport-Security: max-age=31536000; includeSubDomains` on every response |
 
 The two limiters live in this one Uvicorn process and reset on restart. That matches the
 deployed one-worker, one-Machine topology. Do not add another worker or Machine without
-moving the policy to shared state. Fly Proxy supplies `Fly-Client-IP`; a missing or invalid
-value is grouped into one `unavailable` bucket and is never copied verbatim into logs.
+moving the policy to shared state. `fly.toml [env]` sets `LOOM_CLIENT_IP_SOURCE=fly-client-ip`
+(D17) and Fly Proxy supplies `Fly-Client-IP`; a missing or invalid value is grouped into one
+`unavailable` bucket and is never copied verbatim into logs. At startup the server logs
+`client_ip_source mode=fly-client-ip`, and a `WARNING` there means the mode and the Fly
+marker disagree — fix `fly.toml` before anything else.
 
 The health response deliberately remains `{"status":"ok","version":"0.1.0"}`. The
 version is a non-secret semantic compatibility signal used by `loom init` and

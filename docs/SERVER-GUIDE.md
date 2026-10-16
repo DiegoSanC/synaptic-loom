@@ -16,9 +16,16 @@ locally built image. The one section that was not executed is marked in place an
 again at the end. Where a step produced a surprise, the surprise is written down rather
 than smoothed over — that is most of this document's value.
 
+Part 2 (Docker Compose + Caddy) was **executed on 2026-10-16** by goal wave `r`, against the
+real `deploy/compose` files on a local Docker host, with Caddy's internal CA standing in
+for the public one; the public-DNS, public-CA path on a real VPS was not (listed at the end).
+
 ---
 
 ## What you are building
+
+Two supported topologies (`DESIGN.md` §6.2, D17): **Part 1, Fly.io**, below, and
+**Part 2, one host with Docker Compose + Caddy**. Part 1:
 
 One Fly app · one Machine · one volume · one region. SQLite on the volume, no ORM, no
 second process. The single-Machine shape is not a simplification for the guide: a Fly
@@ -26,14 +33,14 @@ volume attaches to one Machine at a time, and `fly.toml`'s `[mounts]` block supp
 Fly's default two-Machine redundancy for exactly that reason. `DESIGN.md §6.2` is the
 normative contract.
 
-## Before you start
+## Before you start (Part 1)
 
 | | |
 |---|---|
 | `flyctl` | `fly auth whoami` must print your email. |
 | A Fly organization | This guide uses `personal`. All apps in one org share one bill. |
 | `git` | You deploy from a clone. |
-| `docker` | Only for the development section, and only if you want it. |
+| `docker` | Only for the development section (Part 3), and only if you want it. |
 
 No secrets are needed. **Verified:** `fly secrets list` against the existing production app
 returns an empty set — `LOOM_DB` travels in `[env]` inside `fly.toml`, so there is no
@@ -242,7 +249,172 @@ authoritative and which sections are rollback history.
 
 ---
 
-# Part 2 — Running it locally
+# Part 2 — One host with Docker Compose + Caddy
+
+For a team that runs its own Linux host (a VPS) instead of Fly. Supported and tested
+(`DESIGN.md` D17): goal wave `r` brings up exactly the files below with
+`docker compose up --build` and drives them from client containers.
+
+```
+internet ──80/443──▶ caddy ──backend (internal network)──▶ loom:8080 ──▶ volume /data
+```
+
+Caddy is the **only** published service. It terminates TLS for your domain with automatic
+HTTPS and forwards to the server, which has no host port and sits on a network with no
+route to the outside — so the server is reachable through Caddy alone. Same single-process
+shape as on Fly: one Uvicorn worker, SQLite on one volume.
+
+## 1. Before you start
+
+| | |
+|---|---|
+| A Linux host | Public IPv4 (IPv6 optional), inbound **80 and 443** open — Caddy needs both to obtain and renew the certificate. |
+| Docker Engine 25+ with the Compose v2 plugin | `docker compose version`. The server's healthcheck uses `start_interval`, which older engines ignore. |
+| A DNS name | `loom.example.com` in this guide. |
+| `git` | You deploy from a clone. |
+| The subnet `10.217.17.0/24` free on the host | It is the server's private network (see §6). If it collides, change the subnet, its `ip_range`, Caddy's `ipv4_address` and `FORWARDED_ALLOW_IPS` together in `deploy/compose/docker-compose.yml`. |
+
+## 2. Point the DNS name at the host
+
+Create an `A` record (and `AAAA`, if the host has IPv6) for `loom.example.com` pointing at
+the host's public address, and check it resolves **before** the first start:
+
+```bash
+dig +short loom.example.com      # -> the host's public address
+```
+
+Caddy retries a failed issuance, but the public CA rate-limits failures; starting before
+DNS is right only buys a wait.
+
+## 3. Clone and configure
+
+```bash
+git clone <repo-url> loom && cd loom/deploy/compose
+cp .env.example .env
+$EDITOR .env                     # LOOM_DOMAIN=loom.example.com -> your name
+```
+
+`LOOM_DOMAIN` is the only setting. `.env` is gitignored; without it, `docker compose`
+refuses to start and names the missing variable.
+
+## 4. Start it
+
+```bash
+docker compose up -d --build --wait
+docker compose ps                # loom (healthy) and caddy, nothing else
+curl -sS https://loom.example.com/api/health
+# -> {"status":"ok","version":"0.1.0"}
+```
+
+`--wait` returns once the server's own healthcheck passes; Caddy starts after it. The
+first certificate is usually issued within seconds — `docker compose logs caddy` shows the
+ACME exchange if the `curl` fails with a TLS error.
+
+## 5. Create the first user and the first enrolment code
+
+Exactly Part 1 §7, with `docker compose exec` in place of `fly ssh console`, from
+`deploy/compose/`:
+
+```bash
+docker compose exec -u app loom python -m server.admin listusers
+# -> (no users)
+docker compose exec -u app loom python -m server.admin invite --email dev@example.com --name dev
+```
+
+`-u app` for the same reason as on Fly: `exec` is root by default, and a root-created WAL
+sidecar in `/data` is a file the server process then cannot write. Then prove the round
+trip as in Part 1 §8, with `--server-url=https://loom.example.com`.
+
+## 6. Check that the server sees each client's own address
+
+The client address keys the failed-authentication limit (10 per minute), the health limit
+and the security-audit line (`DESIGN.md §6.2`). Getting it wrong either puts every client
+in one bucket — one caller's typos lock everybody out — or lets a client name its own
+address. Check it once after the first start:
+
+```bash
+docker compose logs loom | grep client_ip_source
+# -> ... client_ip_source mode=peer        (and no WARNING line next to it)
+```
+
+Then, **from another machine** (not the host itself), send one disposable bad token with a
+forged header, and read the audit line:
+
+```bash
+curl -sS -o /dev/null -w '%{http_code}\n' -H 'Authorization: Bearer not-a-real-token' \
+     -H 'X-Forwarded-For: 192.0.2.1' https://loom.example.com/api/projects
+# -> 401
+docker compose logs loom | grep 'outcome=invalid_token' | tail -1
+# -> ... client_ip=<the address that machine connects from>
+```
+
+| `client_ip=` shows | Means |
+|---|---|
+| the other machine's address | Correct. |
+| `10.217.17.2` | The server does not trust Caddy: `FORWARDED_ALLOW_IPS` is not Caddy's address. Every client shares one bucket. |
+| `192.0.2.1` | Something trusts the client's own header: `FORWARDED_ALLOW_IPS` too wide, or `trusted_proxies` added to the Caddyfile. Fix before going further. |
+| a Docker gateway address (`172.x.x.1`) | The request reached Caddy through Docker's userland proxy — typically a test from the host itself. Retry from another machine. |
+
+How it works, so the table above can be reasoned about rather than memorised:
+
+- The server runs with `LOOM_CLIENT_IP_SOURCE=peer`: the client address is the TCP peer
+  as uvicorn leaves it. uvicorn **0.52.4** (pinned in `uv.lock`) has proxy-header
+  handling **on by default** and the Dockerfile `CMD` does not change it
+  (no `--proxy-headers`/`--forwarded-allow-ips` flags); it reads `FORWARDED_ALLOW_IPS`
+  from the environment (default `127.0.0.1,::1`) and rewrites the peer from
+  `X-Forwarded-For` **only** when the connection comes from an address in that list.
+  The Compose file sets it to Caddy's fixed address, `10.217.17.2`, and nothing else.
+- Caddy (2.11.7, pinned by digest) has no `trusted_proxies` configured, so it treats
+  every client as untrusted: it **replaces** whatever `X-Forwarded-For` the client sent
+  with the address the connection came from. Other headers pass through untouched —
+  `Fly-Client-IP` included, which is why `fly-client-ip` is the wrong mode here (the
+  server warns at startup if it is set without `FLY_APP_NAME`). Both behaviours were
+  observed on 2026-10-16 against a header-echoing upstream; wave `r` asserts their
+  consequence — a client-sent `X-Forwarded-For` or `Fly-Client-IP` neither resets a
+  failure window nor reaches the audit line.
+
+> ### Never set `FORWARDED_ALLOW_IPS=*`
+>
+> It makes uvicorn believe `X-Forwarded-For` from **any** peer. Anyone who can reach the
+> server without going through Caddy — another container on the network, a port someone
+> later publishes for debugging — can then name any address they like: a fresh rate-limit
+> bucket per request, and whatever they want written into the audit log. Name Caddy's
+> address, and only Caddy's.
+
+Another proxy in front of Caddy (a CDN, a load balancer) changes the picture: the TCP peer
+Caddy sees is then that proxy. `LOOM_CLIENT_IP_SOURCE=header:<name>` reads one
+single-valued header such a proxy sets (`header:cf-connecting-ip`), and is only sound if
+the origin accepts connections from that proxy alone. This guide does not cover it, and
+wave `r` does not test it.
+
+## 7. Day two
+
+```bash
+git pull && docker compose up -d --build --wait     # deploy a new version
+docker compose stop                                 # drains up to 25 s; SIGKILL at 30 s
+docker compose down                                 # removes containers, KEEPS the volumes
+```
+
+The database is the named volume `loom_loom_data` (project `loom`, volume `loom_data`).
+`docker compose down -v` **deletes it**, together with Caddy's certificates — never run it
+on a server whose logbook you want.
+
+## 8. Backups — not covered yet
+
+**There is no backup for this topology.** `DESIGN.md` D8 is Fly's daily volume snapshots
+and applies to the Fly deployment only; how a Compose host is backed up is pending an owner
+decision. Until then the `loom_loom_data` volume is the only copy: losing the host, its
+disk, or running `down -v` loses the logbook.
+
+## 9. Tearing it down
+
+```bash
+docker compose down -v --rmi local     # containers, image, AND every volume: the data is gone
+```
+
+---
+
+# Part 3 — Running it locally
 
 > ### Development and testing only
 >
@@ -252,7 +424,7 @@ authoritative and which sections are rollback history.
 > names, with no error and no warning, and the team simply stops seeing each other's work.
 >
 > A machine running a local server must not also run a client pointed at the hosted one.
-> If you need both, use a separate `LOOM_HOME` as in §8 and never edit `~/.loom/config.json`.
+> If you need both, use a separate `LOOM_HOME` as in Part 1 §8 and never edit `~/.loom/config.json`.
 
 Two ways, both **verified 2026-09-29**.
 
@@ -296,3 +468,8 @@ Stated so nobody mistakes the rest for equally solid:
 - **Custom domains and certificates.** Everything here uses the `*.fly.dev` hostname and
   Fly's platform TLS.
 - **Any region other than `cdg`, and any second Machine.** Out of scope by design.
+- **Part 2 on a real VPS with a public DNS name.** Wave `r` runs the real Compose files,
+  but with `LOOM_DOMAIN=loom.localhost`, which Caddy serves from its internal CA: ACME
+  issuance and renewal against a public CA, and a client address arriving through a real
+  host's published ports, were not executed.
+- **Backups for Part 2.** Not covered at all yet (Part 2 §8).

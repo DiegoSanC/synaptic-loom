@@ -9,6 +9,7 @@ Normative contracts in `PLAN.md §3`; schema in `DESIGN.md §6.1` / `server/sche
 |---|---|
 | `app.py` | API routes + Bearer auth middleware + uniform error shape |
 | `rate_limit.py` | Bounded in-process sliding windows for failed auth and public health traffic |
+| `client_ip.py` | `LOOM_CLIENT_IP_SOURCE`: which address keys those windows and the audit line (D17) |
 | `db.py` | `sqlite3` connection (WAL, `foreign_keys=ON`, `busy_timeout`), idempotent schema, `hash_token` / `iso_now` helpers |
 | `normalize.py` | Normalization of the git remote into a canonical identity (server-side authority) |
 | `admin.py` | Admin CLI: `invite` / `listdevices` / `revokedevice` (machines) · `listusers` / `deactivate` (people) · `adduser` (break-glass, see below) |
@@ -19,6 +20,11 @@ Normative contracts in `PLAN.md §3`; schema in `DESIGN.md §6.1` / `server/sche
 - **DB:** `LOOM_DB` environment variable (default `./loom.db`). Both `app.py` and
   `admin.py` read the same variable.
 - The schema is applied at startup only if it does not exist yet (idempotent).
+- **Client address:** `LOOM_CLIENT_IP_SOURCE` (D17), read once at startup — `peer`
+  (default: the TCP peer; behind a reverse proxy, set uvicorn's `FORWARDED_ALLOW_IPS` to
+  the proxy's address, never `*`), `fly-client-ip` (`fly.toml` sets it) or
+  `header:<name>`. Any other value and the server refuses to start; the startup log line
+  `client_ip_source mode=…` names what it resolved.
 
 ## Getting started
 
@@ -71,8 +77,10 @@ Auth: `Authorization: Bearer <token>` on every route except `/api/health`.
 same caller by the same rule. Missing, empty or unknown token → `401`; a device token
 that has been revoked or has expired → `401` (`revoked_token` / `expired_token`, each
 audited by name); a valid token whose user is deactivated → `403`. Failed authentication is audited without credentials
-and limited per Fly client IP; `/api/health` has a separate, higher limit. Fly terminates
-mandatory TLS for the hosted pilot, and every response carries HSTS. The exact policy and
+and limited per client IP (`LOOM_CLIENT_IP_SOURCE`); only failures count, and a valid
+credential is accepted even while its address is throttled. `/api/health` has a separate,
+higher limit. TLS is terminated in front of the server — by Fly, or by Caddy in the
+Compose topology (`deploy/compose/`) — and every response carries HSTS. The exact policy and
 single-process constraint live in `DESIGN.md §6.2`; operations live in `docs/RUNBOOK.md §2`.
 
 Errors: always JSON `{"error": "<code>", "detail": "..."}`.
