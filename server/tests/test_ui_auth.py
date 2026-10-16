@@ -168,10 +168,15 @@ def test_failed_session_openings_from_one_ip_are_rate_limited(ui, capsys):
     assert limited.status_code == 429
     assert limited.headers["Retry-After"]
 
-    # A VALID code from the throttled address is refused too; another address is not.
-    code = _login_code(ui, _device_token(ui, capsys))
-    assert _open_session(ui, code, **headers).status_code == 429
-    assert _open_session(ui, code, **{"Fly-Client-IP": "192.0.2.91"}).status_code == 204
+    # D17: a VALID code from the throttled address opens its session, and the window stays
+    # full for the next failure; another address has its own window.
+    token = _device_token(ui, capsys)
+    code = _login_code(ui, token)
+    assert _open_session(ui, code, **headers).status_code == 204
+    assert _open_session(ui, "wrong-code-wrong-code-wrong-code-000", **headers).status_code == 429
+    other = {"Fly-Client-IP": "192.0.2.91"}
+    assert _open_session(ui, code, **other).status_code == 401   # spent, for everyone
+    assert _open_session(ui, _login_code(ui, token), **other).status_code == 204
 
 
 def test_every_outcome_is_audited_without_code_cookie_or_session_id(ui, env, capsys, caplog):

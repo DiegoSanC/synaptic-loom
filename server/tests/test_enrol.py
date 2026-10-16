@@ -225,12 +225,17 @@ def test_enroll_failed_redemptions_from_one_ip_are_rate_limited(client, env, cap
     assert limited.json()["error"] == "rate_limited"
     assert limited.headers["Retry-After"]
 
-    # A VALID code from the throttled address is refused too: the window is on the caller,
-    # so a brute-forcer that finally guesses right gains nothing until it clears.
+    # D17: a VALID code from the throttled address is redeemed — the window throttles
+    # failures, not credentials, and a 32-byte code is not something a flood can guess —
+    # and redeeming it neither consumes nor resets the window: the next failure is still 429.
     code = _invite(capsys)
-    assert _enroll(client, code, **headers).status_code == 429
-    # …while another address is unaffected and the code is still unredeemed.
-    assert _enroll(client, code, **{"Fly-Client-IP": "192.0.2.61"}).status_code == 201
+    assert _enroll(client, code, **headers).status_code == 201
+    assert _enroll(client, "wrong-code-wrong-code-wrong-code-000", **headers).status_code == 429
+    # …while another address is unaffected: its failures are its own, and the spent code
+    # is spent for it too.
+    other = {"Fly-Client-IP": "192.0.2.61"}
+    assert _enroll(client, code, **other).status_code == 401
+    assert _enroll(client, _invite(capsys), **other).status_code == 201
 
 
 def test_enroll_a_successful_redemption_does_not_consume_the_failure_allowance(client, env, capsys):

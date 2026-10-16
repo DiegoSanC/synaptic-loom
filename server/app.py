@@ -7,7 +7,6 @@ Implements the normative contracts of PLAN.md §3. Cross-cutting rules:
 - `created_at` and `user_id` are ALWAYS server-side (any client value is ignored).
 - The server re-normalizes every remote it receives and is the authority.
 """
-import ipaddress
 import logging
 import os
 import sqlite3
@@ -21,7 +20,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from server import auth, db, feedback, items, links, recall, search, ui_auth, ui_pages
+from server import auth, client_ip, db, feedback, items, links, recall, search, ui_auth, ui_pages
 from server.normalize import normalize
 from server.rate_limit import RateLimiter
 
@@ -30,6 +29,8 @@ HSTS_HEADER = "max-age=31536000; includeSubDomains"
 # A child of Uvicorn's configured error logger so INFO audit lines reach stderr/Fly Logs.
 SECURITY_LOG = logging.getLogger("uvicorn.error.loom.security")
 SECURITY_LOG.setLevel(logging.INFO)
+STARTUP_LOG = logging.getLogger("uvicorn.error.loom.startup")
+STARTUP_LOG.setLevel(logging.INFO)
 AUTH_FAILURE_LIMIT = 10
 HEALTH_REQUEST_LIMIT = 120
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -41,10 +42,26 @@ HEALTH_REQUESTS = RateLimiter(
     limit=HEALTH_REQUEST_LIMIT,
     window_seconds=RATE_LIMIT_WINDOW_SECONDS,
 )
+# Replaced at startup from LOOM_CLIENT_IP_SOURCE (D17); the default until then.
+CLIENT_IP_SOURCE = client_ip.parse(None)
+
+
+def _resolve_client_ip_source() -> client_ip.ClientIpSource:
+    """Read LOOM_CLIENT_IP_SOURCE once; an unknown value stops the process from starting."""
+    try:
+        source = client_ip.parse(os.environ.get(client_ip.ENV_VAR))
+    except ValueError as exc:
+        raise RuntimeError(str(exc)) from None
+    STARTUP_LOG.info("client_ip_source mode=%s", source.mode)
+    for warning in client_ip.startup_warnings(source, os.environ.get("FLY_APP_NAME")):
+        STARTUP_LOG.warning("%s", warning)
+    return source
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global CLIENT_IP_SOURCE
+    CLIENT_IP_SOURCE = _resolve_client_ip_source()
     # Ensure the schema on the configured DB at startup (idempotent).
     db.init_db().close()
     AUTH_FAILURES.clear()
@@ -133,13 +150,9 @@ _REDEMPTION_PATHS = frozenset({"/api/enroll", "/ui/session"})
 _UI_METHODS = frozenset({"GET", "HEAD"})
 
 
-def _fly_client_ip(request: Request) -> str:
-    """Return only a syntactically valid Fly-provided client address for audit use."""
-    value = request.headers.get("fly-client-ip", "")
-    try:
-        return str(ipaddress.ip_address(value))
-    except ValueError:
-        return "unavailable"
+def _client_ip(request: Request) -> str:
+    """The validated client address per LOOM_CLIENT_IP_SOURCE (D17), else `unavailable`."""
+    return CLIENT_IP_SOURCE.client_ip(request)
 
 
 def _audit_auth(request: Request, outcome: str, **fields: object) -> None:
@@ -154,7 +167,7 @@ def _audit_auth(request: Request, outcome: str, **fields: object) -> None:
         "auth outcome=%s timestamp=%s client_ip=%s%s",
         outcome,
         timestamp,
-        _fly_client_ip(request),
+        _client_ip(request),
         extra,
     )
 
@@ -167,7 +180,13 @@ def _reject_auth(
     *,
     code: str | None = None,
 ) -> JSONResponse:
-    retry_after = AUTH_FAILURES.record(_fly_client_ip(request))
+    """Count one FAILED attempt against its address, or answer 429 if the window is full.
+
+    The only door into the failure window (D17): every caller has already validated the
+    credential and found it wanting, so a valid one never reaches here and never meets a
+    full window. A full window records nothing more — the 429 is the whole answer.
+    """
+    retry_after = AUTH_FAILURES.record(_client_ip(request))
     if retry_after is not None:
         _audit_auth(request, "rate_limited")
         return _err(
@@ -182,26 +201,13 @@ def _reject_auth(
     return _err(status, code, detail)
 
 
-def _too_many_auth_failures(request: Request) -> JSONResponse | None:
-    """The 429 for an address whose failure window is already full, else ``None``."""
-    retry_after = AUTH_FAILURES.retry_after(_fly_client_ip(request))
-    if retry_after is None:
-        return None
-    _audit_auth(request, "rate_limited")
-    return _err(
-        429,
-        "rate_limited",
-        "Too many failed authentication attempts",
-        headers={"Retry-After": str(retry_after)},
-    )
-
 def _reject_ui(request: Request, outcome: str) -> HTMLResponse:
     """The `/ui` twin of `_reject_auth`: same window, same audit line, an HTML body.
 
     One 401 for every reason, and for existing and non-existing pages alike, so an
     anonymous caller learns nothing about which pages exist.
     """
-    retry_after = AUTH_FAILURES.record(_fly_client_ip(request))
+    retry_after = AUTH_FAILURES.record(_client_ip(request))
     if retry_after is not None:
         _audit_auth(request, "rate_limited")
         return ui_pages.message(429, "Too many attempts",
@@ -228,11 +234,9 @@ async def _ui_session_gate(request: Request, call_next):
     The method is refused before any credential is read, which is what makes the UI
     read-only by construction. A `Bearer` header is never consulted here, and the cookie
     is never consulted on `/api/*`: the browser credential and the machine credential
-    open different surfaces.
+    open different surfaces. A valid session passes even when its address's failure
+    window is full (D17); only a refused one meets the 429.
     """
-    limited = _too_many_auth_failures(request)
-    if limited is not None:
-        return limited
     if request.method not in _UI_METHODS:
         return _err(405, "method_not_allowed", "The UI is read-only")
     cookie = request.cookies.get(ui_auth.SESSION_COOKIE, "")
@@ -274,11 +278,12 @@ async def auth_middleware(request: Request, call_next):
     """
     path = request.url.path
     if path in _REDEMPTION_PATHS:
-        # Anonymous by necessity, but a failed redemption is a failed authentication:
-        # an address whose window is full does not get to try a code, valid or not.
-        return _too_many_auth_failures(request) or await call_next(request)
+        # Anonymous by necessity, and a failed redemption is a failed authentication: the
+        # handler counts it through `_reject_auth`, which answers 429 once the window is
+        # full. A valid code is redeemed whatever the window says (D17).
+        return await call_next(request)
     if path in PUBLIC_PATHS:
-        retry_after = HEALTH_REQUESTS.record(_fly_client_ip(request))
+        retry_after = HEALTH_REQUESTS.record(_client_ip(request))
         if retry_after is not None:
             return _err(
                 429,
@@ -292,10 +297,10 @@ async def auth_middleware(request: Request, call_next):
         # credential (the session cookie), and never the bearer (D14).
         return await _ui_session_gate(request, call_next)
 
-    limited = _too_many_auth_failures(request)
-    if limited is not None:
-        return limited
-
+    # The credential is validated BEFORE the failure window is consulted (D17): a full
+    # window used to answer 429 here first, so ten bad guesses from one address — or from
+    # every client at once, when they all resolve to `unavailable` — locked out every
+    # valid token behind it. Each request in a flood now costs one token-hash lookup.
     header = request.headers.get("authorization", "")
     if not header.startswith("Bearer "):
         return _reject_auth(

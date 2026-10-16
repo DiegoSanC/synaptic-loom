@@ -11,9 +11,16 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    """Point LOOM_DB at a temporary file and apply the schema."""
+    """Point LOOM_DB at a temporary file and apply the schema.
+
+    The suite runs as the Fly deployment does (`fly.toml [env]`, D17): the client address
+    is the `Fly-Client-IP` header, which is how these tests give each scenario its own
+    failure window. The `peer` default and `header:<name>` are `test_client_ip.py`'s.
+    """
     path = tmp_path / "loom.db"
     monkeypatch.setenv("LOOM_DB", str(path))
+    monkeypatch.setenv("LOOM_CLIENT_IP_SOURCE", "fly-client-ip")
+    monkeypatch.setenv("FLY_APP_NAME", "loom-test")
     from server import db
 
     db.init_db(str(path)).close()
