@@ -23,6 +23,7 @@ and as the post-fix regression gate.
 | o | D11 summarizer v3 | `o/test_goal_d11_summarizer_v3.py` | REAL processor + git repo; two GOLDEN v3 claude fixtures (recorded 2026-09-23, claude 2.1.280); capture httpd; REAL install.sh |
 | p | D13 entry items (slice C) | `p/test_goal_d13_entry_items.py` | REAL uvicorn + temp LOOM_DB + admin CLI; real processor replaying wave o's goldens against it |
 | q | D13 item links (slice E) | `q/test_goal_d13_item_links.py` | REAL uvicorn + temp LOOM_DB + admin CLI (two users); real `loom curate`/`log`/`unlink`; smart verdict replay stub (item grammars) |
+| r | D17 compose-caddy | `r/test_goal_d17_compose_caddy.py` | REAL `docker compose up --build` of `deploy/compose` (repo Dockerfile + pinned Caddy + named volume); client containers at literal addresses; Caddy's internal CA for `loom.localhost` |
 
 Waves `o`, `p` and `q` belong to the plan of 2026-09-23
 (`docs/plans/2026-09-23-fix-label-grammar-fidelity-plan.md`): `o` is slice B (decision
@@ -42,6 +43,14 @@ registered in `GOAL_WAVE_DIRS` and the collection floor of
 daemon is a FAILURE, not a skip. Wave `n` needs only `git` and `jq`, and it is the
 executable form of `contract/ATTRIBUTION.md` — that document is the specification its
 assertions are derived from, so the two change together or not at all.
+
+Wave `r` (D17, owner decision of 2026-10-16) is, like `m`, a Docker-boundary wave that is
+not a per-epic oracle. It drives the real `deploy/compose` stack; the one layer on top,
+`r/compose.goal.yml`, moves Caddy's ports to a loopback port and fixes the `edge` subnet
+so client containers get literal addresses. TLS is real: `LOOM_DOMAIN=loom.localhost` is a
+name Caddy's automatic HTTPS issues from its internal CA, because a public ACME CA cannot
+validate a name from a test host. The stack's subnets are fixed by design, so two runs of
+wave `r` cannot share one Docker host at the same time.
 
 Seam ids such as `t-curation-watermark`, `p3-state-stat-fields` or `p4-coverage-cache`,
 cited across the code and tests, name interfaces frozen by the original build plan, whose

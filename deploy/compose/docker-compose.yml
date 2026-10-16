@@ -1,0 +1,92 @@
+# Synaptic Loom on one host: Docker Compose + Caddy (D17, DESIGN.md §6.2).
+#
+#   internet ──80/443──▶ caddy ──backend (internal)──▶ loom:8080 ──▶ volume loom_data:/data
+#
+# Caddy is the ONLY published service. It terminates TLS for LOOM_DOMAIN with automatic
+# HTTPS and forwards to the server over `backend`, a network with no route to the outside
+# and no published port, so the server can only be reached through Caddy and every
+# request it sees comes from one known address.
+#
+# The client address (it keys the auth-failure and health limiters and the audit line) is
+# `peer`: the TCP peer, as uvicorn leaves it. uvicorn's proxy-headers handling is on by
+# default and rewrites the peer from X-Forwarded-For ONLY when the connection comes from
+# an address in FORWARDED_ALLOW_IPS, which is Caddy's fixed address below and nothing
+# else. Caddy itself discards a client's own X-Forwarded-For (it trusts no upstream proxy
+# unless `trusted_proxies` says so) and sends the address it accepted the connection from.
+# NEVER set FORWARDED_ALLOW_IPS to `*`: any client could then name its own address, buy a
+# fresh rate-limit bucket per request and write what it likes into the audit log.
+#
+# The literals that must agree are the backend subnet (and its ip_range), Caddy's
+# ipv4_address and FORWARDED_ALLOW_IPS. If 10.217.17.0/24 collides with a network on your
+# host, change them together.
+#
+# Usage (docs/SERVER-GUIDE.md, Part 2): cp .env.example .env; edit; docker compose up -d
+#
+# Backups are NOT covered by this topology yet (D8 covers the Fly deployment only).
+
+name: loom
+
+services:
+  loom:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      LOOM_DB: /data/loom.db
+      LOOM_CLIENT_IP_SOURCE: peer
+      FORWARDED_ALLOW_IPS: 10.217.17.2
+    volumes:
+      - loom_data:/data
+    networks:
+      - backend
+    # Docker SIGKILLs this long after SIGTERM. It must stay STRICTLY above the Dockerfile
+    # CMD's `--timeout-graceful-shutdown 25`, for the same reason as fly.toml's kill_timeout.
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+
+  caddy:
+    image: caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af
+    restart: unless-stopped
+    depends_on:
+      loom:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      LOOM_DOMAIN: ${LOOM_DOMAIN:?set LOOM_DOMAIN in .env (see .env.example)}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      edge: {}
+      backend:
+        ipv4_address: 10.217.17.2
+
+networks:
+  # Where the published ports land, and Caddy's way out to the ACME CA.
+  edge: {}
+  backend:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.217.17.0/24
+          # Dynamic addresses come from the upper half only, so the fixed one below it
+          # (Caddy's) can never have been handed to another container first.
+          ip_range: 10.217.17.128/25
+
+volumes:
+  loom_data: {}
+  # Caddy's certificates and ACME account: losing them means re-issuing, not data loss.
+  caddy_data: {}
+  caddy_config: {}

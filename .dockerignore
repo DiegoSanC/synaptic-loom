@@ -13,6 +13,7 @@ test
 docs
 prompts
 contract
+deploy
 server/tests
 
 # ---------------------------------------------------------------------------

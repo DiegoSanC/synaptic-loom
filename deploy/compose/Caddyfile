@@ -1,0 +1,15 @@
+# Synaptic Loom — the TLS edge of the Compose topology (D17). See docker-compose.yml.
+#
+# LOOM_DOMAIN is a hostname whose public DNS points at this host. Caddy obtains and renews
+# its certificate automatically (ACME, needs ports 80 and 443 reachable from the internet)
+# and redirects HTTP to HTTPS.
+#
+# `reverse_proxy` with no header options is deliberate. With no `trusted_proxies` configured,
+# Caddy treats every client as untrusted: it drops the X-Forwarded-For the client sent and
+# sets it to the address the connection came from (likewise X-Forwarded-Proto/-Host). The
+# server trusts that header from Caddy's address alone (FORWARDED_ALLOW_IPS). Do not add
+# `trusted_proxies` unless another proxy really sits in front of Caddy — it is what would
+# let a client's own header through.
+{$LOOM_DOMAIN} {
+	reverse_proxy loom:8080
+}

@@ -23,3 +23,5 @@ dist/
 # secretos / config local
 .env
 .env.*
+# ...except the Compose topology's template (D17), which holds example values only
+!deploy/compose/.env.example

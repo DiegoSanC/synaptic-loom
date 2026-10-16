@@ -132,8 +132,10 @@ DIGEST_PROMPT = REPO_ROOT / "prompts" / "digest_v1.md"
 # no epic manifest references them, and tooling that assumes letter <-> epic parity will be
 # wrong for exactly these letters. `o` onwards belong to the plan of 2026-09-23
 # (`docs/plans/2026-09-23-fix-label-grammar-fidelity-plan.md`): `o` = D11, summarizer v3;
-# `p` = D13, addressable items (slice C; later slices extend it).
-GOAL_WAVE_DIRS = tuple(f"test/waves/{letter}" for letter in "abcdefghijklmnopq")
+# `p` = D13, addressable items (slice C; later slices extend it). `r` = D17, the Docker
+# Compose + Caddy topology and the client address it resolves (owner decision of
+# 2026-10-16); like `m`, its boundary is Docker.
+GOAL_WAVE_DIRS = tuple(f"test/waves/{letter}" for letter in "abcdefghijklmnopqr")
 GOAL_WAVES_ROOT = "test/waves"
 CLIENT_SUITE = "client/tests"
 SERVER_SUITE = "server/tests"
@@ -1705,21 +1707,22 @@ def test_blockt_scenario_d_regression_goals():
         # itself driven by another gate, only the tail of this output survives, and the one
         # thing an operator needs from it is WHICH wave test failed.
         pytest.fail(
-            "the frozen goal waves a-m must still pass.\n"
+            "the frozen goal waves a-r must still pass.\n"
             f"{result.stdout[-1500:]}\n"
             f"counts={counts} FAILED IN THE DRIVEN WAVE RUN: {_failed_ids(result)}"
         )
-    # 330 tests collect under `test/waves` today — 248 before wave m (Fly packaging) added
+    # 350 tests collect under `test/waves` today — 248 before wave m (Fly packaging) added
     # 27, 275 before wave n (issue #4 attribution) added 21, 296 before wave o (D11,
-    # summarizer v3) added 7, 303 before wave p (D13, entry items) added 14, and 317
-    # before wave q (D13 slice E, item links) added 13. The floor is close enough
+    # summarizer v3) added 7, 303 before wave p (D13, entry items) added 14, 317
+    # before wave q (D13 slice E, item links) added 13, and 333 (measured; this comment
+    # said 330) before wave r (D17, Compose + Caddy) added 17. The floor is close enough
     # to that number that no whole goal file can be deleted under it: wave j's is 10 tests
     # and wave i's is 26, and `assert (REPO_ROOT / wave).is_dir()` above would happily pass
     # over an EMPTY directory. A floor with 48 tests of slack is not a regression leg, it is
     # a slogan — so the floor MOVES WITH THE COUNT, by the exact number a new wave adds, in
     # the same commit that adds the wave. Leaving it behind would grow the slack back and
     # quietly lose the property it was chosen for.
-    assert counts["passed"] >= 322, (
+    assert counts["passed"] >= 339, (
         f"the goal waves must actually have RUN, and all of them (a collection failure, "
         f"an emptied wave or a deleted goal file is not a pass): {counts}\n"
         f"{result.stdout[-1200:]}"

@@ -1,0 +1,25 @@
+# Wave r's ONLY change to deploy/compose/docker-compose.yml, layered on top with `-f`.
+#
+# 1. Caddy's published ports move to loopback ports the test picks, so the wave can run on
+#    a host whose 80/443 are taken and never exposes anything beyond 127.0.0.1.
+# 2. The `edge` network gets a fixed subnet and Caddy a fixed address on it, so the client
+#    containers the wave starts can be given literal addresses (`docker run --ip`) and the
+#    audit line can be checked against those literals.
+#
+# TLS is NOT overridden: the wave sets LOOM_DOMAIN=loom.localhost, a name for which Caddy's
+# automatic HTTPS issues from its own internal CA instead of ACME (a public CA cannot be
+# reached, nor can it validate a name, from a test host). The Caddyfile is the real one.
+services:
+  caddy:
+    ports: !override
+      - "127.0.0.1:${GOAL_R_HTTPS_PORT:?}:443"
+    networks:
+      edge:
+        ipv4_address: 10.217.18.2
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 10.217.18.0/24
+          ip_range: 10.217.18.128/25
