@@ -280,3 +280,71 @@ def test_a_valid_enrolment_code_is_redeemed_when_the_window_is_full(source, caps
         assert client.get("/api/projects",
                           headers={"Authorization": f"Bearer {token}"}).status_code == 200
         assert client.post("/api/enroll", json=body).status_code == 429          # now spent
+
+
+# --------------------------------------------------------------------------- #
+# Values that parse as addresses but must not become one                       #
+# --------------------------------------------------------------------------- #
+def test_an_ipv6_scope_id_is_unavailable_never_logged(source, caplog):
+    """`ipaddress` accepts any text after `%` as a scope id: a spoofable header could
+    then mint a fresh bucket per request and write free text into the audit line."""
+    source("header:cf-connecting-ip")
+    forged = "fe80::1%x outcome=forged client_ip=192.0.2.66"
+    with caplog.at_level(logging.INFO, logger=AUDIT_LOGGER), _client() as client:
+        for n in range(10):
+            client.get("/api/projects", headers={**BAD_BEARER, "CF-Connecting-IP": f"fe80::1%{n}"})
+        limited = client.get("/api/projects", headers={**BAD_BEARER, "CF-Connecting-IP": forged})
+    assert limited.status_code == 429, "scope ids must not buy fresh buckets"
+    assert _audit_ips(caplog) == ["unavailable"] * 11
+    assert "outcome=forged" not in caplog.text and "192.0.2.66" not in caplog.text
+
+
+def test_an_ipv4_mapped_peer_shares_the_plain_ipv4_bucket(source, caplog):
+    source("peer")
+    with caplog.at_level(logging.INFO, logger=AUDIT_LOGGER):
+        with _client(f"::ffff:{PEER}") as mapped:
+            _exhaust(mapped)
+            # Not entered: a second lifespan would clear the windows under test.
+            plain = _client(PEER)
+            assert plain.get("/api/projects", headers=BAD_BEARER).status_code == 429
+    assert set(_audit_ips(caplog)) == {PEER}
+
+
+def test_header_fly_client_ip_is_the_fly_mode(source, caplog):
+    source("header:Fly-Client-IP")
+    with caplog.at_level(logging.INFO, logger=STARTUP_LOGGER):
+        with _client():
+            pass
+    lines = _startup_lines(caplog)
+    assert lines[0] == (logging.INFO, "client_ip_source mode=fly-client-ip")
+    # Same header, same risk off Fly: the fly-mode warning, not silence.
+    assert [level for level, _ in lines[1:]] == [logging.WARNING], lines
+
+
+# --------------------------------------------------------------------------- #
+# A flood of bogus codes never queues behind the database's write lock         #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize(("path", "body"), [
+    ("/api/enroll", {"code": "wrong-" * 6, "device_name": "laptop"}),
+    ("/ui/session", {"code": "wrong-" * 6}),
+])
+def test_a_bogus_code_is_refused_without_waiting_for_the_write_lock(source, env, path, body):
+    """Redemption is unthrottled for the first ten failures and answered 429 after: a
+    bogus code must be refused by a read, not by queueing for SQLite's single writer
+    (busy_timeout is 5 s) behind legitimate writes."""
+    import sqlite3
+    import time
+
+    source("peer")
+    holder = sqlite3.connect(env, isolation_level=None)
+    try:
+        with _client(base_url="https://testserver") as client:
+            holder.execute("BEGIN IMMEDIATE")
+            started = time.monotonic()
+            refused = client.post(path, json=body)
+            elapsed = time.monotonic() - started
+            holder.execute("ROLLBACK")
+    finally:
+        holder.close()
+    assert refused.status_code == 401, refused.text
+    assert elapsed < 1.0, f"a bogus code waited {elapsed:.1f}s for the write lock"

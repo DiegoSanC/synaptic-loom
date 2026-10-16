@@ -13,7 +13,8 @@ shares a bucket with whom. `LOOM_CLIENT_IP_SOURCE` names its source:
   uvicorn's job under ``peer``.
 
 Anything else refuses to start. Whatever the source, the value is validated with
-``ipaddress``; a missing or invalid one is ``unavailable``, never the raw value.
+``ipaddress``; a missing or invalid one, or one carrying an IPv6 scope id, is
+``unavailable``, never the raw value. An IPv4-mapped IPv6 address keys as its IPv4 form.
 """
 from __future__ import annotations
 
@@ -45,9 +46,15 @@ class ClientIpSource:
         else:
             value = request.headers.get(self.header, "")
         try:
-            return str(ipaddress.ip_address(value))
+            address = ipaddress.ip_address(value)
         except ValueError:
             return UNAVAILABLE
+        if getattr(address, "scope_id", None) is not None:
+            # `ipaddress` takes any text after `%` as a scope id, spaces included: never
+            # let that become a bucket key or a word in the audit line.
+            return UNAVAILABLE
+        # A dual-stack socket reports an IPv4 client as ::ffff:a.b.c.d — one client, one key.
+        return str(getattr(address, "ipv4_mapped", None) or address)
 
 
 def parse(value: str | None) -> ClientIpSource:
@@ -60,6 +67,8 @@ def parse(value: str | None) -> ClientIpSource:
         return ClientIpSource(FLY_MODE, FLY_MODE)
     if value.startswith("header:"):
         name = value[len("header:"):].lower()
+        if name == FLY_MODE:
+            return ClientIpSource(FLY_MODE, FLY_MODE)   # same header, same warnings
         if _HEADER_NAME.fullmatch(name) and name not in _MULTI_VALUED:
             return ClientIpSource(f"header:{name}", name)
     raise ValueError(

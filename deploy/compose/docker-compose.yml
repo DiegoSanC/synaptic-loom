@@ -74,7 +74,9 @@ services:
         ipv4_address: 10.217.17.2
 
 networks:
-  # Where the published ports land, and Caddy's way out to the ACME CA.
+  # Where the published ports land, and Caddy's way out to the ACME CA. IPv4 only: an IPv6
+  # client would reach Caddy through Docker's userland proxy as the gateway's address, so
+  # publish no AAAA record (docs/SERVER-GUIDE.md Part 2 §2).
   edge: {}
   backend:
     internal: true

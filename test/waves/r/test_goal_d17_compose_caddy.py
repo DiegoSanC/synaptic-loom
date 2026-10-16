@@ -80,6 +80,8 @@ EDGE_SUBNET = "10.217.18.0/24"       # compose.goal.yml networks.edge
 CADDY_EDGE_IP = "10.217.18.2"
 CLIENT_A, CLIENT_B, CLIENT_SPOOF, CLIENT_BLOCKED, CLIENT_DIRECT = (
     "10.217.18.11", "10.217.18.12", "10.217.18.13", "10.217.18.14", "10.217.18.15")
+# A container on `backend` that is NOT Caddy (outside the backend ip_range, like Caddy's).
+BACKEND_INTRUDER = "10.217.17.20"
 DOMAIN = "loom.localhost"
 GRACE_S = 30                         # docker-compose.yml stop_grace_period
 MIN_SHUTDOWN_HEADROOM_S = 5          # over the CMD's --timeout-graceful-shutdown (wave m)
@@ -260,10 +262,10 @@ class Stack:
                     raise
                 time.sleep(0.5)
 
-    def client(self, ip: str, steps: list[dict]) -> list[dict]:
-        """Run the probe from a client container at `ip` on the edge network."""
+    def client(self, ip: str, steps: list[dict], *, network: str = "edge") -> list[dict]:
+        """Run the probe from a client container at `ip` on the given stack network."""
         done = _docker(
-            "run", "--rm", "--network", f"{self.project}_edge", "--ip", ip,
+            "run", "--rm", "--network", f"{self.project}_{network}", "--ip", ip,
             "--add-host", f"{DOMAIN}:{CADDY_EDGE_IP}", "-e", f"LOOM_CA={self.ca_pem}",
             "--entrypoint", "python", self.image, "-c", PROBE.read_text(), json.dumps(steps),
             timeout=600)
@@ -365,6 +367,21 @@ def test_spoofed_forwarding_headers_neither_reset_the_window_nor_reach_the_log(s
     for n in range(1, AUTH_FAILURE_LIMIT + 2):
         for forged in (f"192.0.2.{n}", f"198.51.100.{n}", f"203.0.113.{n}"):
             assert forged not in ips, f"a client-sent address reached the audit log: {forged}"
+
+
+def test_the_server_trusts_forwarded_headers_from_no_peer_but_caddy(stack):
+    """The live half of FORWARDED_ALLOW_IPS. Caddy replaces a client's X-Forwarded-For, so
+    the tests above would pass even if the server trusted every peer; this one comes from
+    a peer that is not Caddy, straight to the server, carrying its own forged header."""
+    forged = "192.0.2.77"
+    results = stack.client(BACKEND_INTRUDER, [{
+        "url": f"http://{SERVER}:{INTERNAL_PORT}/api/projects",
+        "headers": {"Authorization": "Bearer always-invalid", "X-Forwarded-For": forged},
+    }], network="backend")
+    assert _statuses(results) == [401], results
+    ips = _audit_ips(stack.server_log())
+    assert BACKEND_INTRUDER in ips, ips
+    assert forged not in ips, "the server took X-Forwarded-For from a peer that is not Caddy"
 
 
 def test_a_valid_token_from_a_blocked_address_still_works(stack):

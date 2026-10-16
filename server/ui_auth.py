@@ -135,6 +135,14 @@ def open_session(conn: sqlite3.Connection, code: str) -> dict | None:
 
     now = _now()
     now_iso = _iso(now)
+    code_hash = db.hash_token(code)
+    # Read before locking, as `auth.redeem` does (D17): a bogus code never waits for the
+    # writer.
+    if conn.execute(
+        "SELECT 1 FROM ui_login_codes WHERE code_hash = ? AND redeemed_at IS NULL "
+        "AND expires_at > ?", (code_hash, now_iso),
+    ).fetchone() is None:
+        return None
     conn.execute("BEGIN IMMEDIATE")
     try:
         row = conn.execute(
@@ -143,7 +151,7 @@ def open_session(conn: sqlite3.Connection, code: str) -> dict | None:
             "FROM ui_login_codes c JOIN users u ON u.id = c.user_id "
             "LEFT JOIN device_tokens d ON d.id = c.device_token_id "
             "WHERE c.code_hash = ? AND c.redeemed_at IS NULL AND c.expires_at > ?",
-            (db.hash_token(code), now_iso),
+            (code_hash, now_iso),
         ).fetchone()
         device_dead = row is not None and row["device_token_id"] is not None and (
             row["device_revoked_at"] is not None or row["device_expires_at"] <= now_iso)

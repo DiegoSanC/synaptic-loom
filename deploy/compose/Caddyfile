@@ -8,8 +8,9 @@
 # Caddy treats every client as untrusted: it drops the X-Forwarded-For the client sent and
 # sets it to the address the connection came from (likewise X-Forwarded-Proto/-Host). The
 # server trusts that header from Caddy's address alone (FORWARDED_ALLOW_IPS). Do not add
-# `trusted_proxies` unless another proxy really sits in front of Caddy — it is what would
-# let a client's own header through.
+# `trusted_proxies` unless another proxy really sits in front of Caddy: for the peers it
+# covers, Caddy would pass the client's own header on (appending its peer), and the server
+# would then be one over-wide FORWARDED_ALLOW_IPS away from believing it.
 {$LOOM_DOMAIN} {
 	reverse_proxy loom:8080
 }

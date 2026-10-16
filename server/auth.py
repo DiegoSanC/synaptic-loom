@@ -174,13 +174,22 @@ def redeem(conn: sqlite3.Connection, code: str, device_name: str) -> dict | None
     from server import db
 
     now = _iso(datetime.now(timezone.utc))
+    code_hash = db.hash_token(code)
+    # A read first, outside any transaction: a code that cannot redeem never queues for
+    # the write lock. Redemption is not throttled until the address has failed ten times
+    # (D17), so a flood of bogus codes must cost a read, not a turn as SQLite's writer.
+    if conn.execute(
+        "SELECT 1 FROM enrolment_codes WHERE code_hash = ? AND redeemed_at IS NULL "
+        "AND expires_at > ?", (code_hash, now),
+    ).fetchone() is None:
+        return None
     conn.execute("BEGIN IMMEDIATE")
     try:
         row = conn.execute(
             "SELECT c.id, c.user_id, u.name, u.active "
             "FROM enrolment_codes c JOIN users u ON u.id = c.user_id "
             "WHERE c.code_hash = ? AND c.redeemed_at IS NULL AND c.expires_at > ?",
-            (db.hash_token(code), now),
+            (code_hash, now),
         ).fetchone()
         if row is None or not row["active"]:
             conn.rollback()

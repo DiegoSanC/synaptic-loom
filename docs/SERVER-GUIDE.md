@@ -268,7 +268,7 @@ shape as on Fly: one Uvicorn worker, SQLite on one volume.
 
 | | |
 |---|---|
-| A Linux host | Public IPv4 (IPv6 optional), inbound **80 and 443** open — Caddy needs both to obtain and renew the certificate. |
+| A Linux host | Public IPv4, inbound **80 and 443** open — Caddy needs both to obtain and renew the certificate. IPv4 only: see §2. |
 | Docker Engine 25+ with the Compose v2 plugin | `docker compose version`. The server's healthcheck uses `start_interval`, which older engines ignore. |
 | A DNS name | `loom.example.com` in this guide. |
 | `git` | You deploy from a clone. |
@@ -276,12 +276,19 @@ shape as on Fly: one Uvicorn worker, SQLite on one volume.
 
 ## 2. Point the DNS name at the host
 
-Create an `A` record (and `AAAA`, if the host has IPv6) for `loom.example.com` pointing at
-the host's public address, and check it resolves **before** the first start:
+Create an `A` record for `loom.example.com` pointing at the host's public IPv4 address, and
+check it resolves **before** the first start:
 
 ```bash
 dig +short loom.example.com      # -> the host's public address
+dig +short AAAA loom.example.com # -> nothing
 ```
+
+**Do not publish an `AAAA` record.** The Compose networks are IPv4-only, so an IPv6
+connection to a published port is relayed by Docker's userland proxy, and Caddy sees the
+network's gateway instead of the client: every IPv6 client would share one rate-limit
+bucket and one audit address. Supporting IPv6 means enabling it on the `edge` network,
+which this topology does not do and wave `r` does not test.
 
 Caddy retries a failed issuance, but the public CA rate-limits failures; starting before
 DNS is right only buys a wait.
@@ -352,8 +359,8 @@ docker compose logs loom | grep 'outcome=invalid_token' | tail -1
 |---|---|
 | the other machine's address | Correct. |
 | `10.217.17.2` | The server does not trust Caddy: `FORWARDED_ALLOW_IPS` is not Caddy's address. Every client shares one bucket. |
-| `192.0.2.1` | Something trusts the client's own header: `FORWARDED_ALLOW_IPS` too wide, or `trusted_proxies` added to the Caddyfile. Fix before going further. |
-| a Docker gateway address (`172.x.x.1`) | The request reached Caddy through Docker's userland proxy — typically a test from the host itself. Retry from another machine. |
+| `192.0.2.1` | Both layers believe the client's own header: `trusted_proxies` in the Caddyfile covers the client, **and** `FORWARDED_ALLOW_IPS` is wider than Caddy's address (e.g. `*`). Fix before going further. |
+| a Docker gateway address (`172.x.x.1`) | The request reached Caddy through Docker's userland proxy: a test from the host itself, or over IPv6 (see §2). Retry from another machine, over IPv4. |
 
 How it works, so the table above can be reasoned about rather than memorised:
 
@@ -371,7 +378,9 @@ How it works, so the table above can be reasoned about rather than memorised:
   server warns at startup if it is set without `FLY_APP_NAME`). Both behaviours were
   observed on 2026-10-16 against a header-echoing upstream; wave `r` asserts their
   consequence — a client-sent `X-Forwarded-For` or `Fly-Client-IP` neither resets a
-  failure window nor reaches the audit line.
+  failure window nor reaches the audit line — and, separately, that a peer on the
+  server's network which is not Caddy cannot name its own address with
+  `X-Forwarded-For`.
 
 > ### Never set `FORWARDED_ALLOW_IPS=*`
 >
