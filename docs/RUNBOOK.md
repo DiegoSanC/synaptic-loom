@@ -699,14 +699,18 @@ instead of the original — and still prove the mechanics. What the drills taugh
 
 ### 3b. Phase-1 localhost server (retired with the cutover, #17)
 
-Script: `server/backup.sh` — a consistent copy using sqlite's online `.backup`
-(or the stdlib equivalent if the binary does not support it), keeping 14. It is also
-the tool that produces the migration snapshot in §2.
+Script: `server/backup.sh` — a consistent copy using SQLite's online backup API (through
+the server venv's Python), checked with `PRAGMA integrity_check` before it counts, keeping
+14. It is also the tool that produces the migration snapshot in §2, and since D18 it is what
+the Compose topology's `backup` service runs (`docs/SERVER-GUIDE.md` Part 2 §8).
 
 ```bash
 LOOM_DB=~/.loom-server/loom.db bash server/backup.sh
-# -> ~/.loom-server/backups/loom-<date>.db  (purges everything past the newest 14)
+# -> ~/.loom-server/backups/loom-<UTC time>.db  (purges what it named past the newest 14)
 ```
+
+Backups taken before D18 are named `loom-<date>-<time>.db`; the script never purges a name
+it does not write, so delete those by hand once they are not needed.
 
 **Scheduling (cron):**
 
@@ -727,7 +731,7 @@ hook it to server startup.
 
 ```bash
 systemctl --user stop loom-server
-cp ~/.loom-server/backups/loom-<date>.db ~/.loom-server/loom.db
+cp ~/.loom-server/backups/loom-<UTC time>.db ~/.loom-server/loom.db
 systemctl --user start loom-server
 ```
 

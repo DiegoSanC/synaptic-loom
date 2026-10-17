@@ -19,6 +19,8 @@ than smoothed over — that is most of this document's value.
 Part 2 (Docker Compose + Caddy) was **executed on 2026-10-16** by goal wave `r`, against the
 real `deploy/compose` files on a local Docker host, with Caddy's internal CA standing in
 for the public one; the public-DNS, public-CA path on a real VPS was not (listed at the end).
+Its backups and restore (Part 2 §8) were **executed on 2026-10-17** by goal wave `s`, against
+the same files; the SSH leg of the off-host pull was not.
 
 ---
 
@@ -253,10 +255,13 @@ authoritative and which sections are rollback history.
 
 For a team that runs its own Linux host (a VPS) instead of Fly. Supported and tested
 (`DESIGN.md` D17): goal wave `r` brings up exactly the files below with
-`docker compose up --build` and drives them from client containers.
+`docker compose up --build` and drives them from client containers; goal wave `s` does the
+same for the backups and the restore (D18, §8).
 
 ```
 internet ──80/443──▶ caddy ──backend (internal network)──▶ loom:8080 ──▶ volume /data
+                                          backup (no network) ──reads /data──▶ volume /backups
+another machine ──SSH, pulls──▶ the backups (§8)
 ```
 
 Caddy is the **only** published service. It terminates TLS for your domain with automatic
@@ -308,7 +313,7 @@ refuses to start and names the missing variable.
 
 ```bash
 docker compose up -d --build --wait
-docker compose ps                # loom (healthy) and caddy, nothing else
+docker compose ps                # loom (healthy), backup and caddy, nothing else
 curl -sS https://loom.example.com/api/health
 # -> {"status":"ok","version":"0.1.0"}
 ```
@@ -404,22 +409,143 @@ docker compose stop                                 # drains up to 25 s; SIGKILL
 docker compose down                                 # removes containers, KEEPS the volumes
 ```
 
-The database is the named volume `loom_loom_data` (project `loom`, volume `loom_data`).
-`docker compose down -v` **deletes it**, together with Caddy's certificates — never run it
-on a server whose logbook you want.
+The database is the named volume `loom_loom_data` (project `loom`, volume `loom_data`; after
+a restore, the volume `LOOM_DATA_VOLUME` names in `.env`, §8b), and the backups are
+`loom_loom_backups`. `docker compose down -v` **deletes both**, together with Caddy's
+certificates — never run it on a server whose logbook you want.
 
-## 8. Backups — not covered yet
+Take a backup before deploying a new version: the server migrates its schema when it
+starts, and a rollback needs a copy from just before that.
 
-**There is no backup for this topology.** `DESIGN.md` D8 is Fly's daily volume snapshots
-and applies to the Fly deployment only; how a Compose host is backed up is pending an owner
-decision. Until then the `loom_loom_data` volume is the only copy: losing the host, its
-disk, or running `down -v` loses the logbook.
+```bash
+docker compose exec backup /app/server/backup.sh   # -> backup.sh: wrote /backups/loom-….db (…)
+```
+
+## 8. Backups and restore (`DESIGN.md` D8, D18)
+
+The `backup` service copies the database into a volume of its own, and **another machine
+pulls those copies off the host**. Nothing on the server holds a credential for anywhere
+else.
+
+| | |
+|---|---|
+| What runs | The `backup` service: the server's image, user `app`, no network, no port. It runs `server/backup.sh` once when it starts and then every `LOOM_BACKUP_INTERVAL`. |
+| A backup | SQLite's online backup API (consistent while the server writes), checked with `PRAGMA integrity_check` and renamed into place only when `ok`: `loom-<UTC time>.db`, mode 0600, in the volume `loom_loom_backups`. |
+| Interval | `LOOM_BACKUP_INTERVAL` in `.env`, default `6h`. |
+| Kept on the host | `LOOM_BACKUP_KEEP`, default 14: 3.5 days at 6 h. Longer history is the off-host copy's. |
+| RPO | Database volume lost or damaged: **≤ the interval** (6 h). Whole host lost: **≤ the interval + the pull schedule** (≤ 12 h with the 6-hourly pull below). D8 asks for ≤ 24 h. |
+| A failed backup | The copy is deleted, no older backup is purged, and the service exits non-zero: Docker restarts it, which retries the backup, and `docker compose ps` shows `backup` restarting. Nothing alerts you — the check below is the only oracle. |
+
+**Check it**, from `deploy/compose/`, weekly and after every deploy:
+
+```bash
+docker compose ps backup             # running — "Restarting" means backups are failing
+docker compose logs --tail 4 backup
+# -> backup.sh: wrote /backups/loom-20261017T120000.123456Z.db (… bytes, integrity_check ok)
+```
+
+### 8a. The off-host copy
+
+Run this **on another machine** — one that shares neither the server's disk nor its
+provider account — with SSH access to the server as a user allowed to run `docker`:
+
+```bash
+mkdir -p ~/loom-offsite && chmod 700 ~/loom-offsite
+ssh loom-host 'cd ~/loom/deploy/compose && docker compose run --rm --no-deps -T backup /app/server/backup.sh --export' \
+  | tar -C ~/loom-offsite -xf -
+ls ~/loom-offsite                    # loom-<UTC time>.db …, newest last
+```
+
+`--export` writes the current backups to stdout as one tar stream while holding the lock
+every backup takes, so a pull never catches a half-written file or one that retention is
+deleting. The names are unique, so each pull adds what is new, and the puller keeps as much
+history as it wants (`find ~/loom-offsite -name 'loom-*.db' -mtime +30 -delete` keeps 30
+days). Schedule it every 6 h, away from the backup's own moment:
+
+```cron
+15 */6 * * * bash -o pipefail -c "ssh loom-host 'cd ~/loom/deploy/compose && docker compose run --rm --no-deps -T backup /app/server/backup.sh --export' | tar -C $HOME/loom-offsite -xf -"
+```
+
+- **Restrict the key.** Being allowed to run `docker` is being root on that host. Give the
+  puller a key of its own and pin it to this one command in the server's
+  `~/.ssh/authorized_keys`: `command="cd ~/loom/deploy/compose && docker compose run --rm
+  --no-deps -T backup /app/server/backup.sh --export",restrict ssh-ed25519 AAAA… loom-pull`.
+- **The copies are the whole logbook.** Keep the puller's directory as you keep the server:
+  encrypted disk, mode 700, nobody else's account.
+- **Provider disk snapshots** of the server are a good complement (they also cover the
+  host's configuration), not a substitute: they are crash-consistent images nobody
+  integrity-checks, kept in the same provider account as the server.
+
+### 8b. Restore — always into a new volume
+
+```bash
+cd ~/loom/deploy/compose
+# 1. Pick a backup. From the host's backups volume:
+docker compose run --rm --no-deps -T backup /app/server/backup.sh --export | tar -tvf -
+mkdir -p ~/restore && chmod 700 ~/restore
+docker compose run --rm --no-deps -T backup /app/server/backup.sh --export \
+  | tar -C ~/restore -xf - loom-20261017T120000.123456Z.db
+#    …or copy one back from the off-host machine when the host's volume is gone.
+
+# 2. Restore it.
+./restore.sh ~/restore/loom-20261017T120000.123456Z.db
+# -> restore.sh: restored 3 users, 2 projects, 41 entries
+# -> restore.sh: the server runs on loom_loom_data_restored_20261017T130000Z, recorded as LOOM_DATA_VOLUME in .env; health ok
+# -> restore.sh: loom_loom_data is untouched; remove it with `docker volume rm loom_loom_data` once the drill passes
+```
+
+`restore.sh` streams the file into a **new** volume through a one-off container and checks
+it there with `PRAGMA integrity_check`: a bad file is refused while the server keeps
+running, and the half-made volume is removed. Only then does it record the new volume as
+`LOOM_DATA_VOLUME` in `.env` — so every later `docker compose` command uses it — recreate
+`loom` and `backup` on it, and check that the running server's `/data` is that volume. The
+volume the server ran on before is never mounted, written or deleted. Entries written after
+the backup was taken are not in the restore; they are still on the old volume, which is one
+reason it stays until you remove it.
+
+**To go back** to the volume from before the restore: delete the `LOOM_DATA_VOLUME` line
+from `.env`, then `docker compose up -d --wait --force-recreate loom backup`.
+
+**On a new host**, when the old one is gone: §3 (clone, `.env`), `docker compose build`,
+`./restore.sh` with the newest off-host copy, then `docker compose up -d --wait` for Caddy.
+
+### 8c. The drill
+
+A backup that was never restored is a hope. Right after the restore, and once a month,
+prove the restored server answers **with the data**, from a client machine:
+
+```bash
+curl -sS https://loom.example.com/api/health          # {"status":"ok",…}
+~/.loom/venv/bin/loom log <project>                   # an authenticated read
+~/.loom/venv/bin/loom log <project> --grep "<a word you know is in an entry>"   # ?q= search
+```
+
+The monthly drill is a restore of the newest **off-host** copy on a second Docker machine,
+following "on a new host" above, so the copy that survives a lost host is the one proven.
+Without DNS there, make the same three checks from inside the server container:
+
+```bash
+# TOKEN: a device token, e.g. `token` in a client's ~/.loom/config.json.
+docker compose exec -T -u app -e TOKEN loom python -c '
+import json, os, urllib.request
+def get(path):
+    request = urllib.request.Request("http://127.0.0.1:8080" + path,
+                                     headers={"Authorization": "Bearer " + os.environ["TOKEN"]})
+    return json.load(urllib.request.urlopen(request, timeout=10))
+print(get("/api/health"))
+projects = get("/api/projects")["projects"]
+print([p["name"] for p in projects])
+print(len(get("/api/projects/%d/entries?q=WORD" % projects[0]["id"])["entries"]))'
+```
 
 ## 9. Tearing it down
 
 ```bash
-docker compose down -v --rmi local     # containers, image, AND every volume: the data is gone
+docker compose down -v --rmi local     # containers, images, AND every volume: data and backups gone
 ```
+
+A volume a restore replaced (§8b) is no longer part of the stack, so `down -v` leaves it:
+`docker volume ls` and `docker volume rm` it by name.
 
 ---
 
@@ -481,4 +607,9 @@ Stated so nobody mistakes the rest for equally solid:
   but with `LOOM_DOMAIN=loom.localhost`, which Caddy serves from its internal CA: ACME
   issuance and renewal against a public CA, and a client address arriving through a real
   host's published ports, were not executed.
-- **Backups for Part 2.** Not covered at all yet (Part 2 §8).
+- **Part 2's off-host pull over SSH from a real second machine (§8a).** Wave `s` runs the
+  `--export` stream the pull carries and unpacks it, on one Docker host; the SSH hop, the
+  restricted key and the cron line were not executed.
+- **Part 2's monthly drill on a second machine (§8c).** Wave `s` restores on the same host
+  and makes the drill's checks (health, an authenticated read, a `?q=` search) against the
+  restored server from inside its container; `loom log` against a restored server was not.
