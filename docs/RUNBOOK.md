@@ -798,7 +798,11 @@ bash client/install.sh            # asks to confirm each merge; --yes for non-in
 
 # 3. Enrol this machine: paste the enrolment code at the hidden prompt. The machine mints
 #    its own 90-day device token, written to ~/.loom/config.json (600) and renewed silently.
-~/.loom/venv/bin/loom enroll --server-url=https://<app>.fly.dev     # --device-name defaults to the hostname
+~/.loom/venv/bin/loom enroll --server-url=https://<app>.fly.dev
+#    The machine is listed server-side under its short host name (the part before the
+#    first dot, so no network domain; 'device' if there is none); --device-name=NAME
+#    sends NAME verbatim instead. A machine enrolled before 2026-10-17 keeps the full host
+#    name it sent then, until it re-enrols.
 
 # 4. Verify the environment (all ✓ except, at most, optional warnings)
 ~/.loom/venv/bin/loom doctor      # includes "device token expires … (N days left; renews automatically …)"

@@ -116,7 +116,9 @@ loading unchanged.
 reads the code via `getpass` (never echoed, never an argv), validates `/api/health`,
 redeems, and writes `config.json` (0600) **merging** into an existing config so
 `cache_ttl_s`, `summarizer`, `sweep` and `scanner` survive. `device_name` defaults to the
-hostname. Creates the work directories like `init`.
+hostname (since 2026-10-17 the short host name — its first label, `device` if empty — so the
+network domain is not sent; existing enrolments keep their name). Creates the work
+directories like `init`.
 
 **Silent renewal** — `loom/auth.py: renew_if_due(cfg, api)` runs at the top of
 `processor.run_once`, inside the lock, before the registry refresh: the pass was already

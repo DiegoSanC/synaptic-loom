@@ -8,7 +8,6 @@ lifetime, merging into an existing config rather than replacing it.
 from __future__ import annotations
 
 import json
-import socket
 import stat
 
 import pytest
@@ -159,14 +158,63 @@ def test_enroll_prompts_for_the_url_when_absent(monkeypatch, tmp_path, httpserve
     assert json.loads((home / "config.json").read_text())["server_url"] == httpserver.url_for("")
 
 
-def test_enroll_device_name_defaults_to_the_hostname(monkeypatch, tmp_path, httpserver):
+# The default device name is the SHORT host name: macOS can report a DHCP-supplied FQDN,
+# sometimes with the domain repeated, and the home network's domain is not the server's
+# business. The OS host name is the one boundary simulated here.
+@pytest.mark.parametrize(("os_hostname", "sent"), [
+    ("laptop.home.example.home.example", "laptop"),
+    ("laptop.local", "laptop"),
+    ("laptop", "laptop"),
+    (" laptop .home.example", "laptop"),
+    ("", "device"),
+    (".home.example", "device"),
+    ("   ", "device"),
+])
+def test_enroll_device_name_defaults_to_the_short_host_name(monkeypatch, tmp_path, httpserver,
+                                                             capsys, os_hostname, sent):
     monkeypatch.setenv("LOOM_HOME", str(tmp_path / "h"))
+    monkeypatch.setattr("socket.gethostname", lambda: os_hostname)
     seen = []
     _mock(httpserver, seen=seen)
     _hidden_prompt(monkeypatch)
 
     assert cli.main(["enroll", "--server-url", httpserver.url_for("")]) == 0
-    assert seen[0]["device_name"] == socket.gethostname()
+    assert seen == [{"code": CODE, "device_name": sent}]
+    assert f"(device '{sent}')" in capsys.readouterr().out
+
+
+def test_enroll_device_name_falls_back_when_the_host_name_is_unavailable(monkeypatch, tmp_path,
+                                                                        httpserver):
+    def no_hostname():
+        raise OSError("no host name")
+
+    monkeypatch.setenv("LOOM_HOME", str(tmp_path / "h"))
+    monkeypatch.setattr("socket.gethostname", no_hostname)
+    seen = []
+    _mock(httpserver, seen=seen)
+    _hidden_prompt(monkeypatch)
+
+    assert cli.main(["enroll", "--server-url", httpserver.url_for("")]) == 0
+    assert seen == [{"code": CODE, "device_name": "device"}]
+
+
+def test_enroll_explicit_device_name_is_sent_verbatim(monkeypatch, tmp_path, httpserver, capsys):
+    monkeypatch.setenv("LOOM_HOME", str(tmp_path / "h"))
+    monkeypatch.setattr("socket.gethostname", lambda: "laptop.home.example")
+    seen = []
+    _mock(httpserver, seen=seen)
+    _hidden_prompt(monkeypatch)
+
+    rc = cli.main(["enroll", "--server-url", httpserver.url_for(""), "--device-name", "Diego's Mac.lan"])
+    assert rc == 0
+    assert seen == [{"code": CODE, "device_name": "Diego's Mac.lan"}]
+    assert "(device 'Diego's Mac.lan')" in capsys.readouterr().out
+
+
+def test_enroll_help_states_the_short_host_name_default(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["enroll", "--help"])
+    assert "default: short host name, without the domain" in " ".join(capsys.readouterr().out.split())
 
 
 def test_enroll_rejected_code_writes_nothing(monkeypatch, tmp_path, httpserver, capsys):

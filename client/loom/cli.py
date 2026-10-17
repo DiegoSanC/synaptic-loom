@@ -2111,6 +2111,24 @@ def cmd_init(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 # enroll (issue #20)                                                           #
 # --------------------------------------------------------------------------- #
+DEFAULT_DEVICE_NAME = "device"
+
+
+def default_device_name() -> str:
+    """The name ``loom enroll`` sends when ``--device-name`` is not given.
+
+    Only the first label of the OS host name: macOS can report a DHCP-supplied FQDN
+    (sometimes with the domain repeated), and the home network's domain is not the
+    server's business. Never empty — a missing or ``.``-leading host name sends
+    ``DEFAULT_DEVICE_NAME``.
+    """
+    try:
+        hostname = socket.gethostname()
+    except OSError:
+        hostname = ""
+    return hostname.split(".", 1)[0].strip() or DEFAULT_DEVICE_NAME
+
+
 def cmd_enroll(args: argparse.Namespace) -> int:
     """Redeem a single-use enrolment code for THIS machine's device token.
 
@@ -2139,7 +2157,7 @@ def cmd_enroll(args: argparse.Namespace) -> int:
     if not code:
         print("loom enroll: an enrolment code is required.", file=sys.stderr)
         return 1
-    device_name = args.device_name or socket.gethostname()
+    device_name = args.device_name or default_device_name()
 
     api = ApiClient(server_url, "")
     try:
@@ -3039,7 +3057,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p_enroll.add_argument("--server-url", dest="server_url", help="Server URL (prompted if omitted).")
     p_enroll.add_argument("--device-name", dest="device_name",
-                          help="How this machine is listed server-side (default: hostname).")
+                          help="How this machine is listed server-side, sent verbatim "
+                               "(default: short host name, without the domain).")
     p_enroll.set_defaults(func=cmd_enroll)
 
     p_doctor = sub.add_parser("doctor", help="Check the environment (checklist).")
