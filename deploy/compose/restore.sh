@@ -34,8 +34,15 @@ die() {
 [ $# -eq 1 ] || die "usage: restore.sh <backup-file>"
 [ -f "$1" ] && [ -r "$1" ] || die "no readable backup file at $1"
 SRC="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+# A LOOM_ENV_FILE is relative to where you are, the default to this script.
+ENV_FILE="${LOOM_ENV_FILE:-}"
+case "$ENV_FILE" in
+  '') ;;
+  /*) ;;
+  *) ENV_FILE="$PWD/$ENV_FILE" ;;
+esac
 cd "$(dirname "${BASH_SOURCE[0]}")"
-ENV_FILE="${LOOM_ENV_FILE:-.env}"
+ENV_FILE="${ENV_FILE:-.env}"
 [ -f "$ENV_FILE" ] || die "no env file at $ENV_FILE (cp .env.example .env, as for the first start)"
 [ -z "${LOOM_DATA_VOLUME:-}" ] || die "unset LOOM_DATA_VOLUME in your shell: restore.sh records it in $ENV_FILE"
 

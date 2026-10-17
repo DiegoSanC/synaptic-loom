@@ -274,9 +274,13 @@ class Stack:
         return self.compose("run", "--rm", "--no-deps", "-T", *extra, BACKUP, *args,
                             input=input, timeout=300)
 
-    def export(self) -> dict[str, tarfile.TarInfo | bytes]:
-        """The documented off-host pull, run here instead of over SSH."""
-        done = self.run_backup_container(BACKUP_SH, "--export")
+    def export(self, *, running: bool = False) -> dict[str, tarfile.TarInfo | bytes]:
+        """The documented off-host pull, run here instead of over SSH: `exec` into the
+        running service (the guide's form), or a one-off container while it is stopped."""
+        if running:
+            done = self.compose("exec", "-T", BACKUP, BACKUP_SH, "--export", timeout=300)
+        else:
+            done = self.run_backup_container(BACKUP_SH, "--export")
         assert done.returncode == 0, _out(done)[-2000:]
         found = {}
         with tarfile.open(fileobj=io.BytesIO(done.stdout), mode="r:") as tar:
@@ -381,7 +385,7 @@ def test_the_service_backs_up_entries_written_through_the_api_privately(stack):
     # Two more writes: the first may have started before the entry was committed.
     after = len(stack.writes()) + 2
     writes = stack.wait_for_writes(after)
-    exported = stack.export()
+    exported = stack.export(running=True)
     name = max(exported)
     assert name >= writes[after - 1], (
         f"the newest backup must be one that started after the entry: {name} {writes}")

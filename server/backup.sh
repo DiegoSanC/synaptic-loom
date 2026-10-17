@@ -22,7 +22,8 @@
 #   nothing: a corrupt database never rotates the good backups out.
 # - umask 077: a copy holds the same data as the database, so it is readable by its owner
 #   only (files 0600; a directory this script creates, 0700).
-# - One lock (<dir>/.lock) serializes runs, retention and exports.
+# - One lock (<dir>/.lock) serializes runs and retention; an export holds it only while
+#   it opens the files, so a stalled reader never holds up a backup.
 # - Retention keeps the newest $LOOM_BACKUP_KEEP files with the name this script gives;
 #   nothing else in the directory is ever deleted.
 #
@@ -97,9 +98,16 @@ lock = open(os.path.join(out_dir, ".lock"), "a")
 fcntl.flock(lock, fcntl.LOCK_EX)
 
 if mode == "export":
+    # Open every backup under the lock, then let it go before streaming: a backup is never
+    # rewritten once renamed, an open file survives its purge, and a reader that stalls
+    # (a sleeping laptop, a slow link) must not hold up the next backup.
+    files = [(name, open(os.path.join(out_dir, name), "rb")) for name in backups()]
+    fcntl.flock(lock, fcntl.LOCK_UN)
     with tarfile.open(fileobj=sys.stdout.buffer, mode="w|") as tar:
-        for name in backups():
-            tar.add(os.path.join(out_dir, name), arcname=name)
+        for name, handle in files:
+            info = tar.gettarinfo(arcname=name, fileobj=handle)
+            tar.addfile(info, handle)
+            handle.close()
     sys.exit(0)
 
 # Under the lock no other run is writing, so any temporary file is a killed run's.

@@ -288,3 +288,31 @@ def test_an_unknown_argument_is_refused(tmp_path):
     done = _run(db, tmp_path / "backups", "--bogus")
     assert done.returncode != 0
     assert b"usage" in done.stderr.lower(), done.stderr
+
+
+def test_a_stalled_export_does_not_hold_up_a_backup(tmp_path):
+    """A puller that stops reading (a sleeping laptop, a slow link) must not block the
+    next backup: the export takes the lock only long enough to open the files."""
+    backups = tmp_path / "backups"
+    big = _plant(backups, "loom-20200101T000000.000000Z.db",
+                 rows=[f"{i:08d}" + "x" * 500 for i in range(4000)])  # far past a pipe buffer
+    original = big.read_bytes()
+    exporter = subprocess.Popen(["bash", str(SCRIPT), "--export"],
+                                env=_env(tmp_path / "unused.db", backups),
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        time.sleep(1)  # the exporter is now blocked writing to a pipe nobody reads
+        assert exporter.poll() is None, "the export must still be streaming"
+        db = _make_db(tmp_path / "loom.db", ["a"])
+        done = subprocess.run(["bash", str(SCRIPT)], env=_env(db, backups, keep="1"),
+                              capture_output=True, timeout=20)
+        assert done.returncode == 0, done.stderr
+        assert not big.exists(), "retention ran while the export was still streaming"
+        out, _ = exporter.communicate(timeout=30)
+    finally:
+        exporter.kill()
+    assert exporter.returncode == 0
+    with tarfile.open(fileobj=io.BytesIO(out), mode="r:") as tar:
+        [member] = tar.getmembers()
+        assert tar.extractfile(member).read() == original, (
+            "the export carries what was there when it started, intact")

@@ -121,7 +121,7 @@ volumes:
   # restore.sh puts the server on a restored volume and records that volume's name as
   # LOOM_DATA_VOLUME in .env. The volume it replaced is left as it was.
   loom_data:
-    name: ${LOOM_DATA_VOLUME:-${COMPOSE_PROJECT_NAME}_loom_data}
+    name: ${LOOM_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:?this Compose does not set COMPOSE_PROJECT_NAME; see docs/SERVER-GUIDE.md Part 2 §1}_loom_data}
   # The backups (loom_loom_backups). Same host and disk as the database: only the off-host
   # copy survives losing the host. `docker compose down -v` deletes it with the rest.
   loom_backups: {}

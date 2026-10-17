@@ -274,7 +274,7 @@ shape as on Fly: one Uvicorn worker, SQLite on one volume.
 | | |
 |---|---|
 | A Linux host | Public IPv4, inbound **80 and 443** open — Caddy needs both to obtain and renew the certificate. IPv4 only: see §2. |
-| Docker Engine 25+ with the Compose v2 plugin | `docker compose version`. The server's healthcheck uses `start_interval`, which older engines ignore. |
+| Docker Engine 25+ with the Compose v2 plugin | `docker compose version`. The server's healthcheck uses `start_interval`, which older engines ignore. The database volume's name is built from `COMPOSE_PROJECT_NAME`, which Compose must set for interpolation (verified with Compose v5.5.1); a Compose that does not stops with an error naming it rather than start on an empty volume. |
 | A DNS name | `loom.example.com` in this guide. |
 | `git` | You deploy from a clone. |
 | The subnet `10.217.17.0/24` free on the host | It is the server's private network (see §6). If it collides, change the subnet, its `ip_range`, Caddy's `ipv4_address` and `FORWARDED_ALLOW_IPS` together in `deploy/compose/docker-compose.yml`. |
@@ -447,29 +447,42 @@ docker compose logs --tail 4 backup
 ### 8a. The off-host copy
 
 Run this **on another machine** — one that shares neither the server's disk nor its
-provider account — with SSH access to the server as a user allowed to run `docker`:
+provider account — with SSH access to the server as a user allowed to run `docker`. Save
+it as `~/bin/loom-pull`:
 
 ```bash
-mkdir -p ~/loom-offsite && chmod 700 ~/loom-offsite
-ssh loom-host 'cd ~/loom/deploy/compose && docker compose run --rm --no-deps -T backup /app/server/backup.sh --export' \
-  | tar -C ~/loom-offsite -xf -
-ls ~/loom-offsite                    # loom-<UTC time>.db …, newest last
+#!/usr/bin/env bash
+# Copy the server's new backups into ~/loom-offsite. A file already here is never replaced.
+set -euo pipefail
+dest=~/loom-offsite
+mkdir -p "$dest" && chmod 700 "$dest"
+staging="$(mktemp -d)"; trap 'rm -rf "$staging"' EXIT
+ssh loom-host 'cd ~/loom/deploy/compose && docker compose exec -T backup /app/server/backup.sh --export' \
+  | tar -C "$staging" -xmf -
+for f in "$staging"/loom-*.db; do
+  [ -e "$f" ] || continue
+  [ -e "$dest/${f##*/}" ] || mv "$f" "$dest/"
+done
+find "$dest" -name 'loom-*.db' -mtime +30 -delete    # the puller's own retention: 30 days
 ```
 
-`--export` writes the current backups to stdout as one tar stream while holding the lock
-every backup takes, so a pull never catches a half-written file or one that retention is
-deleting. The names are unique, so each pull adds what is new, and the puller keeps as much
-history as it wants (`find ~/loom-offsite -name 'loom-*.db' -mtime +30 -delete` keeps 30
-days). Schedule it every 6 h, away from the backup's own moment:
+and schedule it every 6 h, away from the backup's own moment: `15 */6 * * * $HOME/bin/loom-pull`.
 
-```cron
-15 */6 * * * bash -o pipefail -c "ssh loom-host 'cd ~/loom/deploy/compose && docker compose run --rm --no-deps -T backup /app/server/backup.sh --export' | tar -C $HOME/loom-offsite -xf -"
-```
+`--export` writes the server's current backups to stdout as one tar stream. It opens them
+under the lock every backup takes, so a pull never catches a half-written file or one that
+retention is deleting, and it lets go before streaming, so a slow or stalled pull never
+holds up a backup. The script is written so that **the server cannot damage what the
+puller already has**: an interrupted pull moves nothing (`pipefail` stops the script before
+the loop), a name already present is never overwritten, and `-m` stamps each file with its
+arrival time, so the 30-day pruning cannot be steered by a file time the server sends. It
+uses `exec`, not `run`: a one-off container's output is also written to its Docker log on
+the server's disk, every byte of the logbook included. `exec` needs the `backup` service
+running; when it is not (§8's check), the pull fails too, which cron reports.
 
 - **Restrict the key.** Being allowed to run `docker` is being root on that host. Give the
   puller a key of its own and pin it to this one command in the server's
-  `~/.ssh/authorized_keys`: `command="cd ~/loom/deploy/compose && docker compose run --rm
-  --no-deps -T backup /app/server/backup.sh --export",restrict ssh-ed25519 AAAA… loom-pull`.
+  `~/.ssh/authorized_keys`: `command="cd ~/loom/deploy/compose && docker compose exec -T
+  backup /app/server/backup.sh --export",restrict ssh-ed25519 AAAA… loom-pull`.
 - **The copies are the whole logbook.** Keep the puller's directory as you keep the server:
   encrypted disk, mode 700, nobody else's account.
 - **Provider disk snapshots** of the server are a good complement (they also cover the
@@ -481,9 +494,9 @@ days). Schedule it every 6 h, away from the backup's own moment:
 ```bash
 cd ~/loom/deploy/compose
 # 1. Pick a backup. From the host's backups volume:
-docker compose run --rm --no-deps -T backup /app/server/backup.sh --export | tar -tvf -
+docker compose exec -T backup /app/server/backup.sh --export | tar -tvf -
 mkdir -p ~/restore && chmod 700 ~/restore
-docker compose run --rm --no-deps -T backup /app/server/backup.sh --export \
+docker compose exec -T backup /app/server/backup.sh --export \
   | tar -C ~/restore -xf - loom-20261017T120000.123456Z.db
 #    …or copy one back from the off-host machine when the host's volume is gone.
 
@@ -526,7 +539,7 @@ Without DNS there, make the same three checks from inside the server container:
 
 ```bash
 # TOKEN: a device token, e.g. `token` in a client's ~/.loom/config.json.
-docker compose exec -T -u app -e TOKEN loom python -c '
+TOKEN='<device token>' docker compose exec -T -u app -e TOKEN loom python -c '
 import json, os, urllib.request
 def get(path):
     request = urllib.request.Request("http://127.0.0.1:8080" + path,
@@ -608,8 +621,9 @@ Stated so nobody mistakes the rest for equally solid:
   issuance and renewal against a public CA, and a client address arriving through a real
   host's published ports, were not executed.
 - **Part 2's off-host pull over SSH from a real second machine (§8a).** Wave `s` runs the
-  `--export` stream the pull carries and unpacks it, on one Docker host; the SSH hop, the
-  restricted key and the cron line were not executed.
+  `--export` stream the pull carries (through `exec`, as there) and unpacks it, on one Docker
+  host; the SSH hop, the restricted key, the `loom-pull` script and its cron line were not
+  executed.
 - **Part 2's monthly drill on a second machine (§8c).** Wave `s` restores on the same host
   and makes the drill's checks (health, an authenticated read, a `?q=` search) against the
   restored server from inside its container; `loom log` against a restored server was not.
