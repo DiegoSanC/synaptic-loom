@@ -72,6 +72,7 @@ LOOM_GATE = os.environ.get("LOOM_GATE") == "1"
 # --------------------------------------------------------------------------- #
 SERVER = "loom"                      # docker-compose.yml service names
 PROXY = "caddy"
+BACKUP = "backup"                    # D18 (wave s grades it)
 INTERNAL_PORT = 8080                 # Dockerfile CMD --port / EXPOSE
 DB_PATH = "/data/loom.db"            # Dockerfile ENV LOOM_DB, fly.toml [env]
 BACKEND_SUBNET = "10.217.17.0/24"    # docker-compose.yml networks.backend
@@ -131,9 +132,13 @@ def rendered(tmp_path_factory) -> dict:
 
 def test_only_caddy_is_published_and_the_server_has_no_host_port(rendered):
     services = rendered["services"]
-    assert set(services) == {SERVER, PROXY}, set(services)
-    assert not services[SERVER].get("ports"), (
-        f"the server must not be published on the host: {services[SERVER].get('ports')}")
+    # D18 amendment (2026-10-17): the stack gained the `backup` service, which must be
+    # published nowhere either. Amended to assert the new set exactly, and that no
+    # service but Caddy has a host port — never weakened to a subset check.
+    assert set(services) == {SERVER, PROXY, BACKUP}, set(services)
+    for name in set(services) - {PROXY}:
+        assert not services[name].get("ports"), (
+            f"{name} must not be published on the host: {services[name].get('ports')}")
     published = {(int(p["target"]), p.get("protocol", "tcp")) for p in services[PROXY]["ports"]}
     assert {(80, "tcp"), (443, "tcp")} <= published, published
 

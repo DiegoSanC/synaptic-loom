@@ -22,13 +22,15 @@
 #
 # Usage (docs/SERVER-GUIDE.md, Part 2): cp .env.example .env; edit; docker compose up -d
 #
-# Backups are NOT covered by this topology yet (D8 covers the Fly deployment only).
+# Backups (D18): the `backup` service writes a verified copy of the database every
+# LOOM_BACKUP_INTERVAL into its own volume, `loom_backups`; another machine pulls them off
+# the host. restore.sh restores one into a NEW volume. SERVER-GUIDE Part 2 §8.
 
 name: loom
 
 services:
   loom:
-    build:
+    build: &server-build
       context: ../..
       dockerfile: Dockerfile
     restart: unless-stopped
@@ -51,6 +53,33 @@ services:
       retries: 3
       start_period: 30s
       start_interval: 1s
+
+  # Same image as the server, run as `app` (the database's owner: a sidecar file SQLite
+  # creates as anyone else is one the server cannot write), with no network at all and
+  # nothing published. One backup when it starts, then one every LOOM_BACKUP_INTERVAL;
+  # SIGTERM ends it with exit 0. A failed backup ends it non-zero, so `restart` retries
+  # it and `docker compose ps` shows it restarting. /data is mounted read-write because
+  # reading a WAL database means taking locks in its -shm file; backup.sh opens the
+  # database read-only.
+  backup:
+    build: *server-build
+    restart: unless-stopped
+    user: app
+    network_mode: none
+    depends_on:
+      loom:
+        condition: service_healthy
+    command: ["/app/server/backup.sh", "--every", "${LOOM_BACKUP_INTERVAL:-6h}"]
+    environment:
+      LOOM_DB: /data/loom.db
+      LOOM_BACKUP_DIR: /backups
+      LOOM_BACKUP_KEEP: ${LOOM_BACKUP_KEEP:-14}
+      LOOM_SERVER_PY: /app/.venv/bin/python
+    volumes:
+      - loom_data:/data
+      - loom_backups:/backups
+    # A backup in progress is finished before the loop exits; this bounds how long.
+    stop_grace_period: 30s
 
   caddy:
     image: caddy:2.11.7@sha256:685ae3d7c34d9b5f8caeddc5d14051db7bbd88ff1f5a2fa0c16bd8ca328fb7af
@@ -88,7 +117,14 @@ networks:
           ip_range: 10.217.17.128/25
 
 volumes:
-  loom_data: {}
+  # The database. Its Docker name is `<project>_loom_data` (loom_loom_data) until
+  # restore.sh puts the server on a restored volume and records that volume's name as
+  # LOOM_DATA_VOLUME in .env. The volume it replaced is left as it was.
+  loom_data:
+    name: ${LOOM_DATA_VOLUME:-${COMPOSE_PROJECT_NAME}_loom_data}
+  # The backups (loom_loom_backups). Same host and disk as the database: only the off-host
+  # copy survives losing the host. `docker compose down -v` deletes it with the rest.
+  loom_backups: {}
   # Caddy's certificates and ACME account: losing them means re-issuing, not data loss.
   caddy_data: {}
   caddy_config: {}

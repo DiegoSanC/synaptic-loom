@@ -48,7 +48,13 @@ FROM python:3.12-slim@sha256:78387bc3881b8273120a12ebe6c1ab22b018ccc2c9adf565ae1
 
 # gosu rather than su/sudo: it execs rather than forking, so the server ends up as PID 1
 # and SIGTERM reaches it directly (see CMD).
+#
+# /backups is where the Compose `backup` service (D18) mounts its volume. Docker gives a new,
+# empty named volume the owner and mode of the image directory it is mounted on, so the
+# service can run as `app` from its first start without a root step: 0700, because every
+# file in it is a full copy of the database.
 RUN useradd --system --create-home --home-dir /app app \
+ && install -d -o app -g app -m 0700 /backups \
  && apt-get update \
  && apt-get install -y --no-install-recommends gosu \
  && rm -rf /var/lib/apt/lists/*

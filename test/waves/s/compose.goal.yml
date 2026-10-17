@@ -1,0 +1,24 @@
+# Wave s's ONLY change to deploy/compose/docker-compose.yml, layered on top with `-f`.
+#
+# The `backend` network moves to its own fixed subnet, 10.217.19.0/24 (wave r's are
+# 10.217.17.0/24 and 10.217.18.0/24), with Caddy's address and FORWARDED_ALLOW_IPS moved
+# with it as the production file's comment requires, so waves r and s can share a Docker
+# host. The wave starts `loom` and `backup` only: Caddy is never started, so its ports and
+# the `edge` network are never created. Backups, retention and restore are the real
+# production definitions; the interval and retention the wave runs with come from its
+# env file, the way an operator's `.env` sets them.
+services:
+  loom:
+    environment:
+      FORWARDED_ALLOW_IPS: 10.217.19.2
+  caddy:
+    networks:
+      backend:
+        ipv4_address: 10.217.19.2
+
+networks:
+  backend:
+    ipam:
+      config: !override
+        - subnet: 10.217.19.0/24
+          ip_range: 10.217.19.128/25

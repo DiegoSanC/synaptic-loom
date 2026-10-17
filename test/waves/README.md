@@ -24,6 +24,7 @@ and as the post-fix regression gate.
 | p | D13 entry items (slice C) | `p/test_goal_d13_entry_items.py` | REAL uvicorn + temp LOOM_DB + admin CLI; real processor replaying wave o's goldens against it |
 | q | D13 item links (slice E) | `q/test_goal_d13_item_links.py` | REAL uvicorn + temp LOOM_DB + admin CLI (two users); real `loom curate`/`log`/`unlink`; smart verdict replay stub (item grammars) |
 | r | D17 compose-caddy | `r/test_goal_d17_compose_caddy.py` | REAL `docker compose up --build` of `deploy/compose` (repo Dockerfile + pinned Caddy + named volume); client containers at literal addresses; Caddy's internal CA for `loom.localhost` |
+| s | D18 compose-backups | `s/test_goal_d18_compose_backups.py` | REAL `docker compose up --build` of `deploy/compose` (`loom` + `backup`, real named volumes); REAL `backup.sh` in the service and in one-off containers; REAL `deploy/compose/restore.sh` run on the host |
 
 Waves `o`, `p` and `q` belong to the plan of 2026-09-23
 (`docs/plans/2026-09-23-fix-label-grammar-fidelity-plan.md`): `o` is slice B (decision
@@ -51,6 +52,16 @@ so client containers get literal addresses. TLS is real: `LOOM_DOMAIN=loom.local
 name Caddy's automatic HTTPS issues from its internal CA, because a public ACME CA cannot
 validate a name from a test host. The stack's subnets are fixed by design, so two runs of
 wave `r` cannot share one Docker host at the same time.
+
+Wave `s` (D18, owner decision of 2026-10-17) is the same kind of wave for that topology's
+backups and restore. It drives the real `deploy/compose` stack (`loom` and `backup` only;
+Caddy is wave `r`'s) and the real `deploy/compose/restore.sh`; its one layer,
+`s/compose.goal.yml`, moves the `backend` subnet to `10.217.19.0/24`, so waves `r` and `s`
+can run at the same time on one host, but two runs of wave `s` cannot. The interval (2 s)
+and retention (3) it runs with come from its own env file; the defaults are asserted on the
+production file. **Amendment to wave `r` (D18):** `test_only_caddy_is_published_and_the_server_has_no_host_port`
+asserted the service set `{loom, caddy}`; it now asserts `{loom, caddy, backup}` exactly,
+and that no service but Caddy has a host port.
 
 Seam ids such as `t-curation-watermark`, `p3-state-stat-fields` or `p4-coverage-cache`,
 cited across the code and tests, name interfaces frozen by the original build plan, whose
