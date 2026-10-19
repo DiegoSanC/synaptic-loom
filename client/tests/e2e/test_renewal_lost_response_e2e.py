@@ -57,7 +57,9 @@ from test_phase2_e2e import (
 
 TOKEN_TTL_S = 30  # renewal is due below 7.5 s left; the two passes run inside that window
 RENEW_PATH = "/api/device-tokens/renew"
-_HOP_BY_HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "host"}
+# Not forwarded: hop-by-hop, recomputed, or (content-encoding) already decoded by requests.
+_HOP_BY_HOP = {"connection", "keep-alive", "transfer-encoding", "content-length", "host",
+               "content-encoding"}
 
 pytestmark = [
     pytest.mark.e2e,

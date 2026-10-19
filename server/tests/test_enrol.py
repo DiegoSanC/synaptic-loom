@@ -762,7 +762,8 @@ def test_re_enrolling_with_the_old_device_token_revokes_its_whole_chain(client, 
     assert [_status(client, t) for t in (t0, t1)] == [401, 401]
     assert _status(client, new) == 200
     assert _status(client, desk) == 200  # another machine of the same person is untouched
-    assert _successors(env)[_device_id(env, new)] is None  # a fresh chain, not appended
+    # A fresh chain, not appended to the old one: nothing points at the new token.
+    assert _device_id(env, new) not in _successors(env).values()
 
 
 def test_re_enrolling_with_another_users_device_token_leaves_it_alone(client, env, capsys):

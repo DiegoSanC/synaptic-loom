@@ -80,6 +80,7 @@ class _Terminal:
         os.close(slave)
 
     def _read(self, timeout_s: float) -> bool:
+        """Read what is on the screen; ``False`` once the child's side is closed."""
         ready, _, _ = select.select([self.fd], [], [], timeout_s)
         if not ready:
             return True
