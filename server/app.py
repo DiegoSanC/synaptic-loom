@@ -590,10 +590,17 @@ def enroll(payload: EnrolRequest, request: Request):
     Anonymous (see `PUBLIC_PATHS`). Unknown, expired, already-redeemed and
     deactivated-user codes are one `401 invalid_code`: the caller learns nothing, and
     the attempt counts against the address's failure window exactly like a bad bearer.
+
+    A re-enrolling machine may send its current token as `Authorization: Bearer` (D19
+    B2), and `redeem` revokes that token's chain when it is the code's user's. The
+    middleware never reads the header on this path, and nothing here rejects on it: a
+    header that proves nothing is ignored, never a 401 and never a counted failure.
     """
+    header = request.headers.get("authorization", "")
+    old_token = header[len("Bearer "):].strip() if header.startswith("Bearer ") else None
     conn = db.connect()
     try:
-        result = auth.redeem(conn, payload.code, payload.device_name)
+        result = auth.redeem(conn, payload.code, payload.device_name, old_token or None)
     finally:
         conn.close()
     if result is None:

@@ -166,13 +166,19 @@ def _mint(conn: sqlite3.Connection, user_id: int, device_name: str) -> tuple[int
     return cur.lastrowid, {"token": token, "issued_at": issued_at, "expires_at": expires_at}
 
 
-def redeem(conn: sqlite3.Connection, code: str, device_name: str) -> dict | None:
+def redeem(conn: sqlite3.Connection, code: str, device_name: str,
+           old_token: str | None = None) -> dict | None:
     """Burn ``code`` and mint the device token it pays for, in ONE transaction.
 
     Returns the enrol response body (plus ``device_token_id`` for the audit line), or
     ``None`` when the code is unknown, expired, already redeemed, or belongs to a
     deactivated user. All four are one answer on purpose: the caller is anonymous and
     must not be able to tell them apart.
+
+    ``old_token`` is the bearer a re-enrolling machine sent (D19 B2): when it is a live
+    device token of the code's own user, its whole chain is revoked in the same
+    transaction. Anything else — unknown, revoked, expired, another user's, a legacy
+    ``users.token_hash`` — changes nothing and is not reported.
 
     ``BEGIN IMMEDIATE`` takes the write lock before the read, so two concurrent
     redemptions of the same code serialize and exactly one sees ``redeemed_at IS NULL``.
@@ -200,6 +206,14 @@ def redeem(conn: sqlite3.Connection, code: str, device_name: str) -> dict | None
         if row is None or not row["active"]:
             conn.rollback()
             return None
+        if old_token:
+            old = conn.execute(
+                "SELECT id FROM device_tokens WHERE token_hash = ? AND user_id = ? "
+                "AND revoked_at IS NULL AND expires_at > ?",
+                (db.hash_token(old_token), row["user_id"], now),
+            ).fetchone()
+            if old is not None:
+                revoke_chain(conn, old["id"], now)
         device_id, body = _mint(conn, row["user_id"], device_name)
         conn.execute(
             "UPDATE enrolment_codes SET redeemed_at = ?, device_token_id = ? WHERE id = ?",

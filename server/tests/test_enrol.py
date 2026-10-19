@@ -735,3 +735,114 @@ def test_a_database_without_orphans_counts_zero_at_startup(client, env, capsys, 
 
     with caplog.at_level(logging.INFO, logger=ORPHAN_LOGGER), TestClient(app):
         assert any("device_token_orphans count=0" in line for line in _orphan_lines(caplog))
+
+
+# --------------------------------------------------------------------------- #
+# Re-enrolment revokes the machine's old chain (D19 B2)                        #
+# --------------------------------------------------------------------------- #
+# The client proves possession of the token it is replacing by sending it as the bearer
+# of `POST /api/enroll`; the body never changes (`EnrolRequest` forbids extra fields).
+# Only a live DEVICE token of the code's own user counts. Anything else is ignored in
+# silence: it is not a failed authentication, and the response is the plain enrolment.
+ENROL_KEYS = {"token", "issued_at", "expires_at", "user"}
+
+
+@pytest.mark.parametrize("sent", ["head", "predecessor"])
+def test_re_enrolling_with_the_old_device_token_revokes_its_whole_chain(client, env, capsys, sent):
+    t0 = _enroll(client, _invite(capsys)).json()["token"]
+    t1 = _renew(client, t0)
+    desk = _enroll(client, _invite(capsys, name=None), device_name="desk").json()["token"]
+    old = {"head": t1, "predecessor": t0}[sent]  # t0 still authenticates until its expiry
+
+    r = _enroll(client, _invite(capsys, name=None), **_bearer(old))
+
+    assert r.status_code == 201, r.text
+    assert set(r.json()) == ENROL_KEYS  # the response is unchanged
+    new = r.json()["token"]
+    assert [_status(client, t) for t in (t0, t1)] == [401, 401]
+    assert _status(client, new) == 200
+    assert _status(client, desk) == 200  # another machine of the same person is untouched
+    assert _successors(env)[_device_id(env, new)] is None  # a fresh chain, not appended
+
+
+def test_re_enrolling_with_another_users_device_token_leaves_it_alone(client, env, capsys):
+    theirs = _enroll(client, _invite(capsys, email="other@example.test", name="other")).json()["token"]
+
+    r = _enroll(client, _invite(capsys), **_bearer(theirs))
+
+    assert r.status_code == 201, r.text
+    assert set(r.json()) == ENROL_KEYS
+    assert _status(client, theirs) == 200
+    assert _live_ids(env) == [_device_id(env, theirs), _device_id(env, r.json()["token"])]
+
+
+def test_re_enrolling_with_a_legacy_token_of_the_same_user_leaves_it_alone(client, env, capsys):
+    admin.main(["adduser", "--name", "legacy", "--email", "legacy@x.com"])
+    legacy = _parse_code(capsys.readouterr().out)
+
+    r = _enroll(client, _invite(capsys, email="legacy@x.com", name=None), **_bearer(legacy))
+
+    assert r.status_code == 201, r.text
+    assert _status(client, legacy) == 200  # break-glass: only `deactivate` ends it
+
+
+def test_a_revoked_token_sent_on_re_enrolment_revokes_nothing(client, env, capsys):
+    old = _enroll(client, _invite(capsys)).json()["token"]
+    lost = _renew(client, old)
+    live = _renew(client, old)  # the re-issue revoked `lost`; `old` and `live` still work
+
+    r = _enroll(client, _invite(capsys, name=None), **_bearer(lost))
+
+    assert r.status_code == 201, r.text
+    assert [_status(client, t) for t in (old, live)] == [200, 200]
+
+
+def test_an_expired_token_sent_on_re_enrolment_revokes_nothing(client, env, capsys, monkeypatch):
+    monkeypatch.setenv("LOOM_DEVICE_TOKEN_TTL_S", "1")
+    old = _enroll(client, _invite(capsys)).json()["token"]
+    monkeypatch.delenv("LOOM_DEVICE_TOKEN_TTL_S")
+    live = _renew(client, old)  # a 90-day successor
+    time.sleep(1.1)
+    assert _status(client, old) == 401
+
+    r = _enroll(client, _invite(capsys, name=None), **_bearer(old))
+
+    assert r.status_code == 201, r.text
+    assert _status(client, live) == 200
+
+
+def test_a_refused_code_never_revokes_the_token_sent_with_it(client, env, capsys):
+    old = _enroll(client, _invite(capsys)).json()["token"]
+
+    r = _enroll(client, "wrong-code-wrong-code-wrong-code-000", **_bearer(old))
+
+    assert r.status_code == 401 and r.json()["error"] == "invalid_code"
+    assert _status(client, old) == 200
+
+
+@pytest.mark.parametrize("authorization", [
+    "Bearer unknown-token-unknown-token-unknown-000",
+    "Bearer ",
+    "Bearer",
+    "Basic Zm9vOmJhcg==",
+    "garbage",
+])
+def test_a_header_that_proves_nothing_never_fails_the_enrolment_nor_counts(client, env, capsys,
+                                                                          authorization):
+    """An older server ignores the header outright (the middleware lets the redemption
+    path through without reading it); this one ignores everything but a live device token
+    of the code's user. Either way the header never turns into a 401, a 422 or a failure
+    against the address's window."""
+    ip = {"Fly-Client-IP": "192.0.2.90"}
+    for _ in range(9):
+        assert _enroll(client, "wrong-code-wrong-code-wrong-code-000", **ip).status_code == 401
+    bystander = _enroll(client, _invite(capsys, email="by@example.test", name="by")).json()["token"]
+
+    r = _enroll(client, _invite(capsys), **ip, Authorization=authorization)
+
+    assert r.status_code == 201, r.text
+    assert set(r.json()) == ENROL_KEYS
+    assert _status(client, bystander) == 200
+    # Nine failures before, none for the header: the tenth is still a 401, the eleventh 429.
+    assert _enroll(client, "wrong-code-wrong-code-wrong-code-000", **ip).status_code == 401
+    assert _enroll(client, "wrong-code-wrong-code-wrong-code-000", **ip).status_code == 429
