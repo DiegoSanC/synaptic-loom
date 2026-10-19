@@ -35,6 +35,8 @@ STARTUP_LOG.setLevel(logging.INFO)
 # Its own logger: the startup logger's one line names the client-IP mode (D17).
 ORPHAN_LOG = logging.getLogger("uvicorn.error.loom.orphans")
 ORPHAN_LOG.setLevel(logging.INFO)
+# Its own logger too, for the same reason (D20).
+PUBLIC_URL_LOG = logging.getLogger("uvicorn.error.loom.public_url")
 AUTH_FAILURE_LIMIT = 10
 HEALTH_REQUEST_LIMIT = 120
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -85,7 +87,7 @@ async def lifespan(app: FastAPI):
     finally:
         conn.close()
     if public_url.resolve() is None:
-        STARTUP_LOG.warning("public_url_unset: no LOOM_PUBLIC_URL (or FLY_APP_NAME), so "
+        PUBLIC_URL_LOG.warning("public_url_unset: no LOOM_PUBLIC_URL (or FLY_APP_NAME), so "
                             "every /ui write is refused (D20)")
     AUTH_FAILURES.clear()
     HEALTH_REQUESTS.clear()

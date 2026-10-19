@@ -25,7 +25,7 @@ from server import db, ui_auth
 
 PUBLIC_ORIGIN = "https://loom-test.fly.dev"      # https://$FLY_APP_NAME.fly.dev (D19)
 SAME_ORIGIN = {"Origin": PUBLIC_ORIGIN}
-STARTUP_LOGGER = "uvicorn.error.loom.startup"
+PUBLIC_URL_LOGGER = "uvicorn.error.loom.public_url"
 AUDIT_LOGGER = "uvicorn.error.loom.security"
 EXPECTED_HEADERS = {
     "content-security-policy": (
@@ -247,22 +247,22 @@ def test_startup_warns_when_no_public_url_is_resolved(env, monkeypatch, caplog):
 
     monkeypatch.delenv("FLY_APP_NAME", raising=False)
     monkeypatch.delenv("LOOM_PUBLIC_URL", raising=False)
-    with caplog.at_level(logging.INFO, logger=STARTUP_LOGGER):
+    with caplog.at_level(logging.INFO, logger=PUBLIC_URL_LOGGER):
         with TestClient(app):
             pass
     warnings = [rec.getMessage() for rec in caplog.records
-                if rec.name == STARTUP_LOGGER and rec.levelno == logging.WARNING]
+                if rec.name == PUBLIC_URL_LOGGER and rec.levelno == logging.WARNING]
     assert any("public_url_unset" in line for line in warnings), warnings
 
 
 def test_startup_does_not_warn_when_the_public_url_is_known(env, caplog):
     from server.app import app
 
-    with caplog.at_level(logging.INFO, logger=STARTUP_LOGGER):
+    with caplog.at_level(logging.INFO, logger=PUBLIC_URL_LOGGER):
         with TestClient(app):
             pass
     assert not [rec for rec in caplog.records
-                if rec.name == STARTUP_LOGGER and "public_url" in rec.getMessage()]
+                if rec.name == PUBLIC_URL_LOGGER and "public_url" in rec.getMessage()]
 
 
 def test_the_session_gate_runs_before_the_origin_check(env, ui):
