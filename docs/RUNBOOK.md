@@ -844,6 +844,17 @@ record none, as before. `auth_events` holds the client address of web actions, w
 personal data: the server deletes rows older than `LOOM_AUTH_EVENTS_RETENTION_DAYS`
 (default 180) every time it starts.
 
+**From the web (D20, DESIGN §6.4).** An admin does the same in the browser: `loom ui` →
+*Users* (`/ui/admin/users`) lists every user with their role, state, pending invitation and
+machines. **Invite** (email, name, role) has `invite`'s semantics — a new email creates the
+user with that name and role, a known one keeps both and gets a new 24 h code — and shows
+the invitation link once. **Deactivate** and **Change role** have `deactivate`'s and
+`promote`/`demote`'s effects, the last-admin refusal included (`409 last_admin`), and each
+live machine has a **Revoke** button. Every web change records an `auth_events` row naming
+the admin (`user_invited`, `user_deactivated`, `promoted`, `demoted`); a member gets `403`
+on that page. The web writes nothing while the server has no public URL (`LOOM_PUBLIC_URL`,
+or Fly's hostname).
+
 Revoking a machine or deactivating a person also ends their open web-UI sessions (D14) on
 their next request; there is nothing UI-specific to revoke.
 

@@ -140,28 +140,49 @@ def _demote(args: argparse.Namespace) -> int:
     return _set_role(args.email, "member")
 
 
+def invite(conn: sqlite3.Connection, email: str, name: str | None, ttl_s: int, *,
+           role: str = "member", created_by_user_id: int | None = None,
+           issued_by_device_token_id: int | None = None) -> tuple[int, str, str, str] | None:
+    """One invitation for ``email``: ``(user_id, name, code, expires_at)``, or ``None``,
+    with nothing written, when no user has that email and no ``name`` was given.
+
+    An unknown email creates the user with ``name`` and ``role``; a known one keeps its
+    name and role and only gets a new code (DESIGN §6.4: this command's semantics, which
+    the web's invite shares). The issuer fields are the web's; ``NULL`` from here. The
+    caller commits.
+    """
+    if role not in auth.ROLES:
+        raise ValueError(f"not a role: {role!r}")
+    user = conn.execute("SELECT id, name FROM users WHERE email = ?", (email,)).fetchone()
+    if user is None:
+        if name is None:
+            return None
+        # The legacy column is NOT NULL. The preimage of this hash is discarded on
+        # purpose: nobody holds it, so enrolment is the only way onto the API for a
+        # user created here — no permanent token is ever printed for them.
+        cur = conn.execute(
+            "INSERT INTO users (name, email, token_hash, active, created_at, role) "
+            "VALUES (?, ?, ?, 1, ?, ?)",
+            (name, email, db.hash_token(secrets.token_urlsafe(32)), db.iso_now(), role),
+        )
+        user_id = cur.lastrowid
+    else:
+        user_id, name = user["id"], user["name"]
+    code, expires_at = auth.create_invitation(
+        conn, user_id, ttl_s, created_by_user_id=created_by_user_id,
+        issued_by_device_token_id=issued_by_device_token_id)
+    return user_id, name, code, expires_at
+
+
 def _invite(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
-        user = conn.execute(
-            "SELECT id, name FROM users WHERE email = ?", (args.email,)
-        ).fetchone()
-        if user is None:
-            if args.name is None:
-                print(f"error: no user with email {args.email!r}; pass --name to create one",
-                      file=sys.stderr)
-                return 1
-            # The legacy column is NOT NULL. The preimage of this hash is discarded on
-            # purpose: nobody holds it, so enrolment is the only way onto the API for a
-            # user created here — no permanent token is ever printed for them.
-            cur = conn.execute(
-                "INSERT INTO users (name, email, token_hash, active, created_at) VALUES (?, ?, ?, 1, ?)",
-                (args.name, args.email, db.hash_token(secrets.token_urlsafe(32)), db.iso_now()),
-            )
-            user_id, name = cur.lastrowid, args.name
-        else:
-            user_id, name = user["id"], user["name"]
-        code, expires_at = auth.create_invitation(conn, user_id, args.ttl)
+        invited = invite(conn, args.email, args.name, args.ttl)
+        if invited is None:
+            print(f"error: no user with email {args.email!r}; pass --name to create one",
+                  file=sys.stderr)
+            return 1
+        _, name, code, expires_at = invited
         conn.commit()
         print(f"Invitation for {name} ({args.email}): single use, valid until {expires_at}.")
         print()

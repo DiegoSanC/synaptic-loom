@@ -91,6 +91,15 @@ def _row_counts(env) -> dict[str, int]:
         conn.close()
 
 
+def _promote(env, user) -> None:
+    conn = db.connect(env)
+    try:
+        conn.execute("UPDATE users SET role = 'admin' WHERE id = ?", (user["id"],))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_the_crawl_finds_the_pages(crawl_params):
     assert "/ui/" in _page_paths(crawl_params)
 
@@ -103,7 +112,8 @@ def _assert_headers(response, what: str):
         assert response.headers.get(name) == value, f"{what}: {name}"
 
 
-def test_every_signed_in_page_carries_the_security_headers(ui, ui_user, crawl_params):
+def test_every_signed_in_page_carries_the_security_headers(ui, ui_user, env, crawl_params):
+    _promote(env, ui_user)  # every page, admin ones too; members' 403s: test_ui_admin.py
     for path in _page_paths(crawl_params):
         for method in ("GET", "HEAD"):
             r = ui.request(method, path)
@@ -141,6 +151,7 @@ def test_no_page_accepts_a_write_even_with_a_session(ui, ui_user, crawl_params):
 
 
 def test_a_crawl_of_every_page_changes_no_table(ui, ui_user, env, crawl_params):
+    _promote(env, ui_user)  # every page, admin ones too; members' 403s: test_ui_admin.py
     before = _row_counts(env)
     for path in _page_paths(crawl_params):
         assert ui.get(path).status_code == 200, path
