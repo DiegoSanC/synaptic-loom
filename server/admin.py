@@ -9,6 +9,8 @@ environment variable (default `./loom.db`) — the same one app.py uses.
     python -m server.admin revoke-orphans               # once, after upgrading to D19
     python -m server.admin adduser --name dev2 --email dev2@example.test   # break-glass
     python -m server.admin deactivate --email dev2@example.test
+    python -m server.admin promote --email dev2@example.test    # D20: the first admin
+    python -m server.admin demote --email dev2@example.test
     python -m server.admin listusers
 
 `invite` is the onboarding path (issue #20): it prints a single-use enrolment code that
@@ -16,13 +18,17 @@ environment variable (default `./loom.db`) — the same one app.py uses.
 When the server's public URL is known (D19) it also prints the invitation link,
 `<public-url>/ui/join#code=<code>`, which `loom enroll` takes in place of the bare code.
 `adduser` is unchanged — it prints a permanent token and remains the break-glass path.
+
+`promote`/`demote` set ``users.role`` (D20) and are the only commands here that write an
+``auth_events`` row, with a ``NULL`` actor. Neither they nor `deactivate` ever leave the
+server without an active admin once it has one.
 """
 import argparse
 import secrets
 import sqlite3
 import sys
 
-from server import auth, db, public_url
+from server import auth, auth_events, db, public_url
 
 
 def _adduser(args: argparse.Namespace) -> int:
@@ -49,10 +55,19 @@ def _adduser(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _last_admin(email: str) -> int:
+    print(f"error: {email} is the last active admin (last_admin); promote another user first",
+          file=sys.stderr)
+    return 1
+
+
 def _deactivate(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
-        result = auth.deactivate(conn, args.email)
+        try:
+            result = auth.deactivate(conn, args.email)
+        except auth.LastAdmin:
+            return _last_admin(args.email)
         if result is None:
             print(f"error: no user with email {args.email!r}", file=sys.stderr)
             return 1
@@ -64,6 +79,65 @@ def _deactivate(args: argparse.Namespace) -> int:
         return 0
     finally:
         conn.close()
+
+
+def set_role(conn: sqlite3.Connection, user_id: int, role: str, *,
+             actor_user_id: int | None = None, client_ip: str | None = None) -> bool | None:
+    """Give ``user_id`` the ``role``, recording ``promoted``/``demoted`` in the same
+    transaction (DESIGN §6.4). Returns ``True`` when the role changed, ``False`` when the
+    user already had it (nothing written), ``None`` when no user has that id.
+
+    Raises :class:`auth.LastAdmin`, with nothing changed, for a demotion of the last
+    active admin; the check runs under ``BEGIN IMMEDIATE``. ``actor_user_id`` is ``None``
+    for this CLI, the signed-in admin for the web.
+    """
+    if role not in auth.ROLES:
+        raise ValueError(f"not a role: {role!r}")
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        user = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+        if user is None or user["role"] == role:
+            conn.rollback()
+            return None if user is None else False
+        if role != "admin":
+            auth.refuse_last_admin(conn, user_id)
+        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        auth_events.record(conn, actor_user_id=actor_user_id,
+                           event="promoted" if role == "admin" else "demoted",
+                           target_type="user", target_id=user_id, client_ip=client_ip)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return True
+
+
+def _set_role(email: str, role: str) -> int:
+    conn = db.init_db()
+    try:
+        user = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if user is None:
+            print(f"error: no user with email {email!r}", file=sys.stderr)
+            return 1
+        try:
+            changed = set_role(conn, user["id"], role)
+        except auth.LastAdmin:
+            return _last_admin(email)
+        if changed:
+            print(f"User {email} {'promoted to admin' if role == 'admin' else 'demoted to member'}.")
+        else:
+            print(f"User {email} is already {'an admin' if role == 'admin' else 'a member'}.")
+        return 0
+    finally:
+        conn.close()
+
+
+def _promote(args: argparse.Namespace) -> int:
+    return _set_role(args.email, "admin")
+
+
+def _demote(args: argparse.Namespace) -> int:
+    return _set_role(args.email, "member")
 
 
 def _invite(args: argparse.Namespace) -> int:
@@ -163,15 +237,17 @@ def _listusers(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
         rows = conn.execute(
-            "SELECT id, name, email, active, created_at FROM users ORDER BY id"
+            "SELECT id, name, email, active, created_at, role FROM users ORDER BY id"
         ).fetchall()
         if not rows:
             print("(no users)")
             return 0
-        print(f"{'id':>3}  {'active':<6}  {'name':<20}  {'email':<30}  created_at")
+        # `role` (D20) is appended: every column before it stays where callers parse it.
+        print(f"{'id':>3}  {'active':<6}  {'name':<20}  {'email':<30}  {'created_at':<20}  role")
         for r in rows:
             state = "yes" if r["active"] else "no"
-            print(f"{r['id']:>3}  {state:<6}  {r['name']:<20}  {r['email']:<30}  {r['created_at']}")
+            print(f"{r['id']:>3}  {state:<6}  {r['name']:<20}  {r['email']:<30}  "
+                  f"{r['created_at']:<20}  {r['role']}")
         return 0
     finally:
         conn.close()
@@ -189,9 +265,18 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--email", required=True)
     p_add.set_defaults(func=_adduser)
 
-    p_deact = sub.add_parser("deactivate", help="deactivate a user: revoke their machines, expire their pending codes")
+    p_deact = sub.add_parser("deactivate", help="deactivate a user: revoke their machines, expire their pending codes "
+                                    "(never the last active admin)")
     p_deact.add_argument("--email", required=True)
     p_deact.set_defaults(func=_deactivate)
+
+    p_promote = sub.add_parser("promote", help="make a user an admin (bootstraps the first admin)")
+    p_promote.add_argument("--email", required=True)
+    p_promote.set_defaults(func=_promote)
+
+    p_demote = sub.add_parser("demote", help="make an admin a member (never the last active admin)")
+    p_demote.add_argument("--email", required=True)
+    p_demote.set_defaults(func=_demote)
 
     p_list = sub.add_parser("listusers", help="list users")
     p_list.set_defaults(func=_listusers)

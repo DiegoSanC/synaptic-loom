@@ -409,6 +409,25 @@ def revoke_orphans(conn: sqlite3.Connection) -> list[tuple[int, int]]:
     return found
 
 
+class LastAdmin(Exception):
+    """The change would leave no active admin (D20; DESIGN §6.4's ``409 last_admin``)."""
+
+
+def refuse_last_admin(conn: sqlite3.Connection, user_id: int) -> None:
+    """Raise :class:`LastAdmin` when ``user_id`` is the only active admin.
+
+    For a demotion or a deactivation, called inside its ``BEGIN IMMEDIATE``: the count is
+    read under the write lock, so two concurrent removals of the last two admins
+    serialize and the second one sees the first.
+    """
+    if conn.execute(
+        "SELECT 1 FROM users WHERE id = ? AND role = 'admin' AND active = 1 "
+        "AND (SELECT count(*) FROM users WHERE role = 'admin' AND active = 1) = 1",
+        (user_id,),
+    ).fetchone() is not None:
+        raise LastAdmin()
+
+
 def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
     """Deactivate the user, revoke every one of their chains and expire their pending
     enrolment codes, in one transaction (D19 B3). Returns ``(tokens revoked, codes
@@ -417,6 +436,8 @@ def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
     Every token of a chain belongs to one user (renew copies ``user_id``), so the user's
     tokens ARE the user's chains. UI sessions are left alone: the ``active`` join already
     ends them, and re-activating the row by SQL would bring no machine back.
+
+    Raises :class:`LastAdmin`, with nothing changed, for the last active admin (D20).
     """
     now = _iso(datetime.now(timezone.utc))
     conn.execute("BEGIN IMMEDIATE")
@@ -425,6 +446,7 @@ def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
         if user is None:
             conn.rollback()
             return None
+        refuse_last_admin(conn, user["id"])
         conn.execute("UPDATE users SET active = 0 WHERE id = ?", (user["id"],))
         revoked = conn.execute(
             "UPDATE device_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
