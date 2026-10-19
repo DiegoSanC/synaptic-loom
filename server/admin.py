@@ -3,7 +3,7 @@
 Runs as `python -m server.admin <subcommand>`. The DB path comes from the `LOOM_DB`
 environment variable (default `./loom.db`) — the same one app.py uses.
 
-    python -m server.admin invite --email dev2@example.test --name dev2 [--ttl 24h]
+    python -m server.admin invite --email dev2@example.test --name dev2 [--ttl 24h] [--public-url URL]
     python -m server.admin listdevices [--email dev2@example.test]
     python -m server.admin revokedevice --id 3
     python -m server.admin adduser --name dev2 --email dev2@example.test   # break-glass
@@ -12,6 +12,8 @@ environment variable (default `./loom.db`) — the same one app.py uses.
 
 `invite` is the onboarding path (issue #20): it prints a single-use enrolment code that
 `loom enroll` exchanges, on the engineer's machine, for that machine's own device token.
+When the server's public URL is known (D19) it also prints the invitation link,
+`<public-url>/ui/join#code=<code>`, which `loom enroll` takes in place of the bare code.
 `adduser` is unchanged — it prints a permanent token and remains the break-glass path.
 """
 import argparse
@@ -19,7 +21,7 @@ import secrets
 import sqlite3
 import sys
 
-from server import auth, db
+from server import auth, db, public_url
 
 
 def _adduser(args: argparse.Namespace) -> int:
@@ -90,6 +92,14 @@ def _invite(args: argparse.Namespace) -> int:
         print()
         print("  Send it through the team's channel. On the machine, `loom enroll` reads it at a")
         print("  hidden prompt and mints that machine's own device token; the device token never travels.")
+        # Appended, never interleaved: every line above stays as callers have parsed it.
+        base = public_url.resolve(args.public_url)
+        if base is None:
+            print(f"note: no invitation link printed, because this server's public URL is unknown. "
+                  f"Set {public_url.ENV_VAR} (e.g. https://loom.example.com) in the server's "
+                  "environment, or pass --public-url.", file=sys.stderr)
+        else:
+            print(public_url.join_link(base, code))
         return 0
     finally:
         conn.close()
@@ -168,6 +178,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_invite.add_argument(
         "--ttl", type=auth.parse_ttl, default=auth.parse_ttl(auth.DEFAULT_ENROL_CODE_TTL),
         help="code lifetime, e.g. 30m, 24h (default), 3d",
+    )
+    p_invite.add_argument(
+        "--public-url",
+        help=f"the server's URL for the invitation link (default ${public_url.ENV_VAR}, "
+             "else https://$FLY_APP_NAME.fly.dev)",
     )
     p_invite.set_defaults(func=_invite)
 

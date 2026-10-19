@@ -38,6 +38,8 @@ services:
       LOOM_DB: /data/loom.db
       LOOM_CLIENT_IP_SOURCE: peer
       FORWARDED_ALLOW_IPS: 10.217.17.2
+      # What `admin.py invite` puts in front of /ui/join#code=… (D19): the name Caddy serves.
+      LOOM_PUBLIC_URL: https://${LOOM_DOMAIN}
     volumes:
       - loom_data:/data
     networks:
