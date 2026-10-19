@@ -1809,6 +1809,73 @@ def _print_scanner_pause(cfg: Config) -> None:
     print(f"  {SCANNER_PAUSE_HINT}\n")
 
 
+# The account rows (D20, §6.4) cost status and doctor one `GET /api/me`, bounded like the
+# one refresh `loom check` may attempt: a server that does not answer is a line, not a wait.
+ACCOUNT_TIMEOUT = CHECK_REFRESH_TIMEOUT
+ACCOUNT_STATUS_DAYS = 30
+ACCOUNT_DOCTOR_DAYS = 7
+
+
+def _fetch_account(cfg: Config) -> tuple[dict | None, str | None]:
+    """``(body, None)`` from ``GET /api/me``; ``(None, None)`` when the server has no such
+    route (404: an older server, and the outputs stay as they were); ``(None, reason)``
+    otherwise. Never raises."""
+    try:
+        resp = ApiClient(cfg.server_url, cfg.token, timeout=ACCOUNT_TIMEOUT).me()
+    except ServerUnreachable:
+        return None, "server unreachable"
+    if resp.status_code == 404:
+        return None, None
+    if resp.status_code != 200:
+        return None, f"GET /api/me returned {resp.status_code}"
+    try:
+        body = resp.json()
+        events = [e for e in body["events"] if isinstance(e, dict)]
+        return {"name": body["name"], "role": body["role"], "events": events}, None
+    except (ValueError, KeyError, TypeError):
+        return None, "GET /api/me answered an unreadable body"
+
+
+def _within_days(event: dict, days: int) -> bool:
+    return _age_seconds(event.get("ts")) <= days * 86400
+
+
+def _describe_event(event: dict) -> str:
+    """``promoted by admin.py`` · ``device_revoked (device 12) by bob``."""
+    target = f" (device {event.get('target_id')})" if event.get("target_type") == "device" else ""
+    return f"{event.get('event')}{target} by {event.get('actor') or 'admin.py'}"
+
+
+def _print_account(cfg: Config) -> None:
+    account, problem = _fetch_account(cfg)
+    if account is None:
+        if problem:
+            print(f"account: unknown ({problem})\n")
+        return
+    print(f"account: {account['name']} ({account['role']})")
+    recent = [e for e in account["events"] if _within_days(e, ACCOUNT_STATUS_DAYS)]
+    if not recent:
+        print(f"  no account events in the last {ACCOUNT_STATUS_DAYS} days")
+    for event in recent:
+        print(f"  {event.get('ts')}  {_describe_event(event)}")
+    print()
+
+
+def _account_check(cfg: Config) -> tuple[str, str] | None:
+    """The doctor's ``account`` row; ``None`` on a server without ``/api/me``."""
+    account, problem = _fetch_account(cfg)
+    if account is None:
+        return ("warn", f"account not checked: {problem}") if problem else None
+    row = f"account: {account['name']} ({account['role']})"
+    foreign = [e for e in account["events"] if _within_days(e, ACCOUNT_DOCTOR_DAYS)
+               and e.get("actor") != account["name"]]
+    if not foreign:
+        return "ok", row
+    newest = foreign[0]
+    return "warn", (f"{row}; {_describe_event(newest)} at {newest.get('ts')} — changed by "
+                    f"someone else in the last {ACCOUNT_DOCTOR_DAYS} days (see 'loom status')")
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     try:
         cfg = Config.load()
@@ -1830,6 +1897,9 @@ def cmd_status(args: argparse.Namespace) -> int:
     # last (possibly unattended) pass saw; with none, the live check says whether the
     # NEXT pass would pause.
     _print_scanner_pause(cfg)
+
+    # Who this machine's token is, and what changed on the account lately (D20).
+    _print_account(cfg)
 
     # Markers pending in the queue.
     markers = _list_markers(cfg.queue_dir)
@@ -3071,6 +3141,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 resp = api._request("GET", "/api/projects")
                 if resp.status_code == 200:
                     checks.append(("ok", "token valid (GET /api/projects → 200)"))
+                    account = _account_check(cfg)
+                    if account:
+                        checks.append(account)
                 elif resp.status_code in (401, 403):
                     checks.append(("fail", f"token rejected (HTTP {resp.status_code})"))
                 else:

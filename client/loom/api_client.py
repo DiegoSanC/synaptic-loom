@@ -129,3 +129,7 @@ class ApiClient:
     def ui_login(self) -> requests.Response:
         """``POST /api/ui-login`` (D14). 201 carries a single-use, short-lived login code."""
         return self._request("POST", "/api/ui-login")
+
+    def me(self) -> requests.Response:
+        """``GET /api/me`` (D20): who this token is and the account events about them."""
+        return self._request("GET", "/api/me")
