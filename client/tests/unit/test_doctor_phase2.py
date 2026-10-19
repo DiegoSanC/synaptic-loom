@@ -582,6 +582,135 @@ def test_parity_never_echoes_the_users_crontab(tmp_path, bindir, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
+# Check 4b — trigger tool parity: the summarizer and git (P2.F5, 2026-10-19)   #
+# --------------------------------------------------------------------------- #
+def _cron_block(cfg, path_value: str | None) -> str:
+    path_line = f"PATH={path_value}\n" if path_value is not None else ""
+    return (f"{cli.TRIGGER_CRON_TAG}\nLOOM_HOME={cfg.loom_home}\n{path_line}"
+            f"*/15 * * * * {cfg.loom_home}/venv/bin/loom process --quiet")
+
+
+def _shell_tools(tmp_path, bindir, monkeypatch, *names, dirname="tools") -> "Path":
+    """Puts ``names`` on THIS shell's PATH (after the scheduler stubs in ``bindir``)."""
+    tools = tmp_path / dirname
+    for name in names:
+        _stub(tools, name, "exit 0\n")
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{tools}")
+    return tools
+
+
+def test_tool_parity_ok_when_the_trigger_resolves_the_same_claude_and_git(
+        tmp_path, bindir, monkeypatch):
+    cfg = _config(tmp_path)
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "claude", "git")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{tools}:/usr/bin:/bin"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "ok", msg
+    assert "trigger tool parity" in msg
+
+
+def test_tool_parity_warns_when_the_trigger_path_cannot_resolve_claude(
+        tmp_path, bindir, monkeypatch):
+    """The summarizer resolves here, not under the trigger: every unattended pass would
+    fail to summarize — the second half of the 2026-10-19 macOS finding."""
+    cfg = _config(tmp_path)
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "claude")
+    _stub(tmp_path / "git_only", "git", "exit 0\n")
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{tools}{os.pathsep}{tmp_path / 'git_only'}")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{tmp_path / 'git_only'}"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "warn"
+    assert "'claude'" in msg and "'git'" not in msg
+
+
+def test_tool_parity_warns_when_the_trigger_resolves_a_different_claude(
+        tmp_path, bindir, monkeypatch):
+    cfg = _config(tmp_path)
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "claude", "git")
+    _stub(tmp_path / "other", "claude", "exit 0\n")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{tmp_path / 'other'}:{tools}"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "warn"
+    assert "'claude'" in msg
+
+
+def test_tool_parity_without_a_path_line_judges_against_crons_default(
+        tmp_path, bindir, monkeypatch):
+    """A block with no PATH of its own (pre-parity, or the line cron DROPPED) runs on
+    cron's _PATH_DEFPATH, /usr/bin:/bin — where a tmp-dir claude is certainly not."""
+    cfg = _config(tmp_path)
+    _shell_tools(tmp_path, bindir, monkeypatch, "claude")
+    _crontab(bindir, _cron_block(cfg, None))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "warn"
+    assert "'claude'" in msg and "no PATH of its own" in msg
+
+
+def test_tool_parity_honours_the_configured_claude_bin(tmp_path, bindir, monkeypatch):
+    cfg = _config(tmp_path, claude_bin="my-claude")
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "my-claude")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "warn"
+    assert "'my-claude'" in msg
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{tools}"))
+    assert cli._trigger_tools_check(cfg)[0] == "ok"
+
+
+def test_tool_parity_ignores_an_absolute_claude_bin(tmp_path, bindir, monkeypatch):
+    """An absolute `claude_bin` is executed as is: no PATH can change which one runs."""
+    cfg = _config(tmp_path, claude_bin=str(tmp_path / "abs" / "claude"))
+    _stub(tmp_path / "abs", "claude", "exit 0\n")
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "git")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{tools}"))
+    assert cli._trigger_tools_check(cfg)[0] == "ok"
+
+
+def test_tool_parity_does_not_check_what_this_shell_cannot_resolve(tmp_path, bindir):
+    """No claude and no git here: the claude row (and attribution row) carry that ✗/⚠;
+    this row does not claim a parity it cannot check."""
+    cfg = _config(tmp_path)
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "warn"
+    assert "not checked" in msg
+
+
+def test_tool_parity_without_config_is_a_warn():
+    assert cli._trigger_tools_check(None)[0] == "warn"
+
+
+def test_tool_parity_row_never_echoes_paths(tmp_path, bindir, monkeypatch):
+    """Frozen `_line_with` oracles match keywords ('scan', 'sweep') that pytest tmp paths
+    can carry, so this row names binaries only."""
+    cfg = _config(tmp_path)
+    _shell_tools(tmp_path, bindir, monkeypatch, "claude", "git")
+    _crontab(bindir, _cron_block(cfg, None))
+    _, msg = cli._trigger_tools_check(cfg)
+    assert str(tmp_path) not in msg
+
+
+def test_doctor_prints_the_tool_parity_row_after_the_scanner_parity_row(
+        tmp_path, monkeypatch, capsys):
+    home = tmp_path / "home"
+    loom_home = home / ".loom"
+    loom_home.mkdir(parents=True)
+    (loom_home / "config.json").write_text(json.dumps({
+        "server_url": "http://127.0.0.1:9", "token": "t",
+    }), encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("LOOM_HOME", str(loom_home))
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
+
+    cli.cmd_doctor(argparse.Namespace())
+
+    lines = capsys.readouterr().out.splitlines()
+    scanner_parity = next(i for i, l in enumerate(lines) if "trigger scanner parity" in l)
+    tool_parity = next(i for i, l in enumerate(lines) if "trigger tool parity" in l)
+    assert tool_parity == scanner_parity + 1
+
+
+# --------------------------------------------------------------------------- #
 # Check 5 — installed units vs. shipped templates (P2.F7)                      #
 # --------------------------------------------------------------------------- #
 SHIPPED_UNIT_DIR = cli._shipped_unit_dir()

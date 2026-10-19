@@ -2534,7 +2534,8 @@ def _trigger_path_is_installer_shaped(value: str, loom_home: Path) -> bool:
     """Could ``install.sh`` have written this ``Environment=PATH=`` value? (P2.F5)
 
     ``Environment=PATH=`` is the one field the template comparison cannot re-derive: it is
-    the PATH of the shell that ran the installer, and that shell is gone. So the installed
+    built from where the shell that ran the installer resolved its tools, and that shell is
+    gone. So the installed
     value is taken as given — but its SHAPE is not given. ``build_trigger_path`` always puts
     ``<loom_home>/venv/bin`` FIRST, carries absolute directories only, and drops anything
     outside the whitelist. Re-checking that turns the unit's only free field back into a
@@ -2706,6 +2707,60 @@ def _trigger_parity_check(cfg: Config | None) -> tuple[str, str]:
         "trigger scanner parity: the periodic trigger resolves the same 'gitleaks' engine "
         "this shell does"
     )
+
+
+# cron's own PATH for a job with no `PATH=` assignment of its own — `_PATH_DEFPATH` in the
+# vixie-derived cron macOS ships (apple-oss-distributions/cron, cron/pathnames.h). It is also
+# what a job gets when cron DROPS an over-long `PATH=` line (see install.sh's P2.F5 section).
+# A systemd user manager's default PATH is a superset, so judging by it never false-greens.
+_SCHEDULER_DEFAULT_PATH = "/usr/bin:/bin"
+
+
+def _trigger_tools_check(cfg: Config | None) -> tuple[str, str]:
+    """Would the unattended pass resolve the SAME summarizer and git as this shell? (P2.F5)
+
+    The 2026-10-19 macOS finding: a 1040-byte trigger PATH was dropped by cron, so the pass
+    ran on `/usr/bin:/bin` — and while D16's `$LOOM_HOME/bin/gitleaks` covers the scanner
+    (the row above), ``claude`` and ``git`` are still looked up through PATH. A summarizer
+    the trigger cannot resolve fails every unattended summary. ``⚠``, not ``✗``, for the
+    reason the scanner-parity row gives: the SessionEnd kick runs with the session's own
+    environment and still captures. Binaries only, never paths, in the message (the frozen
+    ``_line_with`` oracles match keywords a tmp path can carry).
+    """
+    if cfg is None:
+        return "warn", "trigger tool parity not checked (no config)"
+    try:
+        trigger_path = _trigger_env_path(cfg.loom_home)
+    except Exception as exc:  # noqa: BLE001 — total row (LOW-8).
+        return "warn", f"trigger tool parity could not be determined ({type(exc).__name__})"
+    effective = trigger_path if trigger_path is not None else _SCHEDULER_DEFAULT_PATH
+    # An absolute (or relative-with-a-slash) claude_bin is executed as is: no PATH lookup.
+    names = [name for name in (cfg.claude_bin, "git") if os.sep not in name]
+    checked, diverging = [], []
+    for name in names:
+        here = shutil.which(name)
+        if here is None:
+            continue  # this shell cannot either: the claude / attribution rows say so
+        checked.append(name)
+        there = shutil.which(name, path=effective)
+        if there is None or os.path.realpath(there) != os.path.realpath(here):
+            diverging.append(name)
+    quoted = ", ".join(f"'{name}'" for name in (diverging or checked))
+    if diverging:
+        where = ("the PATH the periodic trigger carries" if trigger_path is not None else
+                 "the periodic trigger carries no PATH of its own, and the scheduler's "
+                 "minimal PATH")
+        return "warn", (
+            f"trigger tool parity: {where} does not resolve {quoted} as this shell does, so "
+            "unattended passes would fail to summarize or attribute sessions (re-run "
+            "install.sh)"
+        )
+    if not checked:
+        return "warn", (
+            "trigger tool parity not checked: this shell resolves neither the summarizer "
+            "nor git through PATH either (see the claude row)"
+        )
+    return "ok", f"trigger tool parity: the periodic trigger resolves {quoted} as this shell does"
 
 
 def _scanner_check(cfg: Config | None) -> tuple[str, str]:
@@ -2881,9 +2936,9 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     # engine in force, whether the periodic trigger is armed, how fresh the last sweep is.
     # They lead the checklist: they are what an operator (or a `loom doctor | grep` liner)
     # looks for first, and unlike the install rows they carry their keyword in the row
-    # itself instead of inside an absolute path that could shadow the search. The two
-    # phase-3 rows (P2.F5 parity, P2.F7 unit integrity) join them, after the row each one
-    # qualifies, so a keyword search still lands on the original. The kick-launcher row
+    # itself instead of inside an absolute path that could shadow the search. The
+    # phase-3 rows (P2.F5 scanner and tool parity, P2.F7 unit integrity) join them, after
+    # the row each one qualifies, so a keyword search still lands on the original. The kick-launcher row
     # (issue #3) leads the trigger row for the same reason: the kick is the primary path
     # and the trigger is its recovery, so an operator reads them in that order.
     checks = [
@@ -2892,6 +2947,7 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         _attribution_check(loom_home),
         _trigger_check(),
         _trigger_parity_check(cfg),
+        _trigger_tools_check(cfg),
         _sweep_check(cfg),
         _unit_integrity_check(loom_home),
     ] + checks
