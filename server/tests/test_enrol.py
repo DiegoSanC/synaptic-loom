@@ -407,3 +407,207 @@ def test_concurrent_redemptions_of_one_code_mint_exactly_one_token(client, env, 
 
     assert sorted(statuses) == [201, 401]
     assert len(_rows(env, "SELECT id FROM device_tokens")) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Renewal chains (D19: B1a, B1b)                                               #
+# --------------------------------------------------------------------------- #
+def _bearer(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _renew(client, token: str) -> str:
+    r = client.post("/api/device-tokens/renew", headers=_bearer(token))
+    assert r.status_code == 201, r.text
+    return r.json()["token"]
+
+
+def _device_id(env, token: str) -> int:
+    return _row(env, "SELECT id FROM device_tokens WHERE token_hash = ?", db.hash_token(token))["id"]
+
+
+def _status(client, token: str) -> int:
+    return client.get("/api/projects", headers=_bearer(token)).status_code
+
+
+def _live_ids(env) -> list[int]:
+    now = db.iso_now()
+    return [r["id"] for r in _rows(
+        env, "SELECT id FROM device_tokens WHERE revoked_at IS NULL AND expires_at > ? ORDER BY id", now)]
+
+
+def _successors(env) -> dict[int, int | None]:
+    return {r["id"]: r["replaced_by"] for r in _rows(env, "SELECT id, replaced_by FROM device_tokens")}
+
+
+@pytest.mark.parametrize("start", [0, 1, 2])
+def test_revoking_any_id_of_a_chain_makes_every_token_of_the_chain_401(client, env, capsys, start):
+    t0 = _enroll(client, _invite(capsys)).json()["token"]
+    t1 = _renew(client, t0)
+    t2 = _renew(client, t1)
+    other = _enroll(client, _invite(capsys, name=None), device_name="desk").json()["token"]
+    chain = [t0, t1, t2]
+    assert [_status(client, t) for t in chain] == [200, 200, 200]  # the overlap of D-2026-09-22
+
+    assert admin.main(["revokedevice", "--id", str(_device_id(env, chain[start]))]) == 0
+
+    assert [_status(client, t) for t in chain] == [401, 401, 401]
+    assert _status(client, other) == 200  # another machine of the same person is untouched
+
+
+def test_a_renew_retried_after_an_unpersisted_successor_revokes_that_successor(client, env, capsys):
+    """The client crashed (or lost the 201) before writing S1: it renews O again."""
+    old = _enroll(client, _invite(capsys)).json()["token"]
+    lost = _renew(client, old)
+
+    retried = client.post("/api/device-tokens/renew", headers=_bearer(old))
+
+    assert retried.status_code == 201, retried.text
+    fresh = retried.json()["token"]
+    assert _status(client, fresh) == 200
+    assert _status(client, lost) == 401
+    assert _status(client, old) == 200  # the predecessor still lives until its own expiry
+    o, s1, s2 = (_device_id(env, t) for t in (old, lost, fresh))
+    # One line, never a fork: O → S1 → S2.
+    assert _successors(env) == {o: s1, s1: s2, s2: None}
+    assert _live_ids(env) == [o, s2]
+
+
+def _three_renewals(client, env, capsys) -> dict[str, int]:
+    """Renew O→S1, S1→S2, then O again → N. Returns the four ids by name."""
+    o = _enroll(client, _invite(capsys)).json()["token"]
+    s1 = _renew(client, o)
+    s2 = _renew(client, s1)
+    n = _renew(client, o)
+    return {name: _device_id(env, tok) for name, tok in
+            (("O", o), ("S1", s1), ("S2", s2), ("N", n))} | {"tokens": (o, s1, s2, n)}
+
+
+def test_renewing_an_old_token_revokes_every_token_after_it_and_keeps_one_line(client, env, capsys):
+    ids = _three_renewals(client, env, capsys)
+    o, s1, s2, n = ids["tokens"]
+
+    assert [_status(client, t) for t in (o, s1, s2, n)] == [200, 401, 401, 200]
+    # Strict line O → S1 → S2 → N: the caller keeps pointing at its first successor and the
+    # LAST revoked token points at the new one.
+    assert _successors(env) == {ids["O"]: ids["S1"], ids["S1"]: ids["S2"], ids["S2"]: ids["N"],
+                                ids["N"]: None}
+
+
+@pytest.mark.parametrize("start", ["O", "S1", "S2", "N"])
+def test_after_a_re_issue_revoking_from_any_id_leaves_no_live_token(client, env, capsys, start):
+    ids = _three_renewals(client, env, capsys)
+
+    assert admin.main(["revokedevice", "--id", str(ids[start])]) == 0
+
+    assert _live_ids(env) == []
+    assert [_status(client, t) for t in ids["tokens"]] == [401, 401, 401, 401]
+
+
+def test_a_revoke_that_lands_before_the_renew_transaction_refuses_the_renew(client, env, capsys):
+    """Interleaving: the bearer middleware has already accepted O, then the operator's revoke
+    commits, then `renew` takes the write lock. The renew must re-check and mint nothing."""
+    from server import auth
+
+    old = _enroll(client, _invite(capsys)).json()["token"]
+    device_id = _device_id(env, old)
+    assert admin.main(["revokedevice", "--id", str(device_id)]) == 0
+
+    conn = db.connect(env)
+    try:
+        with pytest.raises(auth.RenewRefused) as refused:
+            auth.renew(conn, device_id)
+    finally:
+        conn.close()
+
+    assert refused.value.outcome == "revoked_token"
+    assert _live_ids(env) == []
+    assert len(_rows(env, "SELECT id FROM device_tokens")) == 1
+
+
+def test_a_renew_that_commits_before_the_revoke_is_revoked_with_its_chain(client, env, capsys):
+    old = _enroll(client, _invite(capsys)).json()["token"]
+    fresh = _renew(client, old)
+
+    assert admin.main(["revokedevice", "--id", str(_device_id(env, old))]) == 0
+
+    assert _live_ids(env) == []
+    assert _status(client, fresh) == 401
+
+
+def test_concurrent_revoke_and_renew_leave_no_live_token(client, env, capsys):
+    """Real threads, real app, real SQLite: whichever order the write lock picks, the
+    machine ends with no live token."""
+    import threading
+
+    for i in range(10):
+        token = _enroll(client, _invite(capsys, name=None if i else "dev2"),
+                        device_name=f"race-{i}").json()["token"]
+        device_id = _device_id(env, token)
+        barrier = threading.Barrier(2)
+
+        def renew():
+            barrier.wait()
+            client.post("/api/device-tokens/renew", headers=_bearer(token))
+
+        def revoke():
+            barrier.wait()
+            admin.main(["revokedevice", "--id", str(device_id)])
+
+        threads = [threading.Thread(target=renew), threading.Thread(target=revoke)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        capsys.readouterr()
+
+        assert _live_ids(env) == [], f"iteration {i}"
+
+
+def test_renew_of_a_deactivated_user_is_refused_inside_the_transaction(client, env, capsys):
+    from server import auth
+
+    token = _enroll(client, _invite(capsys)).json()["token"]
+    device_id = _device_id(env, token)
+    conn = db.connect(env)
+    try:
+        conn.execute("UPDATE users SET active = 0")
+        conn.commit()
+        with pytest.raises(auth.RenewRefused) as refused:
+            auth.renew(conn, device_id)
+    finally:
+        conn.close()
+    assert refused.value.outcome == "deactivated_user"
+    assert len(_rows(env, "SELECT id FROM device_tokens")) == 1
+
+
+def test_renew_of_an_expired_token_is_refused_inside_the_transaction(client, env, capsys, monkeypatch):
+    from server import auth
+
+    monkeypatch.setenv("LOOM_DEVICE_TOKEN_TTL_S", "1")
+    token = _enroll(client, _invite(capsys)).json()["token"]
+    device_id = _device_id(env, token)
+    time.sleep(1.1)
+    conn = db.connect(env)
+    try:
+        with pytest.raises(auth.RenewRefused) as refused:
+            auth.renew(conn, device_id)
+    finally:
+        conn.close()
+    assert refused.value.outcome == "expired_token"
+    assert len(_rows(env, "SELECT id FROM device_tokens")) == 1
+
+
+def test_an_existing_database_gains_the_replaced_by_index_on_its_next_start(env):
+    conn = db.connect(env)
+    try:
+        conn.execute("DROP INDEX idx_device_tokens_replaced_by")
+        conn.commit()
+    finally:
+        conn.close()
+
+    db.init_db(env).close()
+
+    index = _row(env, "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'device_tokens' "
+                      "AND sql LIKE '%(replaced_by)%'")
+    assert index is not None

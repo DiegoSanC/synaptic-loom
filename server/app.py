@@ -585,6 +585,13 @@ def enroll(payload: EnrolRequest, request: Request):
     return result
 
 
+_RENEW_REFUSALS = {
+    "deactivated_user": (403, "User is deactivated"),
+    "revoked_token": (401, "Device token revoked"),
+    "expired_token": (401, "Device token expired"),
+}
+
+
 @app.post("/api/device-tokens/renew", status_code=201)
 def renew_device_token(request: Request):
     """Mint the successor of the calling device token; the old one keeps its own expiry.
@@ -600,6 +607,11 @@ def renew_device_token(request: Request):
     conn = db.connect()
     try:
         result = auth.renew(conn, device_id)
+    except auth.RenewRefused as refused:
+        # The middleware accepted the bearer, then a revoke or a deactivation committed
+        # before renew took the write lock (D19): answer as the middleware now would.
+        status, detail = _RENEW_REFUSALS[refused.outcome]
+        return _reject_auth(request, refused.outcome, status, detail)
     finally:
         conn.close()
     new_id = result.pop("device_token_id")

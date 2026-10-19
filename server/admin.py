@@ -124,10 +124,12 @@ def _listdevices(args: argparse.Namespace) -> int:
 def _revokedevice(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
-        if not auth.revoke(conn, args.id):
-            print(f"error: no active device token with id {args.id}", file=sys.stderr)
+        revoked = auth.revoke(conn, args.id)
+        if not revoked:
+            print(f"error: no unrevoked device token in the chain of id {args.id}", file=sys.stderr)
             return 1
-        print(f"Device token {args.id} revoked (that machine must enrol again).")
+        print(f"Device token {args.id} and its renewal chain revoked ({revoked} token(s); "
+              "that machine must enrol again).")
         return 0
     finally:
         conn.close()
@@ -190,8 +192,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_devices.add_argument("--email", help="only this user's devices")
     p_devices.set_defaults(func=_listdevices)
 
-    p_revoke = sub.add_parser("revokedevice", help="revoke ONE machine's device token")
-    p_revoke.add_argument("--id", type=int, required=True, help="device id from listdevices")
+    p_revoke = sub.add_parser("revokedevice", help="revoke ONE machine: its whole renewal chain")
+    p_revoke.add_argument("--id", type=int, required=True,
+                          help="any device id of the machine's chain, from listdevices")
     p_revoke.set_defaults(func=_revokedevice)
 
     return parser

@@ -46,6 +46,10 @@ _DEVICE_TOKENS_DDL = (
 _DEVICE_TOKENS_USER_INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_device_tokens_user ON device_tokens(user_id)"
 )
+# Renewal chains are walked backwards (who points at me?) by `revoke` and the orphan count.
+_DEVICE_TOKENS_REPLACED_BY_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_device_tokens_replaced_by ON device_tokens(replaced_by)"
+)
 _ENROLMENT_CODES_DDL = (
     "CREATE TABLE IF NOT EXISTS enrolment_codes ("
     "id INTEGER PRIMARY KEY, "
@@ -56,14 +60,15 @@ _ENROLMENT_CODES_DDL = (
     "redeemed_at TEXT, "
     "device_token_id INTEGER REFERENCES device_tokens(id))"
 )
-_OBJECT_NAMES = ("device_tokens", "idx_device_tokens_user", "enrolment_codes")
+_OBJECT_NAMES = ("device_tokens", "idx_device_tokens_user", "idx_device_tokens_replaced_by",
+                 "enrolment_codes")
 
 _TTL_RE = re.compile(r"^(\d+)([smhd])$")
 _TTL_UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def ensure_auth_schema(conn: sqlite3.Connection) -> None:
-    """Idempotent: ``device_tokens`` (+ user index) and ``enrolment_codes``.
+    """Idempotent: ``device_tokens`` (+ user and ``replaced_by`` indexes) and ``enrolment_codes``.
 
     Presence check first (a migrated database costs one read and no write lock), pure
     DDL with nothing to backfill, and — like ``links.ensure_links_schema`` — it never
@@ -78,6 +83,7 @@ def ensure_auth_schema(conn: sqlite3.Connection) -> None:
     try:
         conn.execute(_DEVICE_TOKENS_DDL)
         conn.execute(_DEVICE_TOKENS_USER_INDEX_DDL)
+        conn.execute(_DEVICE_TOKENS_REPLACED_BY_INDEX_DDL)
         conn.execute(_ENROLMENT_CODES_DDL)
     except BaseException:
         if outermost:
@@ -239,6 +245,29 @@ def lookup_bearer(conn: sqlite3.Connection, token: str) -> dict | None:
             "revoked_at": device["revoked_at"]}
 
 
+class RenewRefused(Exception):
+    """``renew`` found the caller dead inside its transaction (a revoke or a deactivation
+    committed after the bearer middleware accepted it). ``outcome`` is the middleware's
+    own name for that state, so the audit log reads the same either way."""
+
+    def __init__(self, outcome: str):
+        super().__init__(outcome)
+        self.outcome = outcome
+
+
+# The connected component of ``?`` over ``replaced_by``, followed BOTH ways from every row
+# found, not two one-way walks from the start: once renew never forks, that component is
+# the whole history of one machine. A subquery, so the UPDATE around it reports rowcount.
+_CHAIN_IDS = (
+    "WITH RECURSIVE chain(id) AS ("
+    " SELECT ?"
+    " UNION SELECT d.id FROM device_tokens d JOIN chain c ON d.replaced_by = c.id"
+    " UNION SELECT d.replaced_by FROM device_tokens d JOIN chain c ON d.id = c.id"
+    " WHERE d.replaced_by IS NOT NULL) "
+    "SELECT id FROM chain"
+)
+
+
 def renew(conn: sqlite3.Connection, device_id: int) -> dict:
     """Mint the successor of ``device_id`` and link it; the old token keeps its expiry.
 
@@ -246,16 +275,46 @@ def renew(conn: sqlite3.Connection, device_id: int) -> dict:
     persists the successor AFTER receiving it, and a crash in between must cost a retry
     on the next pass, never a machine that can no longer capture. The overlap is bounded
     by the old expiry, which renewal never extends.
+
+    Renewal re-issues and never forks (D19). A caller that already has a successor (the
+    retry after a lost 201, or a copied ``config.json``) gets every token AFTER it revoked;
+    the last of those — the one with no successor — points at the new token, and every
+    other pointer stays put, so the chain is one line and a walk from any id reaches the
+    live token. The caller is re-checked under the write lock and :class:`RenewRefused`
+    is raised when a revoke, an expiry or a deactivation got there first.
     """
+    now = _iso(datetime.now(timezone.utc))
     conn.execute("BEGIN IMMEDIATE")
     try:
         old = conn.execute(
-            "SELECT d.user_id, d.device_name, u.name FROM device_tokens d "
+            "SELECT d.user_id, d.device_name, d.expires_at, d.revoked_at, d.replaced_by, "
+            "u.name, u.active FROM device_tokens d "
             "JOIN users u ON u.id = d.user_id WHERE d.id = ?",
             (device_id,),
         ).fetchone()
+        # The middleware's order (D19 B3): a deactivated user is named as such first.
+        if not old["active"]:
+            raise RenewRefused("deactivated_user")
+        if old["revoked_at"] is not None:
+            raise RenewRefused("revoked_token")
+        if old["expires_at"] <= now:
+            raise RenewRefused("expired_token")
+        tail = device_id
+        if old["replaced_by"] is not None:
+            after = conn.execute(
+                "WITH RECURSIVE after(id) AS ("
+                " SELECT ? UNION SELECT d.replaced_by FROM device_tokens d"
+                " JOIN after a ON d.id = a.id WHERE d.replaced_by IS NOT NULL) "
+                "SELECT d.id, d.replaced_by FROM device_tokens d JOIN after a ON d.id = a.id",
+                (old["replaced_by"],),
+            ).fetchall()
+            conn.executemany(
+                "UPDATE device_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                [(now, row["id"]) for row in after],
+            )
+            tail = next(row["id"] for row in after if row["replaced_by"] is None)
         new_id, body = _mint(conn, old["user_id"], old["device_name"])
-        conn.execute("UPDATE device_tokens SET replaced_by = ? WHERE id = ?", (new_id, device_id))
+        conn.execute("UPDATE device_tokens SET replaced_by = ? WHERE id = ?", (new_id, tail))
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -265,15 +324,29 @@ def renew(conn: sqlite3.Connection, device_id: int) -> dict:
     return body
 
 
-def revoke(conn: sqlite3.Connection, device_id: int) -> bool:
-    """Mark one device token revoked; ``False`` when no live token has that id."""
-    now = _iso(datetime.now(timezone.utc))
-    cur = conn.execute(
-        "UPDATE device_tokens SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+def revoke_chain(conn: sqlite3.Connection, device_id: int, now: str) -> int:
+    """Revoke every live token of ``device_id``'s chain; returns how many.
+
+    Joins the caller's transaction: it neither begins nor commits one.
+    """
+    return conn.execute(
+        f"UPDATE device_tokens SET revoked_at = ? WHERE revoked_at IS NULL AND id IN ({_CHAIN_IDS})",
         (now, device_id),
-    )
-    conn.commit()
-    return cur.rowcount == 1
+    ).rowcount
+
+
+def revoke(conn: sqlite3.Connection, device_id: int) -> int:
+    """Revoke the whole chain ``device_id`` belongs to (any id of it); returns how many
+    tokens were still unrevoked — ``0`` when the id is unknown or its chain is all dead."""
+    now = _iso(datetime.now(timezone.utc))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        count = revoke_chain(conn, device_id, now)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return count
 
 
 def list_devices(conn: sqlite3.Connection, email: str | None = None) -> list[sqlite3.Row]:
