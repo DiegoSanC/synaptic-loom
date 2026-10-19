@@ -20,7 +20,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from server import auth, client_ip, db, feedback, items, links, recall, search, ui_auth, ui_pages
+from server import (auth, auth_events, client_ip, db, feedback, items, links, recall, search,
+                    ui_auth, ui_pages)
 from server.normalize import normalize
 from server.rate_limit import RateLimiter
 
@@ -80,6 +81,7 @@ async def lifespan(app: FastAPI):
     conn = db.init_db()
     try:
         _log_orphan_count(conn)
+        auth_events.prune(conn)  # client_ip is personal data (D20, DESIGN §6.4)
     finally:
         conn.close()
     AUTH_FAILURES.clear()

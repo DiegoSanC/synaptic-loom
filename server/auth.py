@@ -60,6 +60,9 @@ _ENROLMENT_CODES_DDL = (
     "redeemed_at TEXT, "
     "device_token_id INTEGER REFERENCES device_tokens(id))"
 )
+# D20 (DESIGN §6.4): `admin` or `member`, validated in code, never by a CHECK.
+ROLES = ("admin", "member")
+USERS_ROLE_DDL = "TEXT NOT NULL DEFAULT 'member'"
 _OBJECT_NAMES = ("device_tokens", "idx_device_tokens_user", "idx_device_tokens_replaced_by",
                  "enrolment_codes")
 
@@ -68,29 +71,33 @@ _TTL_UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def ensure_auth_schema(conn: sqlite3.Connection) -> None:
-    """Idempotent: ``device_tokens`` (+ user and ``replaced_by`` indexes) and ``enrolment_codes``.
+    """Idempotent: ``device_tokens`` (+ user and ``replaced_by`` indexes), ``enrolment_codes``
+    and ``users.role`` (D20, through ``db.ensure_column``).
 
     Presence check first (a migrated database costs one read and no write lock), pure
     DDL with nothing to backfill, and — like ``links.ensure_links_schema`` — it never
     commits a transaction it did not open.
     """
+    from server import db  # function-level: server.db imports this module
+
     present = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
-    if set(_OBJECT_NAMES) <= present:
-        return
-    outermost = not conn.in_transaction
-    if outermost:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
-        conn.execute(_DEVICE_TOKENS_DDL)
-        conn.execute(_DEVICE_TOKENS_USER_INDEX_DDL)
-        conn.execute(_DEVICE_TOKENS_REPLACED_BY_INDEX_DDL)
-        conn.execute(_ENROLMENT_CODES_DDL)
-    except BaseException:
+    if not set(_OBJECT_NAMES) <= present:
+        outermost = not conn.in_transaction
         if outermost:
-            conn.rollback()
-        raise
-    if outermost:
-        conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(_DEVICE_TOKENS_DDL)
+            conn.execute(_DEVICE_TOKENS_USER_INDEX_DDL)
+            conn.execute(_DEVICE_TOKENS_REPLACED_BY_INDEX_DDL)
+            conn.execute(_ENROLMENT_CODES_DDL)
+        except BaseException:
+            if outermost:
+                conn.rollback()
+            raise
+        if outermost:
+            conn.commit()
+    # D20: `users` is schema.sql's, so its migration lives with the accounts module.
+    db.ensure_column(conn, "users", "role", USERS_ROLE_DDL)
 
 
 # --------------------------------------------------------------------------- #

@@ -8,9 +8,12 @@
 - Block T extends the schema ADDITIVELY, without touching schema.sql: `init_db` calls
   the per-module idempotent DDL (`search.ensure_search_schema`,
   `links.ensure_links_schema`, `items.ensure_items_schema`, `auth.ensure_auth_schema`,
-  `ui_auth.ensure_ui_schema`, `recall.ensure_recall_schema`)
+  `ui_auth.ensure_ui_schema`, `recall.ensure_recall_schema`,
+  `feedback.ensure_feedback_schema`, `auth_events.ensure_auth_events_schema`)
   after applying the base schema, so an existing pilot database gains the new objects
   on the next start.
+- A column on an existing table goes through `ensure_column`, DESIGN §6.4's migration rule
+  (D20 adds `users.role` and `ui_sessions.kind` this way).
 """
 import hashlib
 import os
@@ -18,7 +21,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server import auth, feedback, items, links, recall, search, ui_auth
+from server import auth, auth_events, feedback, items, links, recall, search, ui_auth
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 _BUSY_TIMEOUT_MS = 5000
@@ -53,6 +56,43 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         conn.commit()
 
 
+def _has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    return any(row[1] == column for row in conn.execute(f"PRAGMA table_info({table})"))
+
+
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str,
+                  backfill: str | None = None) -> bool:
+    """Add ``column`` to ``table`` unless it is there — DESIGN §6.4's migration rule.
+
+    ``definition`` must make the column nullable or give it a constant ``DEFAULT`` (SQLite
+    refuses anything else in ``ADD COLUMN``). The presence check is repeated inside
+    ``BEGIN IMMEDIATE``: the server and an ``admin.py`` run can both read "missing" and
+    queue for the write lock, and the second one must then find the column, not add it
+    twice. ``backfill`` runs in the same transaction as the ``ALTER``, so a committed
+    column always has its backfill; it must still be written to be re-runnable (``WHERE
+    <column> IS NULL``). Returns whether the column was added. Like the ``ensure_*``
+    functions, it never commits a transaction it did not open.
+    """
+    if _has_column(conn, table, column):
+        return False
+    outermost = not conn.in_transaction
+    if outermost:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        added = not _has_column(conn, table, column)
+        if added:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            if backfill is not None:
+                conn.execute(backfill)
+    except BaseException:
+        if outermost:
+            conn.rollback()
+        raise
+    if outermost:
+        conn.commit()
+    return added
+
+
 def init_db(path: str | None = None) -> sqlite3.Connection:
     """Connect and ensure the schema. Returns the connection (the caller closes it).
 
@@ -69,6 +109,7 @@ def init_db(path: str | None = None) -> sqlite3.Connection:
     ui_auth.ensure_ui_schema(conn)          # references device_tokens: after auth
     recall.ensure_recall_schema(conn)
     feedback.ensure_feedback_schema(conn)   # references entry_items: after items
+    auth_events.ensure_auth_events_schema(conn)
     return conn
 
 

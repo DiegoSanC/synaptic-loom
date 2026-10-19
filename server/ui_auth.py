@@ -50,31 +50,36 @@ _SESSIONS_DDL = (
 _SESSIONS_DEVICE_INDEX_DDL = (
     "CREATE INDEX IF NOT EXISTS idx_ui_sessions_device ON ui_sessions(device_token_id)"
 )
+# D20 (DESIGN §6.4): `cli`, a session `loom ui` opened — the only kind that writes in 2a.
+SESSIONS_KIND_DDL = "TEXT NOT NULL DEFAULT 'cli'"
 _OBJECT_NAMES = ("ui_login_codes", "ui_sessions", "idx_ui_sessions_device")
 
 
 def ensure_ui_schema(conn: sqlite3.Connection) -> None:
-    """Idempotent: ``ui_login_codes``, ``ui_sessions`` (+ device index).
+    """Idempotent: ``ui_login_codes``, ``ui_sessions`` (+ device index) and
+    ``ui_sessions.kind`` (D20, through ``db.ensure_column``).
 
     Same rules as ``auth.ensure_auth_schema``: presence check first, pure DDL, and it
     never commits a transaction it did not open.
     """
+    from server import db  # function-level: server.db imports this module
+
     present = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
-    if set(_OBJECT_NAMES) <= present:
-        return
-    outermost = not conn.in_transaction
-    if outermost:
-        conn.execute("BEGIN IMMEDIATE")
-    try:
-        conn.execute(_LOGIN_CODES_DDL)
-        conn.execute(_SESSIONS_DDL)
-        conn.execute(_SESSIONS_DEVICE_INDEX_DDL)
-    except BaseException:
+    if not set(_OBJECT_NAMES) <= present:
+        outermost = not conn.in_transaction
         if outermost:
-            conn.rollback()
-        raise
-    if outermost:
-        conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+        try:
+            conn.execute(_LOGIN_CODES_DDL)
+            conn.execute(_SESSIONS_DDL)
+            conn.execute(_SESSIONS_DEVICE_INDEX_DDL)
+        except BaseException:
+            if outermost:
+                conn.rollback()
+            raise
+        if outermost:
+            conn.commit()
+    db.ensure_column(conn, "ui_sessions", "kind", SESSIONS_KIND_DDL)
 
 
 def _ttl_from_env(name: str, default: int) -> int:
