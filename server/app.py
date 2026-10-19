@@ -140,10 +140,12 @@ def _lookup_credential(token: str) -> dict | None:
 # the stylesheet it and the signed-out page use, the icon (so no browser ever asks for
 # `/favicon.ico`, which would count as a failed authentication) and `/ui/session`, where
 # a login code is redeemed. Exact paths, like the rest: no static mount, no prefix.
+# `/ui/join` (D19) is the static page an invitation link opens; its code stays in the
+# fragment, which never reaches the server.
 PUBLIC_PATHS = frozenset({
     "/api/health", "/api/enroll",
-    "/ui/login", "/ui/session", "/ui/static/login.js", "/ui/static/favicon.svg",
-    "/ui/static/ui.css",
+    "/ui/login", "/ui/session", "/ui/join", "/ui/static/login.js",
+    "/ui/static/favicon.svg", "/ui/static/ui.css",
 })
 # Redeeming a secret anonymously: gated by the auth-failure window, not the health one.
 _REDEMPTION_PATHS = frozenset({"/api/enroll", "/ui/session"})
@@ -339,6 +341,9 @@ async def security_headers_middleware(request: Request, call_next):
     if ui_pages.is_ui_path(request.url.path):
         # Outermost middleware, so it also dresses the gate's own 401/405/429 (AC-8).
         response.headers.update(ui_pages.SECURITY_HEADERS)
+        csp = ui_pages.CSP_OVERRIDES.get(request.url.path)
+        if csp is not None:
+            response.headers["Content-Security-Policy"] = csp
     return response
 
 

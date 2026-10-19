@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Loom — join</title>
+<link rel="icon" href="/ui/static/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/ui/static/ui.css">
+</head>
+<body>
+<header class="top"><span class="brand">Loom</span></header>
+<main>
+<h1>You were invited to Loom</h1>
+<p>The link that opened this page carries a single-use enrolment code. This page never
+reads it: it stays in your browser, after the <code>#</code>. The code expires (24 hours
+by default) and stops working once a machine has used it. Do not forward the link.</p>
+
+<h2>1. Before you start</h2>
+<p>You need <code>git</code>, <code>jq</code>, <code>uv</code> (or <code>python3 -m venv</code>),
+<code>curl</code>, <code>tar</code> and the Claude Code CLI (<code>claude</code>).</p>
+
+<h2>2. Clone the repository</h2>
+<p>Clone the Loom repository your team uses, and keep the checkout: the client is
+installed from it.</p>
+<pre><code>git clone &lt;repo-url&gt; loom &amp;&amp; cd loom</code></pre>
+
+<h2>3. Install the client</h2>
+<pre><code>bash client/install.sh</code></pre>
+
+<h2>4. Enrol this machine</h2>
+<pre><code>~/.loom/venv/bin/loom enroll</code></pre>
+<p>Paste this whole link into <code>loom enroll</code> at its hidden prompt. It carries both
+this server's address and the code; nothing is echoed, and nothing lands in your shell
+history. Your machine then mints its own device token, which never travels.</p>
+
+<h2>5. Check the environment</h2>
+<pre><code>~/.loom/venv/bin/loom doctor</code></pre>
+</main>
+</body>
+</html>

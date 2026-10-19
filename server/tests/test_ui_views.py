@@ -32,7 +32,7 @@ EXPECTED_HEADERS = {
 }
 BANNER = ("Automatically generated from developers' Claude Code sessions. "
           "Unverified reference — check it against the code and the PR.")
-PUBLIC_UI_PATHS = {"/ui/login", "/ui/session", "/ui/static/login.js",
+PUBLIC_UI_PATHS = {"/ui/login", "/ui/session", "/ui/join", "/ui/static/login.js",
                    "/ui/static/favicon.svg", "/ui/static/ui.css"}
 WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 

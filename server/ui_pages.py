@@ -32,6 +32,15 @@ SECURITY_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "no-store",
 }
+# Per-path replacements for the policy above, applied by `app.security_headers_middleware`
+# (which overwrites whatever a route sets). `/ui/join` (D19) has no script and no form, so
+# its policy allows no script, no connection and no form target.
+CSP_OVERRIDES = {
+    "/ui/join": (
+        "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'none'; "
+        "base-uri 'none'; frame-ancestors 'none'"
+    ),
+}
 
 _ENV = jinja2.Environment(
     loader=jinja2.FileSystemLoader(UI_DIR / "templates"),
@@ -77,6 +86,7 @@ def _page(path: str):
 # Public assets (each one an entry of `app.PUBLIC_PATHS`)                      #
 # --------------------------------------------------------------------------- #
 _LOGIN_HTML = (UI_DIR / "login.html").read_text(encoding="utf-8")
+_JOIN_HTML = (UI_DIR / "join.html").read_text(encoding="utf-8")
 _STATIC = {
     name: (UI_DIR / "static" / name).read_text(encoding="utf-8")
     for name in ("login.js", "favicon.svg", "ui.css")
@@ -87,6 +97,13 @@ _STATIC = {
 def login_page():
     """Static. The code is in the URL fragment; this request never carries it."""
     return HTMLResponse(_LOGIN_HTML)
+
+
+@router.get("/ui/join")
+def join_page():
+    """Static (D19). The invitation link's code is in the fragment: this page never
+    receives, redeems, looks up or renders it. It explains how to get to `loom enroll`."""
+    return HTMLResponse(_JOIN_HTML)
 
 
 @router.get("/ui/static/login.js")
