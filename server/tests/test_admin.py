@@ -271,10 +271,10 @@ def test_the_runbook_mis_sent_code_one_liner_expires_only_that_users_pending_cod
     sql = shlex.split(local)[-1]
     assert shlex.split(shlex.split(on_fly)[-1]) == ["python", "-m", "sqlite3", "/data/loom.db", sql]
 
-    mis_sent = _invite(capsys, "dev2@example.test", "dev2")
-    used = _invite(capsys, "dev2@example.test")
+    mis_sent = _invite_code(capsys, "dev2@example.test", "dev2")
+    used = _invite_code(capsys, "dev2@example.test")
     machine = _enroll(client, used, "laptop")
-    theirs = _invite(capsys, "dev3@x.com", "dev3")
+    theirs = _invite_code(capsys, "dev3@x.com", "dev3")
 
     argv = [sys.executable if a == ".venv/bin/python" else a for a in shlex.split(local)]
     argv = [env if a == "$LOOM_DB" else a for a in argv]
@@ -284,5 +284,5 @@ def test_the_runbook_mis_sent_code_one_liner_expires_only_that_users_pending_cod
     assert client.post("/api/enroll", json={"code": mis_sent, "device_name": "x"}).status_code == 401
     assert _get(client, machine).status_code == 200      # not a deactivate: the machine keeps working
     assert client.post("/api/enroll", json={"code": theirs, "device_name": "y"}).status_code == 201
-    assert client.post("/api/enroll", json={"code": _invite(capsys, "dev2@example.test"),
+    assert client.post("/api/enroll", json={"code": _invite_code(capsys, "dev2@example.test"),
                                             "device_name": "z"}).status_code == 201  # a fresh invite works
