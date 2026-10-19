@@ -2,10 +2,10 @@
 phase 2 slice 3).
 
 Every route is registered on ``ui_pages.router`` when this module is imported (so the
-write registry and the D14 crawl see it) and reached through ``app._ui_session_gate``: the
-page is a signed-in ``GET``, and the two writes are registered with ``ui_pages._write``,
-so the gate has already checked the public URL, ``Origin``, the CSRF token and the session's kind before
-a handler runs. A machine is a renewal chain, the connected component over
+write registry and the D14 crawl see it) and reached through ``app._ui_session_gate``:
+the page is a signed-in ``GET``, and the two writes are registered with
+``ui_pages._write``, so the gate has already checked the public URL, ``Origin``, the CSRF
+token and the session's kind before a handler runs. A machine is a renewal chain, the connected component over
 ``replaced_by`` that ``auth.revoke_chain`` revokes; any id of it names it.
 """
 from __future__ import annotations
