@@ -18,9 +18,13 @@ than smoothed over — that is most of this document's value.
 
 Part 2 (Docker Compose + Caddy) was **executed on 2026-10-16** by goal wave `r`, against the
 real `deploy/compose` files on a local Docker host, with Caddy's internal CA standing in
-for the public one; the public-DNS, public-CA path on a real VPS was not (listed at the end).
-Its backups and restore (Part 2 §8) were **executed on 2026-10-17** by goal wave `s`, against
-the same files; the SSH leg of the off-host pull was not.
+for the public one. On **2026-10-17** it was also followed verbatim on a throwaway cloud VPS
+with a public DNS name and a public-CA certificate, driven from a second VPS as an
+independent client — before D18, so without the `backup` service; certificate renewal and
+IPv6 were not covered (listed at the end). Its backups and restore (Part 2 §8) were
+**executed on 2026-10-17** by goal wave `s`, against the same files on one Docker host; on a
+real host they were not — neither the `backup` service, nor the SSH leg of the off-host
+pull, nor the drill on a second machine (listed at the end).
 
 ---
 
@@ -616,10 +620,22 @@ Stated so nobody mistakes the rest for equally solid:
 - **Custom domains and certificates.** Everything here uses the `*.fly.dev` hostname and
   Fly's platform TLS.
 - **Any region other than `cdg`, and any second Machine.** Out of scope by design.
-- **Part 2 on a real VPS with a public DNS name.** Wave `r` runs the real Compose files,
-  but with `LOOM_DOMAIN=loom.localhost`, which Caddy serves from its internal CA: ACME
-  issuance and renewal against a public CA, and a client address arriving through a real
-  host's published ports, were not executed.
+- **Part 2 on a real VPS: certificate renewal and IPv6.** Wave `r` runs the real Compose
+  files with `LOOM_DOMAIN=loom.localhost`, which Caddy serves from its internal CA. On
+  2026-10-17 Part 2, as it stood then, was followed verbatim on a throwaway cloud VPS
+  (Ubuntu 24.04, Docker 29.1, Compose 2.40) with a public DNS name, and driven from a second
+  VPS as an independent client. Validated there: Let's Encrypt issued the certificate on
+  the first start; HTTP redirected to HTTPS; port 8080 was closed from the internet; the
+  startup log read `client_ip_source mode=peer` with no WARN; forged `X-Forwarded-For`,
+  `Fly-Client-IP` and `X-Real-IP` headers were ignored, the audit line showing the client's
+  real public address; the 10th failure got `429` even with a rotating `X-Forwarded-For`, a
+  second address had its own bucket, and a valid token still passed from the blocked
+  address; §5's invite → enroll → register; a clean stop, `down`/`up` and a full host reboot
+  with the data intact. Not executed: **certificate renewal over time** (the certificate
+  was issued, never renewed), and **IPv6**, out of scope by design (§2).
+- **Part 2's backups (§8) on a real host.** The VPS run predates D18: no `backup` service
+  was running there. The `backup` service, the off-host pull and the restore were exercised
+  only by wave `s`, on one Docker host (the next two bullets).
 - **Part 2's off-host pull over SSH from a real second machine (§8a).** Wave `s` runs the
   `--export` stream the pull carries (through `exec`, as there) and unpacks it, on one Docker
   host; the SSH hop, the restricted key, the `loom-pull` script and its cron line were not
