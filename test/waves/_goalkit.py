@@ -10,12 +10,17 @@ in unit-scope goals, the host schedulers) are stubbed/shimmed.
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
+import pwd
 import re
 import shutil
 import subprocess
+import sys
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -277,3 +282,66 @@ def parse_admin_token(stdout: str) -> str:
         if len(candidate) >= 32 and re.fullmatch(r"[A-Za-z0-9_-]+", candidate):
             return candidate
     raise AssertionError(f"could not parse token from adduser output:\n{stdout}")
+
+
+# ---------------------------------------------------------------------------- #
+# Host-wide lock for the Compose waves (r, s)                                   #
+# ---------------------------------------------------------------------------- #
+COMPOSE_LOCK_ENV = "GOAL_COMPOSE_LOCK"
+_compose_locks: dict[str, list] = {}   # realpath -> [fd, depth], this process's holds
+
+
+def compose_lock_path() -> Path:
+    """One path for every checkout and worktree of this user: the passwd home's cache,
+    not ``$HOME`` (tests rewrite it) nor ``$TMPDIR`` (per-process on macOS).
+    ``GOAL_COMPOSE_LOCK`` overrides it, for the lock's own tests."""
+    override = os.environ.get(COMPOSE_LOCK_ENV)
+    if override:
+        return Path(override)
+    home = Path(pwd.getpwuid(os.getuid()).pw_dir)
+    return home / ".cache" / "synaptic-loom" / "compose-waves.lock"
+
+
+def _say_waiting(line: str) -> None:
+    print(line, file=sys.stderr, flush=True)
+
+
+@contextmanager
+def compose_host_lock(path: Path | None = None, *,
+                      on_wait: Callable[[str], None] = _say_waiting) -> Iterator[None]:
+    """Holds the host-wide lock the Compose waves share, blocking until it is free.
+
+    ONE lock for every Compose wave, re-entrant within a process: r and s fix disjoint
+    subnets and share a host by design, and one session holds both their stacks until it
+    ends, so a lock per subnet set could deadlock two runs that reach them in opposite
+    orders. ``flock`` belongs to the open file, so the kernel releases it however the
+    holder exits, ``kill -9`` included. ``on_wait`` gets one line, only if it waits.
+    """
+    path = path or compose_lock_path()
+    key = os.path.realpath(path)
+    held = _compose_locks.get(key)
+    if held is None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                holder = path.read_text(encoding="utf-8").strip() or "an unknown process"
+                on_wait(f"waiting for the Compose-wave host lock {path} (held by {holder})")
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            os.ftruncate(fd, 0)
+            os.pwrite(fd, f"pid {os.getpid()} in {REPO_ROOT}\n".encode(), 0)
+        except BaseException:
+            os.close(fd)
+            raise
+        held = _compose_locks[key] = [fd, 0]
+    held[1] += 1
+    try:
+        yield
+    finally:
+        held[1] -= 1
+        if held[1] == 0:
+            del _compose_locks[key]
+            os.ftruncate(held[0], 0)
+            os.close(held[0])
