@@ -40,9 +40,10 @@ class ComposeStackLock:
         capture = request.config.pluginmanager.getplugin("capturemanager")
 
         def say(line: str) -> None:
-            # Past pytest's capture, so a waiting run shows why it has stopped moving.
+            # Past pytest's capture, so a waiting run shows why it has stopped moving, and
+            # on a line of its own rather than after the progress dots.
             with capture.global_and_fixture_disabled() if capture else contextlib.nullcontext():
-                print(line, file=sys.stderr, flush=True)
+                print(f"\n{line}", file=sys.stderr, flush=True)
 
         held = contextlib.ExitStack()
         held.enter_context(kit.compose_host_lock(on_wait=say))

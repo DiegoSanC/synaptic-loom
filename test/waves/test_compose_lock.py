@@ -138,7 +138,8 @@ def _lock_is_free(path: Path) -> bool:
 def test_two_runs_serialize_on_the_stacks_and_the_waiting_one_says_so(tree):
     first = _pytest(tree, "x", "y", FAKE_HOLD="1")
     _wait_for(tree, first.pid, "x", "up")
-    second = _pytest(tree, "x", "y", FAKE_HOLD="1")
+    # The opposite order: one lock per subnet set would deadlock these two runs.
+    second = _pytest(tree, "y", "x", FAKE_HOLD="1")
     first_out, second_out = _finish(first), _finish(second)
     assert first.returncode == 0, first_out
     assert second.returncode == 0, second_out
