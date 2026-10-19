@@ -26,7 +26,7 @@ EXPECTED_HEADERS = {
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
         "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     ),
-    "referrer-policy": "no-referrer",
+    "referrer-policy": "same-origin",   # /ui/join keeps no-referrer: test_join.py
     "x-content-type-options": "nosniff",
     "cache-control": "no-store",
 }
@@ -586,6 +586,14 @@ def test_a_revoked_link_is_history_on_the_item_page_never_lineage(ui, seeded):
     assert "6.2 duplicates 3.2" in row and "ana" in row
     assert "revoked by bea" in row and "not the same decision" in row
     assert _field(_section(page, "item-summary"), "status") == "current"
+
+
+@pytest.mark.parametrize("path", [f"/ui/projects/{2**63}", f"/ui/entries/{10**20}",
+                                  f"/ui/items/{2**63}.1", f"/ui/items/2.{2**63}"])
+def test_an_id_too_large_for_a_row_is_a_404_not_a_500(ui, seeded, path):
+    r = ui.get(path)
+    assert r.status_code == 404, path
+    assert "Not found" in r.text
 
 
 def test_unknown_items_are_404(ui, seeded):

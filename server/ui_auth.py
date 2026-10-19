@@ -131,8 +131,10 @@ def issue_login_code(conn: sqlite3.Connection, user_id: int,
     return code, expires_at
 
 
-def open_session(conn: sqlite3.Connection, code: str) -> dict | None:
-    """Burn ``code`` and mint the UI session it pays for, in ONE transaction.
+def open_session(conn: sqlite3.Connection, code: str, *,
+                 client_ip: str | None = None) -> dict | None:
+    """Burn ``code`` and mint the UI session it pays for, in ONE transaction, which also
+    records ``ui_signin`` (D20, §6.4) from ``client_ip``.
 
     Returns ``{"session", "max_age", "user_id", "device_token_id", "ui_session_id"}``, or
     ``None`` when the code is unknown, expired, already redeemed, belongs to a deactivated
@@ -142,7 +144,7 @@ def open_session(conn: sqlite3.Connection, code: str) -> dict | None:
     ``BEGIN IMMEDIATE`` takes the write lock before the read, so two concurrent
     redemptions serialize and exactly one sees ``redeemed_at IS NULL`` (``auth.redeem``).
     """
-    from server import db
+    from server import auth_events, db
 
     now = _now()
     now_iso = _iso(now)
@@ -181,6 +183,8 @@ def open_session(conn: sqlite3.Connection, code: str) -> dict | None:
         )
         conn.execute("UPDATE ui_login_codes SET redeemed_at = ? WHERE id = ?",
                      (now_iso, row["id"]))
+        auth_events.record(conn, actor_user_id=row["user_id"], event="ui_signin",
+                           target_type="user", target_id=row["user_id"], client_ip=client_ip)
         conn.commit()
     except BaseException:
         conn.rollback()
@@ -190,31 +194,60 @@ def open_session(conn: sqlite3.Connection, code: str) -> dict | None:
             "ui_session_id": cur.lastrowid}
 
 
-def lookup_session(conn: sqlite3.Connection, session: str) -> dict | None:
-    """The session behind a cookie value, or ``None`` when no row has its hash.
+_SESSION_SELECT = (
+    "SELECT s.id, s.user_id, s.device_token_id, s.expires_at, s.kind, u.name, u.active, "
+    "u.role, d.revoked_at AS device_revoked_at "
+    "FROM ui_sessions s JOIN users u ON u.id = s.user_id "
+    "LEFT JOIN device_tokens d ON d.id = s.device_token_id "
+)
 
-    Returns ``{"ui_session_id", "user_id", "name", "active", "expires_at",
-    "device_revoked_at", "kind", "role", "device_token_id"}``; ``role`` is read from
-    ``users`` on every call, never cached in the session (D20). Like ``auth.lookup_bearer``, it reports and the middleware
-    decides, because the middleware owns the audit outcome names.
-    """
-    from server import db
 
-    row = conn.execute(
-        "SELECT s.id, s.user_id, s.device_token_id, s.expires_at, s.kind, u.name, u.active, "
-        "u.role, "
-        "d.revoked_at AS device_revoked_at "
-        "FROM ui_sessions s JOIN users u ON u.id = s.user_id "
-        "LEFT JOIN device_tokens d ON d.id = s.device_token_id "
-        "WHERE s.session_hash = ?",
-        (db.hash_token(session),),
-    ).fetchone()
+def _session_dict(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
     return {"ui_session_id": row["id"], "user_id": row["user_id"], "name": row["name"],
             "active": row["active"], "expires_at": row["expires_at"],
             "device_revoked_at": row["device_revoked_at"], "kind": row["kind"],
             "role": row["role"], "device_token_id": row["device_token_id"]}
+
+
+def lookup_session(conn: sqlite3.Connection, session: str) -> dict | None:
+    """The session behind a cookie value, or ``None`` when no row has its hash.
+
+    Returns ``{"ui_session_id", "user_id", "name", "active", "expires_at",
+    "device_revoked_at", "kind", "role", "device_token_id"}``; ``role`` is read from
+    ``users`` on every call, never cached in the session (D20). Like ``auth.lookup_bearer``,
+    it reports and :func:`session_refusal` decides.
+    """
+    from server import db
+
+    return _session_dict(conn.execute(_SESSION_SELECT + "WHERE s.session_hash = ?",
+                                      (db.hash_token(session),)).fetchone())
+
+
+def reread_session(conn: sqlite3.Connection, ui_session_id: int) -> dict | None:
+    """:func:`lookup_session` by row id: a write reads its session again under its own
+    write lock (D20, §6.4), after the gate let it in."""
+    return _session_dict(conn.execute(_SESSION_SELECT + "WHERE s.id = ?",
+                                      (ui_session_id,)).fetchone())
+
+
+def session_refusal(session: dict | None, now: str) -> str | None:
+    """Why ``session`` (from :func:`lookup_session`) opens nothing, as the audit outcome
+    the session gate logs, or ``None`` when it is live.
+
+    ``active`` before revocation (D19): ``deactivate`` also revokes the user's machines,
+    and the outcome must still name the deactivation.
+    """
+    if session is None:
+        return "ui_invalid_session"
+    if session["expires_at"] <= now:
+        return "ui_expired_session"
+    if not session["active"]:
+        return "ui_deactivated_user"
+    if session["device_revoked_at"] is not None:
+        return "ui_revoked_device"
+    return None
 
 
 # The session kinds that may write (D20, §6.4): `cli` is the one `loom ui` opens; 2b adds

@@ -113,7 +113,8 @@ def record(conn: sqlite3.Connection, *, actor_user_id: int | None, event: str,
 
 def retention_days() -> int:
     """``LOOM_AUTH_EVENTS_RETENTION_DAYS``, read at call time; a non-positive or
-    non-numeric value falls back to the default (``auth.device_token_ttl_s``'s rule)."""
+    non-numeric value falls back to the default (``auth.device_token_ttl_s``'s rule), and
+    :func:`prune` reads one too large to be a date as the default too."""
     raw = os.environ.get(RETENTION_ENV)
     try:
         value = int(raw) if raw else 0
@@ -123,9 +124,18 @@ def retention_days() -> int:
 
 
 def prune(conn: sqlite3.Connection, now: datetime | None = None) -> int:
-    """Delete the rows older than the retention; returns how many."""
+    """Delete the rows older than the retention; returns how many.
+
+    A retention too large to be a date is read as the default (§6.4). The cutoff's year
+    is zero-padded by hand: ``%Y`` leaves a year before 1000 unpadded on glibc, and
+    ``"5-01-01…"`` sorts after every real timestamp, so every row would go.
+    """
     now = now or datetime.now(timezone.utc)
-    cutoff = _iso(now - timedelta(days=retention_days()))
+    try:
+        cutoff = now - timedelta(days=retention_days())
+    except OverflowError:
+        cutoff = now - timedelta(days=DEFAULT_RETENTION_DAYS)
+    cutoff = f"{cutoff.year:04d}{cutoff.strftime('-%m-%dT%H:%M:%SZ')}"
     return _write(conn, "DELETE FROM auth_events WHERE ts < ?", (cutoff,)).rowcount
 
 

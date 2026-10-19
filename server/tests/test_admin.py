@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from server import admin, db
+from server import admin, auth, db
 
 COMPOSE_FILE = Path(__file__).resolve().parents[2] / "deploy" / "compose" / "docker-compose.yml"
 
@@ -493,11 +493,11 @@ def test_set_role_records_the_web_actor_and_refuses_what_is_not_a_role(env):
     actor, target = _user_id(env, "a@x.com"), _user_id(env, "m@x.com")
     conn = db.connect(env)
     try:
-        assert admin.set_role(conn, target, "admin", actor_user_id=actor,
-                              client_ip="192.0.2.7") is True
-        assert admin.set_role(conn, 999, "admin") is None
+        assert auth.set_role(conn, target, "admin",
+                             audit={"actor_user_id": actor, "client_ip": "192.0.2.7"}) is True
+        assert auth.set_role(conn, 999, "admin") is None
         with pytest.raises(ValueError):
-            admin.set_role(conn, target, "owner")
+            auth.set_role(conn, target, "owner")
         assert not conn.in_transaction
     finally:
         conn.close()

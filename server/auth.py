@@ -218,8 +218,10 @@ def redeem(conn: sqlite3.Connection, code: str, device_name: str,
     """Burn ``code`` and mint the device token it pays for, in ONE transaction.
 
     Returns the enrol response body (plus ``device_token_id`` for the audit line), or
-    ``None`` when the code is unknown, expired, already redeemed, or belongs to a
-    deactivated user. All four are one answer on purpose: the caller is anonymous and
+    ``None`` when the code is unknown, expired, already redeemed, belongs to a
+    deactivated user, or was issued by a device token that is now revoked (D20, §6.4: a
+    code issued while its issuer was being revoked cannot mint a chain the issuer cascade
+    has already passed). All five are one answer on purpose: the caller is anonymous and
     must not be able to tell them apart.
 
     ``old_token`` is the bearer a re-enrolling machine sent (D19 B2): when it is a live
@@ -244,13 +246,17 @@ def redeem(conn: sqlite3.Connection, code: str, device_name: str,
         return None
     conn.execute("BEGIN IMMEDIATE")
     try:
+        # The clock is read again under the lock (§6.4): a revocation that committed while
+        # this call waited for it has expired the codes it reached as of ITS clock.
+        now = _iso(datetime.now(timezone.utc))
         row = conn.execute(
-            "SELECT c.id, c.user_id, u.name, u.active "
+            "SELECT c.id, c.user_id, u.name, u.active, i.revoked_at AS issuer_revoked_at "
             "FROM enrolment_codes c JOIN users u ON u.id = c.user_id "
+            "LEFT JOIN device_tokens i ON i.id = c.issued_by_device_token_id "
             "WHERE c.code_hash = ? AND c.redeemed_at IS NULL AND c.expires_at > ?",
             (code_hash, now),
         ).fetchone()
-        if row is None or not row["active"]:
+        if row is None or not row["active"] or row["issuer_revoked_at"] is not None:
             conn.rollback()
             return None
         if old_token:
@@ -508,6 +514,23 @@ def refuse_last_admin(conn: sqlite3.Connection, user_id: int) -> None:
         raise LastAdmin()
 
 
+# Every account change below takes its audit context the same way: ``audit`` is
+# ``{"actor_user_id", "client_ip"}`` and, when given, the change's event is recorded in its
+# own transaction; ``None`` records none. The web passes the signed-in admin and their
+# address, ``admin.py promote``/``demote`` pass :data:`CLI_AUDIT` (a ``NULL`` actor), and
+# ``admin.py``'s other commands pass nothing (§6.4).
+CLI_AUDIT = {"actor_user_id": None, "client_ip": None}
+
+
+def _begin(conn: sqlite3.Connection) -> bool:
+    """``BEGIN IMMEDIATE`` unless the caller already holds a transaction (the web's
+    ``ui_pages.write_transaction``); returns whether this call owns it."""
+    outermost = not conn.in_transaction
+    if outermost:
+        conn.execute("BEGIN IMMEDIATE")
+    return outermost
+
+
 def deactivate(conn: sqlite3.Connection, email: str, *,
                audit: dict | None = None) -> tuple[int, int] | None:
     """Deactivate the user, revoke every one of their chains with the issuer cascade (D20)
@@ -520,17 +543,20 @@ def deactivate(conn: sqlite3.Connection, email: str, *,
     ends them, and re-activating the row by SQL would bring no machine back.
 
     Raises :class:`LastAdmin`, with nothing changed, for the last active admin (D20).
-    ``audit`` (``actor_user_id`` and ``client_ip``, from the web) records
-    ``user_deactivated`` in the same transaction; ``admin.py`` passes none (§6.4).
+    ``user_deactivated`` is recorded with ``audit`` only when the user was still active
+    under the lock, so two concurrent deactivations record one. Joins the caller's
+    transaction when there is one, and then neither commits nor rolls it back.
     """
     from server import auth_events  # function-level, like ``db`` above
 
     now = _iso(datetime.now(timezone.utc))
-    conn.execute("BEGIN IMMEDIATE")
+    outermost = _begin(conn)
     try:
-        user = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        user = conn.execute("SELECT id, active FROM users WHERE email = ?",
+                            (email,)).fetchone()
         if user is None:
-            conn.rollback()
+            if outermost:
+                conn.rollback()
             return None
         refuse_last_admin(conn, user["id"])
         conn.execute("UPDATE users SET active = 0 WHERE id = ?", (user["id"],))
@@ -543,14 +569,102 @@ def deactivate(conn: sqlite3.Connection, email: str, *,
             "SELECT id FROM device_tokens WHERE user_id = ?", (user["id"],))]
         revoked, cascaded = revoke_with_cascade(conn, own, now)
         expired += cascaded
-        if audit is not None:
+        if audit is not None and user["active"]:
             auth_events.record(conn, event="user_deactivated", target_type="user",
                                target_id=user["id"], **audit)
-        conn.commit()
+        if outermost:
+            conn.commit()
     except BaseException:
-        conn.rollback()
+        if outermost:
+            conn.rollback()
         raise
     return revoked, expired
+
+
+def set_role(conn: sqlite3.Connection, user_id: int, role: str, *,
+             audit: dict | None = None) -> bool | None:
+    """Give ``user_id`` the ``role``, recording ``promoted``/``demoted`` with ``audit`` in
+    the same transaction (DESIGN §6.4). Returns ``True`` when the role changed, ``False``
+    when the user already had it (nothing written), ``None`` when no user has that id.
+
+    Raises :class:`LastAdmin`, with nothing changed, for a demotion of the last active
+    admin; the check runs under ``BEGIN IMMEDIATE``. Joins the caller's transaction when
+    there is one, and then neither commits nor rolls it back.
+    """
+    from server import auth_events
+
+    if role not in ROLES:
+        raise ValueError(f"not a role: {role!r}")
+    outermost = _begin(conn)
+    try:
+        user = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+        if user is None or user["role"] == role:
+            if outermost:
+                conn.rollback()
+            return None if user is None else False
+        if role != "admin":
+            refuse_last_admin(conn, user_id)
+        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        if audit is not None:
+            auth_events.record(conn, event="promoted" if role == "admin" else "demoted",
+                               target_type="user", target_id=user_id, **audit)
+        if outermost:
+            conn.commit()
+    except BaseException:
+        if outermost:
+            conn.rollback()
+        raise
+    return True
+
+
+def invite(conn: sqlite3.Connection, email: str, name: str | None, ttl_s: int, *,
+           role: str = "member", created_by_user_id: int | None = None,
+           issued_by_device_token_id: int | None = None,
+           audit: dict | None = None) -> tuple[int, str, str, str] | None:
+    """One invitation for ``email``: ``(user_id, name, code, expires_at)``, or ``None``,
+    with nothing written, when no user has that email and no ``name`` was given.
+
+    An unknown email creates the user with ``name`` and ``role``; a known one keeps its
+    name and role and only gets a new code (DESIGN §6.4: ``admin.py invite``'s semantics,
+    which the web's invite shares). The issuer fields are the web's; ``NULL`` from
+    ``admin.py``. ``user_invited`` is recorded with ``audit``. Joins the caller's
+    transaction when there is one, and then neither commits nor rolls it back.
+    """
+    from server import auth_events, db
+
+    if role not in ROLES:
+        raise ValueError(f"not a role: {role!r}")
+    outermost = _begin(conn)
+    try:
+        user = conn.execute("SELECT id, name FROM users WHERE email = ?", (email,)).fetchone()
+        if user is None:
+            if name is None:
+                if outermost:
+                    conn.rollback()
+                return None
+            # The legacy column is NOT NULL. The preimage of this hash is discarded on
+            # purpose: nobody holds it, so enrolment is the only way onto the API for a
+            # user created here — no permanent token is ever printed for them.
+            user_id = conn.execute(
+                "INSERT INTO users (name, email, token_hash, active, created_at, role) "
+                "VALUES (?, ?, ?, 1, ?, ?)",
+                (name, email, db.hash_token(secrets.token_urlsafe(32)), db.iso_now(), role),
+            ).lastrowid
+        else:
+            user_id, name = user["id"], user["name"]
+        code, expires_at = create_invitation(
+            conn, user_id, ttl_s, created_by_user_id=created_by_user_id,
+            issued_by_device_token_id=issued_by_device_token_id)
+        if audit is not None:
+            auth_events.record(conn, event="user_invited", target_type="user",
+                               target_id=user_id, **audit)
+        if outermost:
+            conn.commit()
+    except BaseException:
+        if outermost:
+            conn.rollback()
+        raise
+    return user_id, name, code, expires_at
 
 
 def list_devices(conn: sqlite3.Connection, email: str | None = None) -> list[sqlite3.Row]:
