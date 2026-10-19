@@ -6,6 +6,7 @@ environment variable (default `./loom.db`) — the same one app.py uses.
     python -m server.admin invite --email dev2@example.test --name dev2 [--ttl 24h] [--public-url URL]
     python -m server.admin listdevices [--email dev2@example.test]
     python -m server.admin revokedevice --id 3          # any id of the machine's chain
+    python -m server.admin revokedevice --id 3 --no-cascade   # D20: retire a replaced one
     python -m server.admin revoke-orphans               # once, after upgrading to D19
     python -m server.admin adduser --name dev2 --email dev2@example.test   # break-glass
     python -m server.admin deactivate --email dev2@example.test
@@ -158,12 +159,16 @@ def _listdevices(args: argparse.Namespace) -> int:
 def _revokedevice(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
-        revoked = auth.revoke(conn, args.id)
+        revoked = auth.revoke(conn, args.id, cascade=not args.no_cascade)
         if not revoked:
             print(f"error: no unrevoked device token in the chain of id {args.id}", file=sys.stderr)
             return 1
-        print(f"Device token {args.id} and its renewal chain revoked ({revoked} token(s); "
-              "that machine must enrol again).")
+        if args.no_cascade:
+            print(f"Device token {args.id} and its renewal chain retired ({revoked} token(s); "
+                  "that machine must enrol again; machines added from it keep working).")
+        else:
+            print(f"Device token {args.id} and its renewal chain revoked ({revoked} token(s); "
+                  "that machine must enrol again).")
         return 0
     finally:
         conn.close()
@@ -259,6 +264,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_revoke = sub.add_parser("revokedevice", help="revoke ONE machine: its whole renewal chain")
     p_revoke.add_argument("--id", type=int, required=True,
                           help="any device id of the machine's chain, from listdevices")
+    p_revoke.add_argument("--no-cascade", action="store_true",
+                          help="retire it (D20): machines added from it with a setup code "
+                               "keep working; for a replaced machine, not a lost one")
     p_revoke.set_defaults(func=_revokedevice)
 
     p_orphans = sub.add_parser(

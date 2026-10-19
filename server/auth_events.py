@@ -29,6 +29,7 @@ EVENTS = {
     "promoted": "user",
     "demoted": "user",
     "device_revoked": "device",
+    "device_retired": "device",
 }
 
 _AUTH_EVENTS_DDL = (

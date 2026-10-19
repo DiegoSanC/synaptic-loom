@@ -243,7 +243,8 @@ fly ssh console -a <app> -u app -C "python -m server.admin listusers"
 fly ssh console -a <app> -u app -C "python -m server.admin invite --email dev@example.com --name dev"
 fly ssh console -a <app> -u app -C "python -m server.admin invite --email dev@example.com"   # a second machine of an existing user
 fly ssh console -a <app> -u app -C "python -m server.admin listdevices"
-fly ssh console -a <app> -u app -C "python -m server.admin revokedevice --id 3"            # one stolen/retired machine
+fly ssh console -a <app> -u app -C "python -m server.admin revokedevice --id 3"            # one lost or stolen machine
+fly ssh console -a <app> -u app -C "python -m server.admin revokedevice --id 3 --no-cascade"   # one replaced machine (§4)
 fly ssh console -a <app> -u app -C "python -m server.admin promote --email dev@example.com" # roles (D20, §4)
 # Break-glass only: a PERMANENT token, printed once (what #20 exists to stop hand-delivering)
 fly ssh console -a <app> -u app -C "python -m server.admin adduser --name dev --email dev@example.com"
@@ -816,7 +817,8 @@ export LOOM_DB=~/.loom-server/loom.db
 .venv/bin/python -m server.admin invite --email dev2@example.test                 # their second machine
 .venv/bin/python -m server.admin listusers
 .venv/bin/python -m server.admin listdevices [--email dev2@example.test]
-.venv/bin/python -m server.admin revokedevice --id 3                              # ONE machine
+.venv/bin/python -m server.admin revokedevice --id 3                              # ONE machine, lost or stolen
+.venv/bin/python -m server.admin revokedevice --id 3 --no-cascade                 # ONE machine, replaced (retire)
 .venv/bin/python -m server.admin deactivate --email dev2@example.test             # the person: every token of theirs
 .venv/bin/python -m server.admin revoke-orphans                                   # once, on the D19 upgrade (§2)
 .venv/bin/python -m server.admin promote --email dev2@example.test                # role admin (D20)
@@ -848,9 +850,10 @@ machines. **Invite** (email, name, role) has `invite`'s semantics — a new emai
 user with that name and role, a known one keeps both and gets a new 24 h code — and shows
 the invitation link once. **Deactivate** and **Change role** have `deactivate`'s and
 `promote`/`demote`'s effects, the last-admin refusal included (`409 last_admin`), and each
-live machine has a **Revoke** button. Every web change records an `auth_events` row naming
-the admin (`user_invited`, `user_deactivated`, `promoted`, `demoted`); a member gets `403`
-on that page.
+live machine has a **Retire** and a **Revoke (lost or stolen)** button (`revokedevice
+--no-cascade` and `revokedevice`; "Retire or revoke" below). Every web change records an
+`auth_events` row naming the admin (`user_invited`, `user_deactivated`, `promoted`,
+`demoted`, `device_retired`, `device_revoked`); a member gets `403` on that page.
 
 **Settings for the web's writes (D20).** Three server settings, read from the environment
 (`fly.toml [env]`; on Compose, the `loom` service's `environment:` in
@@ -885,6 +888,18 @@ tokens issued. A web invitation that someone already redeemed is not followed: t
 it invited keeps their machine. Machines enrolled from an `admin.py invite` name no
 issuer, so revoking another machine never reaches them. The counts `revokedevice` and
 `deactivate` print include the cascade.
+
+**Retire or revoke (D20).** *Retiring* a machine — `revokedevice --id N --no-cascade`, or
+"Retire" in the web — revokes its chain and expires every code its tokens issued that
+nobody redeemed yet, **without** the cascade: a machine added from it keeps working, and
+nothing else is touched. Use it for a machine that was **replaced**, sold or wiped: the
+normal way to replace a laptop is "Add a machine" from the old one, enrol the new one, then
+retire the old one. Use plain `revokedevice` ("Revoke (lost or stolen)" in the web) for a
+machine that was **lost or stolen**: whoever holds it may have added machines from it.
+`--no-cascade` prints `Device token N and its renewal chain retired (<n> token(s); …)`, or
+the same `error:` line and exit 1 when the chain has no live token. Neither form of
+`revokedevice` records an `auth_events` row (of `admin.py`'s commands only `promote` and
+`demote` do); the web's Retire and Revoke record `device_retired` and `device_revoked`.
 
 **An enrolment code sent to the wrong person or channel** is not a reason to `deactivate`
 (that kills the person's working machines). Expire that user's unredeemed codes, then send

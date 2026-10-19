@@ -412,6 +412,19 @@ def revoke_with_cascade(conn: sqlite3.Connection, device_ids: list[int],
     or not, and visits each id once, so it reaches a fixpoint on any data. Joins the
     caller's transaction: it neither begins nor commits one.
     """
+    return _revoke_chains(conn, device_ids, now, cascade=True)
+
+
+def retire_chain(conn: sqlite3.Connection, device_id: int, now: str) -> tuple[int, int]:
+    """**Retire** ``device_id``'s chain (D20, DESIGN §6.4): revoke it and expire every
+    unredeemed code, of any kind, its ids issued, WITHOUT the issuer cascade, so a machine
+    added from it keeps working — a laptop that is replaced rather than lost. Returns
+    ``(tokens revoked, codes expired)``. Joins the caller's transaction."""
+    return _revoke_chains(conn, [device_id], now, cascade=False)
+
+
+def _revoke_chains(conn: sqlite3.Connection, device_ids: list[int], now: str, *,
+                   cascade: bool) -> tuple[int, int]:
     seen: set[int] = set()
     frontier = set(device_ids)
     revoked = expired = 0
@@ -434,6 +447,8 @@ def revoke_with_cascade(conn: sqlite3.Connection, device_ids: list[int],
             f"AND expires_at > ? AND issued_by_device_token_id IN ({marks})",
             (now, now, *ids),
         ).rowcount
+        if not cascade:
+            break
         frontier = {row[0] for row in conn.execute(
             "SELECT device_token_id FROM enrolment_codes WHERE kind = 'setup' "
             "AND redeemed_at IS NOT NULL AND device_token_id IS NOT NULL "
@@ -441,14 +456,18 @@ def revoke_with_cascade(conn: sqlite3.Connection, device_ids: list[int],
     return revoked, expired
 
 
-def revoke(conn: sqlite3.Connection, device_id: int) -> int:
+def revoke(conn: sqlite3.Connection, device_id: int, *, cascade: bool = True) -> int:
     """Revoke the whole chain ``device_id`` belongs to (any id of it), with the issuer
-    cascade; returns how many tokens were still unrevoked — ``0`` when the id is unknown
-    and nothing the cascade reaches is live."""
+    cascade, or retire it (:func:`retire_chain`) when ``cascade`` is false; returns how
+    many tokens were still unrevoked — ``0`` when the id is unknown and nothing the
+    cascade reaches is live."""
     now = _iso(datetime.now(timezone.utc))
     conn.execute("BEGIN IMMEDIATE")
     try:
-        count = revoke_chain(conn, device_id, now)
+        if cascade:
+            count = revoke_chain(conn, device_id, now)
+        else:
+            count = retire_chain(conn, device_id, now)[0]
         conn.commit()
     except BaseException:
         conn.rollback()

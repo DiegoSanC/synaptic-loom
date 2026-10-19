@@ -13,7 +13,7 @@ from server import auth, auth_events, db
 VOCABULARY = {
     "ui_signin": "user", "ui_signout": "user", "setup_code_issued": "user",
     "user_invited": "user", "user_deactivated": "user", "promoted": "user",
-    "demoted": "user", "device_revoked": "device",
+    "demoted": "user", "device_revoked": "device", "device_retired": "device",
 }
 
 

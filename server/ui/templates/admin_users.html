@@ -36,9 +36,13 @@
         {% for m in u.machines %}
           <li><span data-col="device">{{ m.name }}</span> <span class="muted">{{ m.state }}, enrolled {{ m.enrolled[:10] }}, expires {{ m.expires[:10] }}</span>
             {% if m.state == "active" %}
+            <form method="post" action="/ui/devices/{{ m.id }}/retire" class="inline">
+              {{ csrf_field() }}
+              <button type="submit">Retire</button>
+            </form>
             <form method="post" action="/ui/devices/{{ m.id }}/revoke" class="inline">
               {{ csrf_field() }}
-              <button type="submit">Revoke</button>
+              <button type="submit">Revoke (lost or stolen)</button>
             </form>
             {% endif %}
           </li>
@@ -68,5 +72,7 @@
   </tbody>
 </table>
 </div>
+<p class="muted">Retire a machine that was replaced: a machine added from it keeps working.
+Revoke one that was lost or stolen: it also revokes every machine added from it.</p>
 </section>
 {% endblock %}

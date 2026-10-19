@@ -1,14 +1,14 @@
-"""*My machines*, setup codes and the web's revoke (D20, DESIGN §6.4; plan 2026-10-19,
-phase 2 slice 3).
+"""*My machines*, setup codes and the web's revoke and retire (D20, DESIGN §6.4; plan
+2026-10-19, phase 2 slice 3).
 
 Every route is registered on ``ui_pages.router`` when this module is imported (so the
 write registry and the D14 crawl see it) and reached through ``app._ui_session_gate``:
-the page is a signed-in ``GET``, and the two writes are registered with
+the page is a signed-in ``GET``, and the three writes are registered with
 ``ui_pages._write``, so the gate has already checked the public URL, ``Origin``, the CSRF
 token and the session's kind before a handler runs, and each write runs in
 ``ui_pages.write_transaction``, which re-reads the session under the write lock. A machine
 is a renewal chain, the connected component over ``replaced_by`` that
-``auth.revoke_chain`` revokes; any id of it names it.
+``auth.revoke_chain`` revokes and ``auth.retire_chain`` retires; any id of it names it.
 """
 from __future__ import annotations
 
@@ -98,6 +98,17 @@ def issue_setup_code(request: Request):
 def revoke_device(request: Request, device_id: int):
     """Revoke the chain ``device_id`` belongs to, with the issuer cascade: the caller's
     own, or anyone's for an admin; any other id is a 404, unknown or not."""
+    return _end_chain(request, device_id, retire=False)
+
+
+@_write("/ui/devices/{device_id:int}/retire")
+def retire_device(request: Request, device_id: int):
+    """Retire the chain ``device_id`` belongs to — revoke it without the issuer cascade,
+    for a machine that was replaced rather than lost; same rules as revoke."""
+    return _end_chain(request, device_id, retire=True)
+
+
+def _end_chain(request: Request, device_id: int, *, retire: bool):
     if not db.is_row_id(device_id):
         return not_found(request)
     user_id = request.state.user_id
@@ -110,8 +121,13 @@ def revoke_device(request: Request, device_id: int):
             if row is None or (row["user_id"] != user_id
                                and request.state.user_role != "admin"):
                 return not_found(request)
-            if auth.revoke_chain(conn, device_id, db.iso_now()):
-                auth_events.record(conn, actor_user_id=user_id, event="device_revoked",
+            now = db.iso_now()
+            if retire:
+                ended, event = auth.retire_chain(conn, device_id, now)[0], "device_retired"
+            else:
+                ended, event = auth.revoke_chain(conn, device_id, now), "device_revoked"
+            if ended:
+                auth_events.record(conn, actor_user_id=user_id, event=event,
                                    target_type="device", target_id=device_id,
                                    client_ip=request.state.client_ip)
     finally:

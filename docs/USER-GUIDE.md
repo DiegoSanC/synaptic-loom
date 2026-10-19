@@ -292,8 +292,8 @@ machine and its other sessions are untouched.
 | **→ Curation** | Items someone marked stale or not applicable, with who said so; the history of links between items. |
 | **An item** | Its text and state, what replaced it or what it replaced, where it came from (session, model, prompt), and every feedback on it. |
 | **Usage** | The same team totals as `loom stats`, over 7 days, 30 days or all time. |
-| **My machines** | One row per machine you enrolled: when it was enrolled, when it last renewed its token, when that expires, and whether it is live, expired or revoked. "Add a machine" and "Revoke" (below). |
-| **Users** (admins only) | Every user with their role, state, pending invitation and machines: "Invite" (email, name, role) shows an invitation link once; "Change role", "Deactivate" and "Revoke" on any machine. The operator's side of it is `docs/RUNBOOK.md` §4. |
+| **My machines** | One row per machine you enrolled: when it was enrolled, when it last renewed its token, when that expires, and whether it is live, expired or revoked. "Add a machine", "Retire" and "Revoke (lost or stolen)" (below). |
+| **Users** (admins only) | Every user with their role, state, pending invitation and machines: "Invite" (email, name, role) shows an invitation link once; "Change role", "Deactivate", and "Retire" or "Revoke (lost or stolen)" on any machine. The operator's side of it is `docs/RUNBOOK.md` §4. |
 
 The pages carry the same "unverified reference" banner as `loom log`, and browsing is not
 counted as a recall in `loom stats`.
@@ -304,11 +304,21 @@ expires in 10 minutes. On the new machine, install the client and run `loom enro
 [step 3](#3-enrol-this-machine), pasting that link. No operator is involved, so do not
 forward the link: whoever redeems it gets a machine of yours.
 
-**Revoke.** "Revoke" on a live machine's row revokes it at once: its device token and every
-renewal of it stop working, and so does every machine added with a setup code it issued
-(and the machines those added, and so on), together with its setup codes nobody has used
-yet. Revoke a machine you lost, sold or no longer use. Revoking the machine your browser
-session was opened from (marked *this session*) also signs you out.
+**Retire.** "Retire" on a live machine's row stops it at once — its device token and every
+renewal of it — and its setup codes nobody has used yet; a machine added from it keeps
+working. Retire a machine you replaced, sold or no longer use.
+
+**Replacing a laptop.** On the old laptop, `loom ui` → *My machines* → "Add a machine";
+enrol the new laptop with that link; check it works (`loom doctor`); then, from either
+one, "Retire" the old laptop's row. The new laptop keeps working.
+
+**Revoke (lost or stolen).** "Revoke (lost or stolen)" stops the machine the same way and
+also every machine added with a setup code it issued (and the machines those added, and so
+on), since whoever has the machine may have added some. Use it for a machine you lost or
+that was stolen.
+
+Retiring or revoking the machine your browser session was opened from (marked *this
+session*) also signs you out.
 
 > **WSL2:** a stock install has no browser Python can open, so nothing pops up — copy the
 > printed link into your Windows browser within two minutes. To have it open by itself,
@@ -408,5 +418,5 @@ a `jq` filter that strips only Loom's hook and leaves your other settings untouc
 4. `rm -rf ~/.loom` (this also removes the venv).
 
 Uninstalling does not touch your transcripts and does not withdraw entries already posted.
-Revoke this machine when you are done: "Revoke" on *My machines* in `loom ui`, or ask the
-operator (`admin.py revokedevice --id <n>`, RUNBOOK §4).
+Retire this machine when you are done: "Retire" on *My machines* in `loom ui`, or ask the
+operator (`admin.py revokedevice --id <n> --no-cascade`, RUNBOOK §4).

@@ -17,9 +17,13 @@ each row is the token it was enrolled with and every renewal since.</p>
       <td data-col="state">{{ chain.state }}</td>
       <td>
       {% if chain.state == "live" %}
-        <form method="post" action="/ui/devices/{{ chain.id }}/revoke">
+        <form method="post" action="/ui/devices/{{ chain.id }}/retire" class="inline">
         {{ csrf_field() }}
-        <button type="submit">Revoke</button>
+        <button type="submit">Retire</button>
+        </form>
+        <form method="post" action="/ui/devices/{{ chain.id }}/revoke" class="inline">
+        {{ csrf_field() }}
+        <button type="submit">Revoke (lost or stolen)</button>
         </form>
       {% endif %}
       </td>
@@ -30,9 +34,10 @@ each row is the token it was enrolled with and every renewal since.</p>
   </tbody>
 </table>
 </div>
-<p class="muted">Revoking a machine also revokes every machine added with a setup code
-it issued, and so on down; its pending setup codes stop working. Revoking the machine
-this session was opened from signs you out.</p>
+<p class="muted">Retire a machine you replaced: it stops working, and a machine you added
+from it keeps working. Revoke one that was lost or stolen: it also revokes every machine
+added with a setup code it issued, and so on down. Either way its pending setup codes stop
+working, and doing it to the machine this session was opened from signs you out.</p>
 
 <h2>Add a machine</h2>
 <p>Issues a setup code that enrols one more machine as yours. It works once, expires
