@@ -249,10 +249,12 @@ async def _ui_session_gate(request: Request, call_next):
         return _reject_ui(request, "ui_invalid_session")
     if session["expires_at"] <= db.iso_now():
         return _reject_ui(request, "ui_expired_session")
-    if session["device_revoked_at"] is not None:
-        return _reject_ui(request, "ui_revoked_device")
+    # `active` before revocation (D19): `deactivate` also revokes the user's machines, and
+    # the outcome must still name the deactivation.
     if not session["active"]:
         return _reject_ui(request, "ui_deactivated_user")
+    if session["device_revoked_at"] is not None:
+        return _reject_ui(request, "ui_revoked_device")
 
     request.state.user_id = session["user_id"]
     request.state.user_name = session["name"]
@@ -318,6 +320,10 @@ async def auth_middleware(request: Request, call_next):
     cred = await run_in_threadpool(_lookup_credential, token)
     if cred is None:
         return _reject_auth(request, "invalid_token", 401, "Invalid token")
+    # `active` first (D19): `deactivate` also revokes every chain of the user, and the
+    # outcome must still say deactivated_user (403), not revoked_token.
+    if not cred["active"]:
+        return _reject_auth(request, "deactivated_user", 403, "User is deactivated")
     if cred["device_id"] is not None:
         # Distinct outcomes so an operator reading Fly Logs can tell an expiry (the
         # client should have renewed) from a revocation (deliberate) from a typo.
@@ -325,8 +331,6 @@ async def auth_middleware(request: Request, call_next):
             return _reject_auth(request, "revoked_token", 401, "Device token revoked")
         if cred["expires_at"] <= db.iso_now():
             return _reject_auth(request, "expired_token", 401, "Device token expired")
-    if not cred["active"]:
-        return _reject_auth(request, "deactivated_user", 403, "User is deactivated")
 
     request.state.user_id = cred["user_id"]
     request.state.user_name = cred["name"]

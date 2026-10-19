@@ -349,10 +349,50 @@ def revoke(conn: sqlite3.Connection, device_id: int) -> int:
     return count
 
 
+def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
+    """Deactivate the user, revoke every one of their chains and expire their pending
+    enrolment codes, in one transaction (D19 B3). Returns ``(tokens revoked, codes
+    expired)``, or ``None`` when no user has that email.
+
+    Every token of a chain belongs to one user (renew copies ``user_id``), so the user's
+    tokens ARE the user's chains. UI sessions are left alone: the ``active`` join already
+    ends them, and re-activating the row by SQL would bring no machine back.
+    """
+    now = _iso(datetime.now(timezone.utc))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        user = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+        if user is None:
+            conn.rollback()
+            return None
+        conn.execute("UPDATE users SET active = 0 WHERE id = ?", (user["id"],))
+        revoked = conn.execute(
+            "UPDATE device_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+            (now, user["id"]),
+        ).rowcount
+        expired = conn.execute(
+            "UPDATE enrolment_codes SET expires_at = ? "
+            "WHERE user_id = ? AND redeemed_at IS NULL AND expires_at > ?",
+            (now, user["id"], now),
+        ).rowcount
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return revoked, expired
+
+
 def list_devices(conn: sqlite3.Connection, email: str | None = None) -> list[sqlite3.Row]:
+    """One row per token; ``chain`` is the id of the token its chain started from."""
     sql = (
+        "WITH RECURSIVE line(id, root) AS ("
+        " SELECT id, id FROM device_tokens WHERE id NOT IN"
+        " (SELECT replaced_by FROM device_tokens WHERE replaced_by IS NOT NULL)"
+        " UNION SELECT d.replaced_by, l.root FROM device_tokens d JOIN line l ON d.id = l.id"
+        " WHERE d.replaced_by IS NOT NULL) "
         "SELECT d.id, u.email, d.device_name, d.issued_at, d.expires_at, d.revoked_at, "
-        "d.replaced_by FROM device_tokens d JOIN users u ON u.id = d.user_id"
+        "d.replaced_by, l.root AS chain FROM device_tokens d JOIN users u ON u.id = d.user_id "
+        "JOIN line l ON l.id = d.id"
     )
     params: tuple = ()
     if email is not None:

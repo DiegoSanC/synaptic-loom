@@ -51,12 +51,15 @@ def _adduser(args: argparse.Namespace) -> int:
 def _deactivate(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
-        cur = conn.execute("UPDATE users SET active = 0 WHERE email = ?", (args.email,))
-        conn.commit()
-        if cur.rowcount == 0:
+        result = auth.deactivate(conn, args.email)
+        if result is None:
             print(f"error: no user with email {args.email!r}", file=sys.stderr)
             return 1
-        print(f"User {args.email} deactivated (their token is now revoked).")
+        revoked, expired = result
+        print(f"User {args.email} deactivated: {revoked} device token(s) revoked, "
+              f"{expired} pending enrolment code(s) expired.")
+        print("  A permanent (adduser) token of theirs is refused while they stay deactivated. "
+              "There is no reactivate: a returning person is re-created with a new email.")
         return 0
     finally:
         conn.close()
@@ -112,10 +115,11 @@ def _listdevices(args: argparse.Namespace) -> int:
         if not rows:
             print("(no devices)")
             return 0
-        print(f"{'id':>3}  {'state':<8}  {'email':<30}  {'device':<20}  issued_at             expires_at")
+        print(f"{'id':>3}  {'state':<8}  {'email':<30}  {'device':<20}  issued_at             "
+              f"expires_at            chain")
         for r in rows:
             print(f"{r['id']:>3}  {auth.device_state(r):<8}  {r['email']:<30}  "
-                  f"{r['device_name']:<20}  {r['issued_at']}  {r['expires_at']}")
+                  f"{r['device_name']:<20}  {r['issued_at']}  {r['expires_at']}  {r['chain']:>5}")
         return 0
     finally:
         conn.close()
@@ -165,7 +169,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_add.add_argument("--email", required=True)
     p_add.set_defaults(func=_adduser)
 
-    p_deact = sub.add_parser("deactivate", help="deactivate (revoke) a user by email")
+    p_deact = sub.add_parser("deactivate", help="deactivate a user: revoke their machines, expire their pending codes")
     p_deact.add_argument("--email", required=True)
     p_deact.set_defaults(func=_deactivate)
 

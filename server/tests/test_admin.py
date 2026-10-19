@@ -1,6 +1,7 @@
 """Tests for the administration CLI (server/admin.py)."""
 import json
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -144,3 +145,112 @@ def test_compose_gives_the_server_its_public_url_from_the_domain(tmp_path):
     assert done.returncode == 0, done.stderr
     server_env = json.loads(done.stdout)["services"]["loom"]["environment"]
     assert server_env["LOOM_PUBLIC_URL"] == "https://loom.example.com"
+# Machines: renewal chains in listdevices, a truthful deactivate (D19)         #
+# --------------------------------------------------------------------------- #
+CODE_LINE = re.compile(r"^\s+([A-Za-z0-9_-]{32,})$")
+
+
+def _invite_code(capsys, email, name=None) -> str:
+    argv = ["invite", "--email", email] + (["--name", name] if name else [])
+    assert admin.main(argv) == 0
+    return next(m.group(1) for line in capsys.readouterr().out.splitlines()
+                if (m := CODE_LINE.match(line)))
+
+
+def _enroll(client, code, device_name) -> str:
+    r = client.post("/api/enroll", json={"code": code, "device_name": device_name})
+    assert r.status_code == 201, r.text
+    return r.json()["token"]
+
+
+def _renew(client, token) -> str:
+    r = client.post("/api/device-tokens/renew", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 201, r.text
+    return r.json()["token"]
+
+
+def _get(client, token):
+    return client.get("/api/projects", headers={"Authorization": f"Bearer {token}"})
+
+
+def _query(env, sql, *params):
+    conn = db.connect(env)
+    try:
+        return conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()
+
+
+def test_listdevices_keeps_one_row_per_token_and_names_each_chain_by_its_root(client, env, capsys):
+    laptop = _enroll(client, _invite_code(capsys, "dev2@x.com", "dev2"), "laptop")   # id 1
+    _renew(client, _renew(client, laptop))                                     # ids 2, 3
+    _enroll(client, _invite_code(capsys, "dev2@x.com"), "desk")                     # id 4
+    capsys.readouterr()
+
+    assert admin.main(["listdevices"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+
+    assert lines[0].split()[-1] == "chain"
+    rows = [line.split() for line in lines[1:]]
+    # id, state, email, device, issued_at, expires_at, chain
+    assert [(r[0], r[1], r[3], r[-1]) for r in rows] == [
+        ("1", "replaced", "laptop", "1"),
+        ("2", "replaced", "laptop", "1"),
+        ("3", "active", "laptop", "1"),
+        ("4", "active", "desk", "4"),
+    ]
+
+
+def test_deactivate_revokes_every_chain_and_expires_pending_codes_and_says_so(client, env, capsys):
+    laptop = _enroll(client, _invite_code(capsys, "dev2@x.com", "dev2"), "laptop")
+    laptop2 = _renew(client, laptop)
+    desk = _enroll(client, _invite_code(capsys, "dev2@x.com"), "desk")
+    pending = [_invite_code(capsys, "dev2@x.com"), _invite_code(capsys, "dev2@x.com")]
+    other = _enroll(client, _invite_code(capsys, "dev3@x.com", "dev3"), "theirs")
+    other_pending = _invite_code(capsys, "dev3@x.com")
+
+    assert admin.main(["deactivate", "--email", "dev2@x.com"]) == 0
+    out = capsys.readouterr().out
+
+    assert "dev2@x.com deactivated" in out
+    assert "3 device token(s) revoked" in out
+    assert "2 pending enrolment code(s) expired" in out
+    assert "token is now revoked" not in out  # the pre-D19 claim, false for legacy tokens
+
+    now = db.iso_now()
+    dev2_tokens = _query(env, "SELECT revoked_at FROM device_tokens d JOIN users u ON u.id = d.user_id "
+                              "WHERE u.email = 'dev2@x.com'")
+    assert len(dev2_tokens) == 3 and all(r["revoked_at"] is not None for r in dev2_tokens)
+    for code in pending:
+        row = _query(env, "SELECT expires_at FROM enrolment_codes WHERE code_hash = ?", db.hash_token(code))[0]
+        assert row["expires_at"] <= now
+
+    # Revoked, not merely blocked: re-activating the row by SQL (there is no `reactivate`)
+    # brings no machine and no pending code back.
+    conn = db.connect(env)
+    try:
+        conn.execute("UPDATE users SET active = 1 WHERE email = 'dev2@x.com'")
+        conn.commit()
+    finally:
+        conn.close()
+    assert [_get(client, t).status_code for t in (laptop, laptop2, desk)] == [401, 401, 401]
+    for code in pending:
+        assert client.post("/api/enroll", json={"code": code, "device_name": "x"}).status_code == 401
+
+    # Nobody else is touched.
+    assert _get(client, other).status_code == 200
+    assert client.post("/api/enroll", json={"code": other_pending, "device_name": "y"}).status_code == 201
+
+
+def test_deactivate_refuses_the_legacy_token_too(client, env, capsys):
+    admin.main(["adduser", "--name", "legacy", "--email", "legacy@x.com"])
+    token = next(line.strip() for line in capsys.readouterr().out.splitlines()
+                 if CODE_LINE.match(line))
+    assert _get(client, token).status_code == 200
+
+    assert admin.main(["deactivate", "--email", "legacy@x.com"]) == 0
+    out = capsys.readouterr().out
+
+    assert "0 device token(s) revoked" in out
+    r = _get(client, token)
+    assert r.status_code == 403 and r.json()["error"] == "forbidden"
