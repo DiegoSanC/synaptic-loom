@@ -77,8 +77,8 @@ operating on a single developer machine since 2026-07-24 (see `docs/RUNBOOK.md`)
   RUNBOOK §7. Gate outcome CONDITIONS phase 3 (spec §6).
 - **Phase 2/3 spec consolidated for review:** `docs/PHASE-2-3-SPEC.md` (DRAFT v1,
   requirements R2.1–R2.4 / R3.1–R3.6 with ACs, frozen phase-1 contracts, open
-  questions Q-2.1…Q-3.8). Spanish companion with worked examples:
-  `docs/PHASE-2-3-EXPLAINED.es.md`.
+  questions Q-2.1…Q-3.8). Companion with worked examples:
+  `docs/PHASE-2-3-EXPLAINED.md`.
 - **Assessed buildability (2026-07-30):** phase 2 is implementable as specced.
   Phase 3 is NOT yet: blocked on Q-3.1 (exposure mechanism / who owns the VM),
   Q-3.4 (admin model → schema change), Q-3.5 (supersession mechanism), the gate
@@ -118,5 +118,5 @@ operating on a single developer machine since 2026-07-24 (see `docs/RUNBOOK.md`)
 | `docs/RUNBOOK.md` | Operating the deployed pilot: start/stop/backup/users/onboarding/troubleshooting |
 | `docs/PHASE-2-3-SPEC.md` | Phase 2/3 requirements under review (the gap-analysis input) |
 | `docs/IMPORTED-IMPROVEMENTS-SPEC.md` | Improvements adapted from TencentDB-Agent-Memory (Block T: FTS5 search, typed items, supersession links, digest — implements R3.4/Q-3.5) and mem0-local (Block M: ambient recall — DEFERRED pending owner deliberation). Input for two future build runs |
-| `docs/PHASE-2-3-EXPLAINED.es.md` | Spanish companion: each requirement explained with worked examples |
+| `docs/PHASE-2-3-EXPLAINED.md` | Companion to the spec: each requirement explained with worked examples |
 | `docs/PROJECT-STATUS.md` | This file |
