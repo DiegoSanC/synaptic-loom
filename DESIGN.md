@@ -377,7 +377,7 @@ the 2026-09-23 plan, below).
 | GET | `/api/stats?since=<ISO>` | Team totals: recalls by source, feedback by verdict, the ten items the most people found useful. No per-person field — slice F, below |
 | POST | `/api/paths` | Associate a local path with a project (fallback / discovery) — **phase 3**; in phase 1 the path fallback goes through `POST /api/projects` (PLAN §3) |
 | GET | `/api/health` | Basic monitoring |
-| POST | `/api/enroll` | **Anonymous.** Redeem a single-use enrolment code for this machine's device token. `401 invalid_code` for unknown, expired, redeemed or deactivated-user codes alike |
+| POST | `/api/enroll` | **Anonymous.** Redeem a single-use enrolment code for this machine's device token. `401 invalid_code` for unknown, expired, redeemed or deactivated-user codes alike. Optional header `Authorization: Bearer <old>` (D19 B2): the token the machine is replacing; never a body field |
 | POST | `/api/device-tokens/renew` | Mint the calling device token's successor (`403 not_a_device_token` for a legacy token) |
 | POST | `/api/ui-login` | Mint a single-use, 120 s login code for the caller's browser: `201 {code, expires_at}` (D14, §6.3) |
 | POST | `/ui/session` | **Anonymous.** Redeem a login code for the `loom_ui` session cookie: `204` · `401 invalid_code` for unknown, expired, redeemed, deactivated-user or revoked-device codes alike (D14) |
@@ -505,6 +505,16 @@ travels is short-lived and single-use, and the secret that persists never travel
   of a chain revokes the whole chain** (`revokedevice`, `deactivate`). A thief who renews
   a stolen old token therefore kills the real machine's successor: that machine gets a
   loud 401, and revoking it revokes the thief's token with the rest.
+- **Re-enrolment (D19 B2).** `loom enroll` on a machine whose `config.json` holds a token
+  for the **same** `server_url` sends it as `Authorization: Bearer <old>` on
+  `POST /api/enroll`: proof of possession, never an id and never a body field. Inside the
+  redemption's transaction, when that bearer is a live **device** token of the **code's
+  own user**, its whole chain is revoked, so the replaced token stops working at once
+  instead of living out its 90 days. Any other value — unknown, revoked, expired, another
+  user's, a permanent `adduser` token, a header that is not a bearer — changes nothing,
+  is not a failed authentication (no `401`, no `422`, not counted by the limiter) and
+  leaves the response unchanged. A server without B2 ignores the header: the middleware
+  never reads it on a redemption path. Enrolling with another server sends no header.
 - **Loud 401.** A credential the server refuses on an unattended path is recorded in
   `<LOOM_HOME>/auth_rejected.json` and surfaced by `loom status`, `loom doctor` and the
   hint on every CLI server error, because with expiring credentials a 401 is a normal

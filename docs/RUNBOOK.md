@@ -849,6 +849,15 @@ Send the enrolment code through the team's channel; it is useless once redeemed 
 after its TTL. Device tokens live 90 days and renew themselves while the machine keeps
 running passes; a machine idle for longer than that re-enrols with a fresh invitation.
 
+**Re-enrolling a machine** (a reinstall, a token rejected after a long idle) is a fresh
+`invite` for the same email and `loom enroll` on that machine. When the machine re-enrols
+with the **same server** it already uses, the client sends its current token along and
+the server revokes that token's whole chain (D19 B2): `listdevices` then shows the old
+chain `revoked` and the new token `active`, with nothing to run. Only a live device token of the invited person counts: a machine
+moving from another server, one whose `config.json` is gone, or a laptop handed to
+someone else (invited under their own email) leaves the old chain alive, so revoke it
+with `revokedevice --id` as above.
+
 ---
 
 ## 5. Onboarding another dev machine

@@ -107,6 +107,13 @@ With `--server-url`, a pasted link must point at that same server, or enrolment 
 `loom init` (a permanent token at a hidden prompt) remains the break-glass form of this
 step. `loom doctor` flags such a token and tells you to re-enrol.
 
+**Re-enrolling this machine.** Ask the operator for a new invitation and run
+`loom enroll` again, exactly as above; every other setting in `~/.loom/config.json` is
+kept. When the server is the one this machine already uses, `loom enroll` sends the old
+device token along and the server revokes it, so the token you replaced stops working at
+once. Moving the machine to another server sends nothing to the new one: ask the old
+server's operator to revoke this machine.
+
 ### 4. Check the environment
 
 ```bash
