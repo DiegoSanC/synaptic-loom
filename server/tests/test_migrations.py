@@ -63,6 +63,7 @@ def test_the_golden_database_predates_d20(tmp_path):
     path = _pre_d20(tmp_path)
     assert "role" not in _columns(path, "users")
     assert "kind" not in _columns(path, "ui_sessions")
+    assert "kind" not in _columns(path, "enrolment_codes")
     assert _rows(path)["users"][1], "the golden database must hold rows to keep"
 
 
@@ -80,6 +81,9 @@ def test_a_pre_d20_database_migrates_and_keeps_every_row(tmp_path):
         assert conn.execute("SELECT id, role FROM users ORDER BY id").fetchall() == [
             (1, "member"), (2, "member"), (3, "member")]
         assert conn.execute("SELECT id, kind FROM ui_sessions").fetchall() == [(1, "cli")]
+        codes = conn.execute("SELECT kind, created_by_user_id, issued_by_device_token_id "
+                             "FROM enrolment_codes").fetchall()
+        assert codes and set(codes) == {("invite", None, None)}
         assert conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
     finally:
@@ -101,11 +105,20 @@ def test_the_new_columns_carry_the_section_6_4_definitions(tmp_path):
     try:
         role = {r[1]: r for r in conn.execute("PRAGMA table_info(users)")}["role"]
         kind = {r[1]: r for r in conn.execute("PRAGMA table_info(ui_sessions)")}["kind"]
+        codes = {r[1]: r for r in conn.execute("PRAGMA table_info(enrolment_codes)")}
+        issuer_index = conn.execute("PRAGMA index_info(idx_enrolment_codes_issuer)").fetchall()
+        fks = {(r[3], r[2], r[4]) for r in conn.execute("PRAGMA foreign_key_list(enrolment_codes)")}
     finally:
         conn.close()
     # (cid, name, type, notnull, dflt_value, pk)
     assert role[2:5] == ("TEXT", 1, "'member'")
     assert kind[2:5] == ("TEXT", 1, "'cli'")
+    assert codes["kind"][2:5] == ("TEXT", 1, "'invite'")
+    assert codes["created_by_user_id"][2:5] == ("INTEGER", 0, None)
+    assert codes["issued_by_device_token_id"][2:5] == ("INTEGER", 0, None)
+    assert [r[2] for r in issuer_index] == ["issued_by_device_token_id"]
+    assert ("created_by_user_id", "users", "id") in fks
+    assert ("issued_by_device_token_id", "device_tokens", "id") in fks
 
 
 def test_init_db_on_a_migrated_database_changes_nothing(tmp_path):

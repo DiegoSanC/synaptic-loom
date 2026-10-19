@@ -554,3 +554,26 @@ def test_a_refused_sign_in_or_sign_out_records_no_event(env, browser):
     assert _signout(browser, csrf="0" * 64).status_code == 403
     assert len(_events(env, "ui_signin")) == 1        # the fixture's own sign-in only
     assert _events(env, "ui_signout") == []
+
+
+def _set_role(env, user_id: int, role: str) -> None:
+    conn = db.connect(env)
+    try:
+        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_the_navigation_offers_my_machines_to_everyone_and_admin_only_to_admins(env, dev1):
+    """§6.4's pages, reached from the shell; the role is read on every request."""
+    browser = _browser(dev1)
+    page = browser.get("/ui/").text
+    assert 'href="/ui/machines"' in page
+    assert 'href="/ui/admin/users"' not in page
+
+    _set_role(env, dev1["id"], "admin")
+    assert 'href="/ui/admin/users"' in browser.get("/ui/").text   # same session, next click
+
+    _set_role(env, dev1["id"], "member")
+    assert 'href="/ui/admin/users"' not in browser.get("/ui/").text

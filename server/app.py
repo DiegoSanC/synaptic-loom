@@ -289,6 +289,8 @@ async def _ui_session_gate(request: Request, call_next):
     request.state.user_id = session["user_id"]
     request.state.user_name = session["name"]
     request.state.ui_session_id = session["ui_session_id"]
+    request.state.user_role = session["role"]
+    request.state.ui_device_token_id = session["device_token_id"]
     request.state.csrf = ui_auth.csrf_token(cookie)
     request.state.client_ip = _client_ip(request)
     if write:

@@ -84,6 +84,7 @@ def render(name: str, request: Request | None, *, status: int = 200,
     state = request.state if request is not None else None
     return HTMLResponse(
         _ENV.get_template(name).render(user=getattr(state, "user_name", None),
+                                       role=getattr(state, "user_role", None),
                                        csrf=getattr(state, "csrf", None), **context),
         status_code=status)
 

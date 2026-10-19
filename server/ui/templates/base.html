@@ -11,7 +11,7 @@
 <header class="top">
   <a class="brand" href="/ui/">Loom</a>
   {% if user %}
-  <nav><a href="/ui/">Projects</a><a href="/ui/usage">Usage</a></nav>
+  <nav><a href="/ui/">Projects</a><a href="/ui/usage">Usage</a><a href="/ui/machines">My machines</a>{% if role == "admin" %}<a href="/ui/admin/users">Users</a>{% endif %}</nav>
   <span class="who">Signed in as {{ user }}</span>
   <form method="post" action="/ui/signout" class="signout">
   {{ csrf_field() }}

@@ -63,6 +63,16 @@ _ENROLMENT_CODES_DDL = (
 # D20 (DESIGN §6.4): `admin` or `member`, validated in code, never by a CHECK.
 ROLES = ("admin", "member")
 USERS_ROLE_DDL = "TEXT NOT NULL DEFAULT 'member'"
+# D20 setup codes and the issuer cascade (DESIGN §6.4).
+ENROLMENT_CODE_COLUMNS = (
+    ("kind", "TEXT NOT NULL DEFAULT 'invite'"),
+    ("created_by_user_id", "INTEGER REFERENCES users(id)"),
+    ("issued_by_device_token_id", "INTEGER REFERENCES device_tokens(id)"),
+)
+_ENROLMENT_CODES_ISSUER_INDEX_DDL = (
+    "CREATE INDEX IF NOT EXISTS idx_enrolment_codes_issuer "
+    "ON enrolment_codes(issued_by_device_token_id)"
+)
 _OBJECT_NAMES = ("device_tokens", "idx_device_tokens_user", "idx_device_tokens_replaced_by",
                  "enrolment_codes")
 
@@ -71,8 +81,9 @@ _TTL_UNIT_S = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 def ensure_auth_schema(conn: sqlite3.Connection) -> None:
-    """Idempotent: ``device_tokens`` (+ user and ``replaced_by`` indexes), ``enrolment_codes``
-    and ``users.role`` (D20, through ``db.ensure_column``).
+    """Idempotent: ``device_tokens`` (+ user and ``replaced_by`` indexes), ``enrolment_codes``,
+    and D20's ``users.role`` and ``enrolment_codes`` columns (through ``db.ensure_column``)
+    with the issuer index.
 
     Presence check first (a migrated database costs one read and no write lock), pure
     DDL with nothing to backfill, and — like ``links.ensure_links_schema`` — it never
@@ -98,6 +109,11 @@ def ensure_auth_schema(conn: sqlite3.Connection) -> None:
             conn.commit()
     # D20: `users` is schema.sql's, so its migration lives with the accounts module.
     db.ensure_column(conn, "users", "role", USERS_ROLE_DDL)
+    for column, definition in ENROLMENT_CODE_COLUMNS:
+        db.ensure_column(conn, "enrolment_codes", column, definition)
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'idx_enrolment_codes_issuer'"
+                    ).fetchone() is None:
+        conn.execute(_ENROLMENT_CODES_ISSUER_INDEX_DDL)
 
 
 # --------------------------------------------------------------------------- #
@@ -141,20 +157,31 @@ def _window(ttl_s: int) -> tuple[str, str]:
 # --------------------------------------------------------------------------- #
 # Invitations                                                                  #
 # --------------------------------------------------------------------------- #
-def create_invitation(conn: sqlite3.Connection, user_id: int, ttl_s: int) -> tuple[str, str]:
+ENROLMENT_CODE_KINDS = ("invite", "setup")
+
+
+def create_invitation(conn: sqlite3.Connection, user_id: int, ttl_s: int, *,
+                      kind: str = "invite", created_by_user_id: int | None = None,
+                      issued_by_device_token_id: int | None = None) -> tuple[str, str]:
     """Insert one enrolment code for ``user_id``; returns ``(code, expires_at)``.
+
+    ``kind`` is ``invite`` or ``setup`` (D20); a code issued from the web names who issued it
+    and the device token of the issuing session, which the issuer cascade follows.
 
     The plaintext code is returned to be printed ONCE by the admin CLI; only its hash is
     stored. The caller commits.
     """
     from server import db  # function-level: server.db imports this module
 
+    if kind not in ENROLMENT_CODE_KINDS:
+        raise ValueError(f"unknown enrolment code kind: {kind!r}")
     code = secrets.token_urlsafe(32)
     created_at, expires_at = _window(ttl_s)
     conn.execute(
-        "INSERT INTO enrolment_codes (user_id, code_hash, created_at, expires_at) "
-        "VALUES (?, ?, ?, ?)",
-        (user_id, db.hash_token(code), created_at, expires_at),
+        "INSERT INTO enrolment_codes (user_id, code_hash, created_at, expires_at, kind, "
+        "created_by_user_id, issued_by_device_token_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (user_id, db.hash_token(code), created_at, expires_at, kind, created_by_user_id,
+         issued_by_device_token_id),
     )
     return code, expires_at
 

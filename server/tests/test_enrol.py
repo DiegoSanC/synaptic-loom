@@ -847,3 +847,31 @@ def test_a_header_that_proves_nothing_never_fails_the_enrolment_nor_counts(clien
     # Nine failures before, none for the header: the tenth is still a 401, the eleventh 429.
     assert _enroll(client, "wrong-code-wrong-code-wrong-code-000", **ip).status_code == 401
     assert _enroll(client, "wrong-code-wrong-code-wrong-code-000", **ip).status_code == 429
+
+
+def test_an_enrolment_code_records_its_kind_and_issuer(env):
+    """D20 §6.4: `kind`, `created_by_user_id` and `issued_by_device_token_id` are stored as
+    given; `admin.py`'s codes keep the defaults (`invite`, no issuer)."""
+    import secrets
+
+    from server import auth
+
+    conn = db.connect(env)
+    try:
+        user_id = conn.execute(
+            "INSERT INTO users (name, email, token_hash, active, created_at) VALUES (?, ?, ?, 1, ?)",
+            ("dev3", "dev3@example.test", db.hash_token(secrets.token_urlsafe(32)), db.iso_now()),
+        ).lastrowid
+        first, _ = auth.create_invitation(conn, user_id, 3600)
+        conn.commit()
+        device_id = auth.redeem(conn, first, "mac-1")["device_token_id"]
+        auth.create_invitation(conn, user_id, 600, kind="setup", created_by_user_id=user_id,
+                               issued_by_device_token_id=device_id)
+        conn.commit()
+        rows = conn.execute("SELECT kind, created_by_user_id, issued_by_device_token_id "
+                            "FROM enrolment_codes ORDER BY id").fetchall()
+        assert [tuple(r) for r in rows] == [("invite", None, None), ("setup", user_id, device_id)]
+        with pytest.raises(ValueError):
+            auth.create_invitation(conn, user_id, 600, kind="api_key")
+    finally:
+        conn.close()
