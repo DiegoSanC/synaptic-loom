@@ -2287,7 +2287,13 @@ def cmd_enroll(args: argparse.Namespace) -> int:
 
     device_name = args.device_name or default_device_name()
 
-    api = ApiClient(server_url, "")
+    # D19 B2: re-enrolling with the server that issued the current token sends it as the
+    # bearer, so the server revokes its chain. Another server never sees it.
+    old_token = existing.get("token")
+    if not (isinstance(old_token, str) and old_token
+            and _origin_key(str(existing.get("server_url", ""))) == _origin_key(server_url)):
+        old_token = ""
+    api = ApiClient(server_url, old_token)
     try:
         resp = api.enroll(code, device_name)
     except ServerUnreachable as exc:

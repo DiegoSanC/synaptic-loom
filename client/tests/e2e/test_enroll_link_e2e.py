@@ -7,7 +7,8 @@ plain HTTP GET of ``/ui/join`` (what the browser does with that link: the fragme
 the code, is never sent); the real ``loom enroll`` on a PSEUDO-TERMINAL, so ``getpass``
 reads from its ``/dev/tty`` with echo off exactly as on a person's machine, the link is
 pasted at the hidden prompt and the host question answered y; then the real
-``loom register`` in a repo, and an authenticated call that answers 200.
+``loom register`` in a repo, and an authenticated call that answers 200. A second link
+re-enrols the same machine, and the token it replaces answers 401 from then on (B2).
 
 The refusal test runs ``loom enroll`` in a NEW SESSION without a terminal, so ``getpass``
 falls back to stdin: it only needs the pasted value, never a prompt answered in order.
@@ -151,6 +152,21 @@ def test_the_invite_link_opens_the_join_page_enrols_on_a_terminal_and_registers(
     projects = listed.json()["projects"]
     assert [p["created_by"] for p in projects] == ["linked"]
     assert projects[0]["canonical_remote"] == "github.com/example-group/phase2-e2e"
+
+    # --- Re-enrolling the same machine with the same server (B2): no host question, and
+    # the token it replaces stops working at once instead of living out its 90 days. --
+    again = _admin(live_server.db, "invite", "--email", "link@example.test", "--ttl", "1h")
+    relink = next(line for line in again.stdout.splitlines() if "/ui/join" in line)
+    term = _Terminal(home, "enroll", "--device-name", "link-mac")
+    term.answer("invitation link", relink)
+    assert term.finish() == 0, term.screen
+    assert "[y/N]" not in term.screen
+    renewed = _config(home)["token"]
+    assert renewed != cfg["token"]
+    statuses = [requests.get(f"{live_server.url}/api/projects", timeout=10,
+                             headers={"Authorization": f"Bearer {t}"}).status_code
+                for t in (cfg["token"], renewed)]
+    assert statuses == [401, 200]
 
 
 def test_a_link_that_contradicts_server_url_never_reaches_the_server(tmp_path, live_server):

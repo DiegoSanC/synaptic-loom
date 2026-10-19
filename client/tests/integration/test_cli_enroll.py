@@ -572,3 +572,69 @@ def test_enroll_bare_code_without_server_url_still_asks_for_the_url(monkeypatch,
     assert prompts and len(asked) == 1 and "URL" in asked[0]
     assert seen == [{"code": CODE, "device_name": "m"}]
     assert CODE not in capsys.readouterr().out
+
+
+# --- D19 B2: re-enrolling sends the old token as the bearer, for the SAME server only ----
+# Proof of possession: the server revokes that token's chain when it is the code's user's.
+# It travels as `Authorization: Bearer`, never in the body (`EnrolRequest` forbids extra
+# fields) and never to another server: a token is only ever shown to the server that
+# issued it.
+def _mock_seeing_headers(httpserver):
+    seen = []
+    httpserver.expect_request("/api/health", method="GET").respond_with_json(
+        {"status": "ok", "version": "0.1.0"})
+
+    def handler(request):
+        seen.append({"authorization": request.headers.get("Authorization"),
+                     "body": request.get_json()})
+        return Response(json.dumps(ENROL_BODY), status=201, content_type="application/json")
+
+    httpserver.expect_request("/api/enroll", method="POST").respond_with_handler(handler)
+    return seen
+
+
+@pytest.mark.parametrize("pasted", ["code", "link"])
+def test_re_enrolling_with_the_same_server_sends_the_old_token_as_the_bearer(
+        monkeypatch, tmp_path, httpserver, pasted):
+    home = tmp_path / "loom_home"
+    _existing_config(home, httpserver.url_for(""))  # trailing slash: still the same server
+    monkeypatch.setenv("LOOM_HOME", str(home))
+    seen = _mock_seeing_headers(httpserver)
+    if pasted == "code":
+        _hidden_prompt(monkeypatch)
+        argv = ["enroll", "--server-url", _origin(httpserver), "--device-name", "m"]
+    else:
+        _hidden_prompt(monkeypatch, code=_link(_origin(httpserver)))
+        argv = ["enroll", "--device-name", "m"]
+
+    assert cli.main(argv) == 0
+
+    assert seen == [{"authorization": "Bearer old-token",
+                     "body": {"code": CODE, "device_name": "m"}}]
+    data = json.loads((home / "config.json").read_text(encoding="utf-8"))
+    assert data["token"] == ENROL_BODY["token"]
+
+
+def test_enrolling_with_another_server_never_sends_the_old_token(monkeypatch, tmp_path,
+                                                                httpserver):
+    home = tmp_path / "loom_home"
+    _existing_config(home, "https://old-loom.example.test")
+    monkeypatch.setenv("LOOM_HOME", str(home))
+    seen = _mock_seeing_headers(httpserver)
+    _hidden_prompt(monkeypatch)
+
+    assert cli.main(["enroll", "--server-url", _origin(httpserver), "--device-name", "m"]) == 0
+
+    assert seen == [{"authorization": None, "body": {"code": CODE, "device_name": "m"}}]
+    assert all("old-token" not in str(dict(req.headers)) for req, _ in httpserver.log)
+
+
+def test_a_first_enrolment_sends_no_bearer(monkeypatch, tmp_path, httpserver):
+    home = tmp_path / "loom_home"
+    monkeypatch.setenv("LOOM_HOME", str(home))
+    seen = _mock_seeing_headers(httpserver)
+    _hidden_prompt(monkeypatch)
+
+    assert cli.main(["enroll", "--server-url", _origin(httpserver), "--device-name", "m"]) == 0
+
+    assert seen == [{"authorization": None, "body": {"code": CODE, "device_name": "m"}}]
