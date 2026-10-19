@@ -72,13 +72,13 @@ def read_delta(path: Path, last_line: int) -> dict:
             try:
                 obj = json.loads(raw)
             except json.JSONDecodeError as exc:
-                raise ValueError(f"línea {idx} no parsea JSON: {exc}")
+                raise ValueError(f"line {idx} does not parse as JSON: {exc}")
             typ = obj.get("type")
             if typ not in CONVERSATIONAL:
                 skipped += 1
                 continue
             if "uuid" not in obj or "message" not in obj:
-                raise ValueError(f"línea {idx} ({typ}) sin uuid/message")
+                raise ValueError(f"line {idx} ({typ}) has no uuid/message")
             msg = obj["message"]
             role = msg.get("role")
             content = msg.get("content")
@@ -124,14 +124,14 @@ def run_cli(args: list[str], stdin: str | None = None) -> subprocess.CompletedPr
 # --- Assertion 1: version -------------------------------------------------------
 
 def assert_version() -> None:
-    print("Aserción 1: claude --version vs contract/VERSION")
+    print("Assertion 1: claude --version vs contract/VERSION")
     if SKIP_LIVE:
-        warn("LOOM_SKIP_LIVE=1 → salto la ejecución del CLI")
+        warn("LOOM_SKIP_LIVE=1 → skipping the CLI run")
         return
     try:
         cp = run_cli(["--version"])
     except Exception as exc:  # noqa: BLE001
-        fail(f"no se pudo ejecutar `claude --version`: {exc}")
+        fail(f"could not run `claude --version`: {exc}")
         return
     live = cp.stdout.strip()
     if cp.returncode != 0 or not live:
@@ -141,65 +141,65 @@ def assert_version() -> None:
     if VERSION_FILE.exists():
         pinned = VERSION_FILE.read_text(encoding="utf-8").strip()
         if pinned != live:
-            warn(f"versión difiere del contrato: fijada={pinned!r} viva={live!r} "
-                 "(WARN por diseño, no fallo)")
+            warn(f"version differs from the contract: pinned={pinned!r} live={live!r} "
+                 "(WARN by design, not a failure)")
         else:
-            ok("coincide con la versión fijada")
+            ok("matches the pinned version")
     else:
-        warn("no existe contract/VERSION")
+        warn("contract/VERSION does not exist")
 
 
 # --- Assertion 2: synthetic headless session -----------------------------------
 
 def assert_headless_ok() -> None:
-    print("Aserción 2: headless dice LOOM_CONTRACT_OK (--safe-mode --tools '')")
+    print("Assertion 2: headless says LOOM_CONTRACT_OK (--safe-mode --tools '')")
     if SKIP_LIVE:
-        warn("LOOM_SKIP_LIVE=1 → salto")
+        warn("LOOM_SKIP_LIVE=1 → skipping")
         return
     try:
         cp = run_cli(["-p", "--safe-mode", "--tools", "", "--output-format", "text",
-                      "Di exactamente: LOOM_CONTRACT_OK"], stdin="")
+                      "Say exactly: LOOM_CONTRACT_OK"], stdin="")
     except Exception as exc:  # noqa: BLE001
-        fail(f"error ejecutando headless: {exc}")
+        fail(f"error running headless: {exc}")
         return
     if cp.returncode != 0:
         fail(f"exit={cp.returncode} stderr={cp.stderr.strip()[:200]!r}")
         return
     if "LOOM_CONTRACT_OK" in cp.stdout:
-        ok("stdout contiene LOOM_CONTRACT_OK")
+        ok("stdout contains LOOM_CONTRACT_OK")
     else:
-        fail(f"stdout no contiene el marcador: {cp.stdout.strip()[:200]!r}")
+        fail(f"stdout does not contain the marker: {cp.stdout.strip()[:200]!r}")
 
 
 # --- Assertion 3: stdin ---------------------------------------------------------
 
 def assert_stdin() -> None:
-    print("Aserción 3: stdin se propaga al modelo (token XYZ)")
+    print("Assertion 3: stdin reaches the model (token XYZ)")
     if SKIP_LIVE:
-        warn("LOOM_SKIP_LIVE=1 → salto")
+        warn("LOOM_SKIP_LIVE=1 → skipping")
         return
     try:
         cp = run_cli(["-p", "--safe-mode", "--tools", "", "--output-format", "text",
-                      "Repite textualmente el texto que recibas por stdin."],
+                      "Repeat back verbatim the exact input text you received on stdin."],
                      stdin="token-de-prueba-XYZ\n")
     except Exception as exc:  # noqa: BLE001
-        fail(f"error ejecutando stdin test: {exc}")
+        fail(f"error running stdin test: {exc}")
         return
     if cp.returncode != 0:
         fail(f"exit={cp.returncode} stderr={cp.stderr.strip()[:200]!r}")
         return
     if "XYZ" in cp.stdout:
-        ok("stdout contiene XYZ")
+        ok("stdout contains XYZ")
     else:
-        fail(f"stdout no contiene XYZ: {cp.stdout.strip()[:200]!r}")
+        fail(f"stdout does not contain XYZ: {cp.stdout.strip()[:200]!r}")
 
 
 # --- Assertion 4: fixture -------------------------------------------------------
 
 def assert_fixture() -> None:
-    print("Aserción 4: fixture parsea y read_delta cumple el contrato")
+    print("Assertion 4: fixture parses and read_delta meets the contract")
     if not FIXTURE.exists():
-        fail(f"no existe el fixture {FIXTURE}")
+        fail(f"fixture {FIXTURE} does not exist")
         return
     # 4a: every non-empty line parses as JSON
     bad = 0
@@ -213,86 +213,86 @@ def assert_fixture() -> None:
             json.loads(raw)
         except json.JSONDecodeError:
             bad += 1
-            fail(f"línea {idx} no parsea JSON")
+            fail(f"line {idx} does not parse as JSON")
     if bad == 0:
-        ok(f"las {nonempty} líneas no vacías parsean JSON")
+        ok(f"all {nonempty} non-empty lines parse as JSON")
     # 4b: read_delta from 0
     try:
         delta = read_delta(FIXTURE, 0)
     except ValueError as exc:
-        fail(f"read_delta(fixture, 0) lanzó AdapterError: {exc}")
+        fail(f"read_delta(fixture, 0) raised AdapterError: {exc}")
         return
     users = [m for m in delta["messages"] if m.startswith("[user]")]
     assts = [m for m in delta["messages"] if m.startswith("[assistant]")]
     if users:
-        ok(f"≥1 mensaje user ({len(users)})")
+        ok(f"≥1 user message ({len(users)})")
     else:
-        fail("no hay mensajes user")
+        fail("no user messages")
     if assts:
-        ok(f"≥1 mensaje assistant ({len(assts)})")
+        ok(f"≥1 assistant message ({len(assts)})")
     else:
-        fail("no hay mensajes assistant")
+        fail("no assistant messages")
     wc = sum(1 for _ in FIXTURE.open(encoding="utf-8"))
     if delta["new_last_line"] == wc:
         ok(f"new_last_line == wc -l == {wc}")
     else:
         fail(f"new_last_line={delta['new_last_line']} != wc -l={wc}")
     if delta["new_last_uuid"]:
-        ok(f"new_last_uuid no vacío ({delta['new_last_uuid']})")
+        ok(f"new_last_uuid not empty ({delta['new_last_uuid']})")
     else:
-        fail("new_last_uuid vacío")
-    print(f"       (líneas-ruido saltadas: {delta['skipped']})")
+        fail("new_last_uuid empty")
+    print(f"       (noise lines skipped: {delta['skipped']})")
     # 4c: re-read from EOF → empty delta
     try:
         delta2 = read_delta(FIXTURE, delta["new_last_line"])
     except ValueError as exc:
-        fail(f"read_delta(fixture, EOF) lanzó error: {exc}")
+        fail(f"read_delta(fixture, EOF) raised an error: {exc}")
         return
     if not delta2["messages"]:
-        ok("read_delta desde EOF devuelve delta vacío (puntero idempotente)")
+        ok("read_delta from EOF returns an empty delta (idempotent pointer)")
     else:
-        fail(f"read_delta desde EOF devolvió {len(delta2['messages'])} mensajes")
+        fail(f"read_delta from EOF returned {len(delta2['messages'])} messages")
 
 
 # --- Assertion 5: payload -------------------------------------------------------
 
 def assert_payload() -> None:
-    print("Aserción 5: payload de SessionEnd con claves requeridas")
+    print("Assertion 5: SessionEnd payload has the required keys")
     if not PAYLOAD.exists():
-        fail(f"no existe {PAYLOAD}")
+        fail(f"{PAYLOAD} does not exist")
         return
     try:
         obj = json.loads(PAYLOAD.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        fail(f"payload no parsea JSON: {exc}")
+        fail(f"payload does not parse as JSON: {exc}")
         return
     for key in ("session_id", "transcript_path", "cwd"):
         if key in obj and obj[key]:
-            ok(f"clave presente: {key}")
+            ok(f"key present: {key}")
         else:
-            fail(f"falta la clave requerida: {key}")
+            fail(f"missing required key: {key}")
     # the reason field is called `reason` (not `source`) — informational
     if "reason" in obj:
-        ok(f"campo de motivo = 'reason' (valor: {obj['reason']!r})")
+        ok(f"reason field = 'reason' (value: {obj['reason']!r})")
     else:
-        warn("no hay campo 'reason' en el payload")
+        warn("no 'reason' field in the payload")
 
 
 def main() -> int:
-    print(f"== verify.py — contrato Synaptic Loom (dir: {HERE}) ==")
+    print(f"== verify.py — Synaptic Loom contract (dir: {HERE}) ==")
     if SKIP_LIVE:
-        print("(modo offline: LOOM_SKIP_LIVE=1)\n")
+        print("(offline mode: LOOM_SKIP_LIVE=1)\n")
     assert_version()
     assert_headless_ok()
     assert_stdin()
     assert_fixture()
     assert_payload()
-    print("\n== Resumen ==")
-    print(f"  fallos: {len(failures)} · warnings: {len(warnings)}")
+    print("\n== Summary ==")
+    print(f"  failures: {len(failures)} · warnings: {len(warnings)}")
     if failures:
-        print("  RESULTADO: FAIL")
+        print("  RESULT: FAIL")
         return 1
-    print("  RESULTADO: OK")
+    print("  RESULT: OK")
     return 0
 
 

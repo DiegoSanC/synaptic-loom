@@ -405,7 +405,7 @@ def test_ac_f9_5_waves_goals_regression_green(gate):
 def test_ac_f9_5_contract_verifier_green(gate):
     """AC-F9.5: LOOM_SKIP_LIVE=1 contract/verify.py stays green."""
     assert gate["contract"].returncode == 0, _tail(gate["contract"])
-    assert "RESULTADO: OK" in gate["contract"].stdout, _tail(gate["contract"])
+    assert "RESULT: OK" in gate["contract"].stdout, _tail(gate["contract"])
 
 
 def test_ac_f9_5_phase2_e2e_still_green(gate):
