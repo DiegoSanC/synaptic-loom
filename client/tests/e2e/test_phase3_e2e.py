@@ -920,6 +920,16 @@ sys.exit(64)
 """)
 
 
+def _tripwire_shim(shims: Path, name: str, log: Path) -> Path:
+    """A scheduler stand-in that only records that it was called, and fails."""
+    return _write_shim(shims, name, f"""
+import pathlib, sys
+with pathlib.Path({str(log)!r}).open("a") as fh:
+    fh.write({name!r} + " " + " ".join(sys.argv[1:]) + "\\n")
+sys.exit(97)
+""")
+
+
 def _claude_version_shim(shims: Path) -> Path:
     version = (REPO_ROOT / "contract" / "VERSION").read_text(encoding="utf-8").strip()
     return _write_shim(shims, "claude", f"""
@@ -1084,17 +1094,44 @@ def test_ac_f9_3_triggered_pass_under_a_minimal_path_still_quarantines_via_gitle
                    "PATH": minimal_path}
     for key, value in assignments:      # the recorded block's lines, verbatim, in order
         trigger_env[key] = value
-    assert shutil.which("gitleaks", path=trigger_env["PATH"]) is not None, (
+    carried = trigger_env["PATH"]       # exactly the PATH the installer wrote
+    assert shutil.which("gitleaks", path=carried) is not None, (
         "the trigger environment must resolve gitleaks — that IS the parity property"
     )
-    # The carried PATH is the install-time one, so it still contains the shim dir — the
-    # recorder, never the host's crontab, and no systemctl at all.
-    _assert_scheduler_free(trigger_env["PATH"], shims=shims)
+    # AMENDED by the minimal trigger PATH (2026-10-19). The installer used to carry the whole
+    # install-time PATH, shim dir included, so the boundary assertion held on it as is. It now
+    # writes only the directories of the binaries the pass needs plus the standard system
+    # directories (/usr/bin, /bin, /usr/sbin, /sbin), where the host's REAL schedulers live
+    # (crontab, launchctl, at on macOS). The pass still runs on exactly that PATH, behind a
+    # directory of tripwires that every scheduler name resolves to first; the boundary is now
+    # proven twice: nothing real is reachable, and nothing — tripwire or recorder — is ever
+    # invoked by the triggered pass.
+    tripwires = tmp_path / "tripwires"
+    tripwire_log = tmp_path / "tripwires.log"
+    _crontab_shim(tripwires, cron_state)
+    for name in _SCHEDULERS:
+        if name != "crontab":
+            _tripwire_shim(tripwires, name, tripwire_log)
+    trigger_env["PATH"] = os.pathsep.join([str(tripwires), carried])
+    for name in _SCHEDULERS:
+        assert shutil.which(name, path=trigger_env["PATH"]) == str(tripwires / name), (
+            f"{name} must resolve to its tripwire, never to the host's (the wave-c incident)"
+        )
+    assert shutil.which("gitleaks", path=trigger_env["PATH"]) == \
+        shutil.which("gitleaks", path=carried), "the tripwires must not shadow gitleaks"
+    cron_calls = Path(str(cron_state) + ".calls")
+    cron_calls_before = cron_calls.read_text() if cron_calls.exists() else ""
 
     triggered = subprocess.run(["/bin/sh", "-c", cron_cmd], env=trigger_env,
                                cwd=str(safe_home), capture_output=True, text=True,
                                timeout=600)
     assert triggered.returncode == 0, triggered.stdout + triggered.stderr
+    assert not tripwire_log.exists(), (
+        f"the triggered pass invoked a scheduler: {tripwire_log.read_text()}"
+    )
+    assert (cron_calls.read_text() if cron_calls.exists() else "") == cron_calls_before, (
+        "the triggered pass must never call crontab"
+    )
 
     assert _entries(server.url, token, project_id) == published, (
         "AC-F9.3: the triggered pass published the secret-bearing entry instead of "
