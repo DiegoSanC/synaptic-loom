@@ -244,6 +244,7 @@ fly ssh console -a <app> -u app -C "python -m server.admin invite --email dev@ex
 fly ssh console -a <app> -u app -C "python -m server.admin invite --email dev@example.com"   # a second machine of an existing user
 fly ssh console -a <app> -u app -C "python -m server.admin listdevices"
 fly ssh console -a <app> -u app -C "python -m server.admin revokedevice --id 3"            # one stolen/retired machine
+fly ssh console -a <app> -u app -C "python -m server.admin promote --email dev@example.com" # roles (D20, §4)
 # Break-glass only: a PERMANENT token, printed once (what #20 exists to stop hand-delivering)
 fly ssh console -a <app> -u app -C "python -m server.admin adduser --name dev --email dev@example.com"
 ```
@@ -818,9 +819,30 @@ export LOOM_DB=~/.loom-server/loom.db
 .venv/bin/python -m server.admin revokedevice --id 3                              # ONE machine
 .venv/bin/python -m server.admin deactivate --email dev2@example.test             # the person: every token of theirs
 .venv/bin/python -m server.admin revoke-orphans                                   # once, on the D19 upgrade (§2)
+.venv/bin/python -m server.admin promote --email dev2@example.test                # role admin (D20)
+.venv/bin/python -m server.admin demote --email dev2@example.test                 # role member
 # Break-glass: a permanent token printed once (pre-#20 flow; still valid, never expires)
 .venv/bin/python -m server.admin adduser --name dev2 --email dev2@example.test
 ```
+
+**Roles (D20).** Every user is a `member` (`invite` and `adduser` create members, and an
+existing database's users all start as members); `listusers` shows the role in its last
+column. **Bootstrap the first admin** by promoting an existing user, normally yourself
+right after your own `invite` and `loom enroll`:
+
+```bash
+.venv/bin/python -m server.admin promote --email dev2@example.test   # -> User dev2@example.test promoted to admin.
+```
+
+Once there is an active admin the server never loses its last one: `demote` and
+`deactivate` of the **last active admin** exit 1 with `last_admin` and change nothing, so
+promote the successor first. A deactivated admin does not count. `promote`/`demote` of a
+user who already has that role says so and changes nothing; an unknown email exits 1.
+They are the only `admin.py` commands that record an `auth_events` row (`promoted` /
+`demoted`, with no actor, since nobody is signed in to a shell); the other commands
+record none, as before. `auth_events` holds the client address of web actions, which is
+personal data: the server deletes rows older than `LOOM_AUTH_EVENTS_RETENTION_DAYS`
+(default 180) every time it starts.
 
 Revoking a machine or deactivating a person also ends their open web-UI sessions (D14) on
 their next request; there is nothing UI-specific to revoke.

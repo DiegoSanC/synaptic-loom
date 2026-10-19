@@ -12,7 +12,7 @@ Normative contracts in `PLAN.md §3`; schema in `DESIGN.md §6.1` / `server/sche
 | `client_ip.py` | `LOOM_CLIENT_IP_SOURCE`: which address keys those windows and the audit line (D17) |
 | `db.py` | `sqlite3` connection (WAL, `foreign_keys=ON`, `busy_timeout`), idempotent schema, `hash_token` / `iso_now` helpers |
 | `normalize.py` | Normalization of the git remote into a canonical identity (server-side authority) |
-| `admin.py` | Admin CLI: `invite` / `listdevices` / `revokedevice` (machines) · `listusers` / `deactivate` (people) · `adduser` (break-glass, see below) |
+| `admin.py` | Admin CLI: `invite` / `listdevices` / `revokedevice` (machines) · `listusers` / `deactivate` / `promote` / `demote` (people; roles are D20's) · `adduser` (break-glass, see below) |
 | `schema.sql` | Literal schema (never rewritten) |
 
 ## Configuration
@@ -56,7 +56,11 @@ Day to day:
 .venv/bin/python -m server.admin listdevices --email dev2@example.test   # --email optional; never prints a token
 .venv/bin/python -m server.admin revokedevice --id 3                     # ONE machine
 .venv/bin/python -m server.admin deactivate --email dev2@example.test    # the person: every token of theirs
+.venv/bin/python -m server.admin promote --email dev2@example.test       # role admin; `demote` → member
 ```
+
+`demote` and `deactivate` refuse the last active admin (`last_admin`, exit 1); RUNBOOK §4
+has the rest of roles, including bootstrapping the first admin.
 
 > **`adduser` is break-glass.** It still works and still prints a token once, but that
 > token is **permanent**: it never expires and never rotates, which is the thing the

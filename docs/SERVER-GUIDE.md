@@ -206,6 +206,18 @@ alone and says on stderr how to set one. **Not executed on Fly** (listed at the 
 whether `FLY_APP_NAME` reaches a command run through `fly ssh console -C`; if the link line
 is missing, the stderr hint says so, and `--public-url` is the answer.
 
+Every user starts as a `member`. Once your own machine has enrolled (§8), make yourself
+the first **admin** (D20):
+
+```bash
+fly ssh console -a <your-app-name> -u app -C "python -m server.admin promote --email dev@example.com"
+# -> User dev@example.com promoted to admin.
+```
+
+From then on `demote` and `deactivate` refuse the last active admin (`last_admin`, exit
+1): promote a successor first. `listusers` shows each user's role; the rest of user
+administration is in `docs/RUNBOOK.md` §4.
+
 `adduser` also exists and prints a permanent token. It is the break-glass path only — see
 `server/README.md`.
 
