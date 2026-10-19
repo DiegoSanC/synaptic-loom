@@ -28,9 +28,11 @@ who found an item stale or not applicable, so it can be curated ([Feedback](#fee
 
 ## Before you start
 
-You need an **enrolment code** from whoever operates the server (§4 of the RUNBOOK). It is
-single-use, expires in 24 h by default, and is the only thing that travels to you: your
-machine mints its own token from it, so no permanent credential is ever handed around.
+You need an **invitation link** from whoever operates the server (§4 of the RUNBOOK). It
+looks like `https://<your-server>/ui/join#code=…`: the server's address, then a single-use
+enrolment code that expires in 24 h by default. It is the only thing that travels to you:
+your machine mints its own token from the code, so no permanent credential is ever handed
+around. An operator may send the bare code instead; step 3 covers both.
 
 | Tool | | Why |
 |---|---|---|
@@ -39,7 +41,7 @@ machine mints its own token from it, so no permanent credential is ever handed a
 | `jq` | required | The installer edits `~/.claude/settings.json` with it. |
 | `uv`, or `python3 -m venv` | required | Builds the client's own venv. |
 | `setsid`, or `python3` | required | Detaches the processor so it outlives the session that started it. |
-| `gitleaks` | recommended | The secret scanner. Without it the client falls back to a weaker regex engine and `loom doctor` warns. |
+| `gitleaks` | required, installed for you | The secret scanner (D16). The installer downloads the pinned version into `~/.loom/bin` and checks it against a pinned checksum. Without a working gitleaks, capture **pauses** — nothing is summarized or posted, the queue waits — and `loom doctor` shows a `✗`. |
 
 Plus HTTPS access to the server. Docker is **not** needed to use the client — only to run
 this repo's test suite (`AGENTS.md` § Environment).
@@ -47,6 +49,12 @@ this repo's test suite (`AGENTS.md` § Environment).
 ---
 
 ## Install
+
+### 0. Open the invitation link
+
+Open it in a browser. The page explains these same steps. It never reads the code, which
+sits after the `#` and is never sent to the server. Keep the link, because you paste it in
+step 3.
 
 ### 1. Clone the repo
 
@@ -75,12 +83,26 @@ lists every file it touches.
 ### 3. Enrol this machine
 
 ```bash
+~/.loom/venv/bin/loom enroll
+```
+
+Paste the **whole invitation link** at the hidden prompt. There is deliberately no flag for
+it, so it cannot land in your shell history. Your machine mints a device token that lasts
+90 days and renews itself while the machine keeps running passes.
+
+The link carries the server's address, so before contacting it `loom enroll` prints that
+host on a line of its own and asks `[y/N]`: on this machine's first enrolment, and whenever
+the link points at another server than the one the machine already uses. Answer `y` only if
+it is the server you expected. A link from anyone but your operator is a reason to stop and
+ask, not to answer `y`.
+
+Given a bare code instead of a link, name the server and paste the code:
+
+```bash
 ~/.loom/venv/bin/loom enroll --server-url=https://<your-server>
 ```
 
-Paste the enrolment code at the hidden prompt. There is deliberately no flag for it, so it
-cannot land in your shell history. Your machine mints a device token that lasts 90 days and
-renews itself while the machine keeps running passes.
+With `--server-url`, a pasted link must point at that same server, or enrolment is refused.
 
 `loom init` (a permanent token at a hidden prompt) remains the break-glass form of this
 step. `loom doctor` flags such a token and tells you to re-enrol.
@@ -150,9 +172,11 @@ touches your global Python — the venv sits inside `~/.loom`.
 | Scheduler | One job every 15 min running `loom process` — a systemd **user** timer where `systemctl --user` works, otherwise a crontab block tagged `# loom-process`. Replaced in place, never duplicated. | `install.sh --uninstall-trigger`; previous crontab saved under `~/.loom/backup/` |
 
 The scheduled job carries its own `LOOM_HOME` and the PATH from install time. That second
-part matters: under a scheduler's minimal PATH the client would not find `gitleaks` and
-would quietly downgrade to the weaker scanner while an interactive check still reported
-green. `loom doctor` has a row for exactly this (RUNBOOK §2, "scanner parity").
+part matters: under a scheduler's minimal PATH the client could miss a `gitleaks` that
+lives only on your shell's PATH, and the unattended pass would pause capture while an
+interactive check still reported green. The installer's own copy in `~/.loom/bin` is run by
+absolute path, so it is found either way. `loom doctor` has a row for exactly this (RUNBOOK
+§2, "scanner parity").
 
 Your Claude Code transcripts in `~/.claude/projects/` are never modified or deleted.
 
@@ -310,7 +334,7 @@ directory's git remote when you omit it.
 | `doctor` | Environment checklist. Run it first when something looks wrong. |
 | `process` | Force a pass now instead of waiting for the scheduler. |
 | `push-quarantine` | Upload a quarantined entry after you have read it. |
-| `enroll` | Redeem an enrolment code. The normal way to join. |
+| `enroll` | Redeem an invitation link or enrolment code. The normal way to join. |
 | `curate` / `unlink` | **Operator only** — see below. |
 
 ---
@@ -324,7 +348,8 @@ directory's git remote when you omit it.
    would have produced. RUNBOOK §0 names the machine. (Issue #57 proposes closing this
    properly; until then the rule is the guard.)
 2. **Never paste, commit or forward your token.** It lives in `~/.loom/config.json` at mode
-   600. Enrolment codes are safe to send over a team channel; tokens never are.
+   600. Invitation links and enrolment codes are safe to send over a team channel (single
+   use, short-lived); tokens never are.
 3. **Enable deliberately.** Opting a repo in publishes what gets decided in it. That is the
    point, and it is also the risk.
 
