@@ -456,13 +456,15 @@ After editing the units by hand: `systemctl --user daemon-reload`.
 > them as it copies: the **installed** `~/.config/systemd/user/loom-process.service` gets an
 > `ExecStart=<LOOM_HOME>/venv/bin/loom process --quiet`, an
 > `Environment=LOOM_HOME=<LOOM_HOME>` for the `LOOM_HOME` the install actually used, and an
-> `Environment=PATH=<the install-time PATH>`. All three matter: a systemd *user* service
+> `Environment=PATH=<the trigger's minimal PATH>` (the same value as the cron block's `PATH=`
+> line, below). All three matter: a systemd *user* service
 > inherits the **user manager's** environment, not the environment of the shell that ran the
 > installer, so without them a non-default `LOOM_HOME` would point the timer at a binary that
 > was never created — and even if it started, the pass would resolve its home to `~/.loom`,
-> work on a different queue, config and token, and look for its secret scanner on a PATH that
-> does not have it (see "scanner parity" below). If you move `LOOM_HOME`, or `gitleaks`
-> moves, re-run `bash client/install.sh --yes` rather than hand-editing.
+> work on a different queue, config and token, and look for `claude`, `git` and a fallback
+> gitleaks on a PATH that does not have them (see "the trigger's PATH" below). If you move
+> `LOOM_HOME`, or `claude`, `git` or `gitleaks` move, re-run `bash client/install.sh --yes`
+> rather than hand-editing.
 
 **Manual verification after installing/updating on the WSL2 host (AC-2.2c)** — do this
 once against live systemd, it is the step the automated tests cannot cover (they shim
@@ -499,7 +501,7 @@ replacing its own block in place, never duplicating, and preserving every other 
 ```cron
 # loom-process
 LOOM_HOME=/home/<user>/.loom
-PATH=/home/<user>/.loom/venv/bin:<the PATH the install ran with>
+PATH=/home/<user>/.loom/venv/bin:<dirs of claude, git, jq, python3>:/usr/bin:/bin:/usr/sbin:/sbin
 */15 * * * * /home/<user>/.loom/venv/bin/loom process --quiet
 ```
 
@@ -510,32 +512,60 @@ resolve its binaries on cron's `/usr/bin:/bin`. They apply from their line to th
 file, which is why the block is always appended **last**. If you add your own entries
 afterwards, put them *above* the block.
 
-**Scanner parity (why the `PATH=` line exists).** Before D16, `loom process` picked its
-secret scanner through `PATH` only: with `scanner.engine = auto` it used `gitleaks` when the
-binary was reachable and silently fell back to the weaker regex set when it was not. Under
-cron's `/usr/bin:/bin` a homebrew (`/opt/homebrew/bin`) or per-user (`~/.local/bin`) gitleaks
-is invisible, so the **unattended** passes — the ones that do most of the capturing — ran
-with half the defense-in-depth while an interactive `loom doctor` reported `✓ gitleaks` (§7,
-finding 1). Since D16 (2026-10-15) that cannot happen: install.sh installs a checksum-verified
-gitleaks 8.30.1 into `$LOOM_HOME/bin/gitleaks`, loom runs it **by absolute path** (PATH is
-only the fallback for a gitleaks you installed yourself), and with no gitleaks at all capture
-**pauses** instead of degrading (§6, "Capture paused"). install.sh still carries the
-install-time `PATH` into the trigger, so an unattended pass resolves the same `git`, `jq` and
-fallback gitleaks the operator resolved when they ran the installer. `loom doctor` has a
-**trigger scanner parity** row: `✓` when the pass will run `$LOOM_HOME/bin/gitleaks`, and a
-warning when only a PATH gitleaks exists and the trigger's `PATH` cannot reach it (that pass
-would pause). Re-run `bash client/install.sh --yes` to fix either.
+**The trigger's PATH (why the `PATH=` line exists, and why it is short).** The unattended
+pass still resolves binaries through `PATH`: the summarizer (`claude`, or `claude_bin` from
+`config.json`), `git` for project attribution, and a gitleaks you installed yourself when
+there is no `$LOOM_HOME/bin/gitleaks`. Under cron's own `/usr/bin:/bin` a homebrew
+(`/opt/homebrew/bin`), nvm or per-user (`~/.local/bin`) binary is invisible. That is how the
+scanner went missing before (§7, finding 1); since D16 (2026-10-15) install.sh installs a
+checksum-verified gitleaks 8.30.1 into `$LOOM_HOME/bin/gitleaks`, loom runs it **by absolute
+path**, and with no gitleaks at all capture **pauses** instead of degrading (§6, "Capture
+paused") — but `claude` and `git` still need the trigger's `PATH`.
 
-> **Trust note.** This deliberately trades cron's minimal `PATH` — a small hardening measure
-> — for a scanner that actually runs. The unattended pass now resolves binaries from the same
-> directories your interactive shell does, so a directory on your `PATH` that someone else
-> can write to is reachable unattended too. Relative and empty `PATH` components (`.`, a
-> trailing `:`) are dropped rather than carried, since "the current directory" means
-> something different in a 15-minute cron job than it does under your fingers. If your `PATH`
-> is not something you would hand to a scheduler, edit the block's `PATH=` line down to what
-> the pass needs (`$LOOM_HOME/venv/bin`, git, jq — gitleaks lives in `$LOOM_HOME/bin` and is
-> run by absolute path) — install.sh replaces the whole
-> block on its next run, so keep a note of the edit.
+That `PATH` is **minimal and deterministic**, never a copy of your interactive one:
+`$LOOM_HOME/venv/bin` first (it is also how install.sh and doctor recognise the line as
+theirs), then the directory each of `claude` (or `claude_bin`), `git`, `jq` and `python3` —
+plus gitleaks, only when `$LOOM_HOME/bin` has none — resolves from in the shell that ran the
+installer, de-duplicated and **in the order they appear on that shell's `PATH`** (so each one
+resolves to the very same file it did there), then `/usr/bin:/bin:/usr/sbin:/sbin`.
+Nothing else: no `/usr/local/bin` or homebrew prefix is guessed, and a tool living there
+brings its own directory. An absolute `claude_bin` is run as is and needs no directory.
+
+The reason it must be short: macOS cron silently **drops** an environment line of 999
+bytes or more. Apple's cron (`apple-oss-distributions/cron`, tag `cron-52`) reads each line
+into a `MAX_ENVSTR` = 1000-byte buffer (`cron/cron.h`) and `load_env` (`lib/env.c`) rejects
+an assignment once `strlen(name) + 1 + strlen(value) >= MAX_ENVSTR - 1` — without an error
+from `crontab -` or from cron, and the job then runs on `_PATH_DEFPATH` (`/usr/bin:/bin`,
+`cron/pathnames.h`). A real Mac's install-time `PATH` (nvm, Homebrew, cryptex paths) was 1040
+bytes: every pass ran on `/usr/bin:/bin`, gitleaks was not found and capture paused at every
+`:00/:15/:30/:45` while the SessionEnd kick (run from an interactive shell) kept working.
+So install.sh:
+
+- **reports** a needed binary that does not resolve in your shell (`WARNING: 'claude' is not
+  on this shell's PATH ...`) or resolves from a directory a scheduler entry cannot carry
+  (relative, or characters outside the whitelist below) — the install still completes, and
+  you re-run it once the binary is in place;
+- **fails the install** (exit 1, nothing written to the scheduler — your crontab or units
+  are left exactly as they were) when the composed `PATH=` line would exceed **900 bytes**,
+  a margin below cron's 998. With only a handful of directories that takes very deep install
+  locations; move the tools somewhere shorter (or set an absolute `claude_bin`) and re-run.
+
+The systemd unit gets the same value in `Environment=PATH=`, for parity. `loom doctor` has
+two rows about it: **trigger scanner parity** (`✓` when the pass will run
+`$LOOM_HOME/bin/gitleaks`; a warning when only a PATH gitleaks exists and the trigger's
+`PATH` cannot reach it — that pass would pause), and **trigger tool parity** (a warning when
+the trigger's `PATH` — or, with no `PATH=` line, cron's `/usr/bin:/bin` — does not resolve
+the same `claude` and `git` this shell does: unattended passes would fail to summarize or
+attribute). Both are `⚠`, not `✗`: the SessionEnd kick still captures. Re-run
+`bash client/install.sh --yes` to fix either.
+
+> **Trust note.** The unattended pass resolves binaries from the directories your `claude`,
+> `git`, `jq` and `python3` live in, so any other executable in those directories is
+> reachable unattended too — far less than your whole `PATH`, but not nothing. Relative and
+> empty `PATH` components (`.`, a trailing `:`) are never carried, since "the current
+> directory" means something different in a 15-minute cron job than it does under your
+> fingers. install.sh replaces the whole block on its next run, so a hand edit of the
+> `PATH=` line does not survive a re-install.
 
 ```bash
 crontab -l | grep -A3 'loom-process'          # check it
@@ -572,8 +602,9 @@ bash client/install.sh --uninstall-trigger    # remove it (timer and/or cron)
 - the `PATH=` value is whitelisted *per component* under a slightly wider rule — cron reads
   an assignment value literally, so `:` (the separator itself) is allowed there, while a
   newline, a CR or a `%` (cron's "the rest of the line is stdin" separator) never is. A
-  directory in your `PATH` that cannot be written safely is **dropped** from the trigger's
-  copy, with a note on stderr saying how many; the mechanism keeps working for the rest.
+  needed binary whose directory cannot be written safely is **left out** of the trigger's
+  `PATH`, with a warning on stderr naming the binary (never the directory); the line is
+  still written for the rest.
 
 Hosts with neither `systemctl --user` nor `crontab` get a warning from install.sh (the
 install still succeeds) and `loom doctor` reports the missing trigger. `launchd` support
@@ -1427,8 +1458,10 @@ a scheduler's own minimal `PATH` could not see a brew-installed `gitleaks`, so
 `scanner.engine=auto` silently downgraded the **triggered** scans to regex while an
 interactive `loom doctor` happily reported `✓ gitleaks 8.30.1 (pin matched)`. Nothing in
 either view was wrong; they were just answering about different environments. P2.F5 fixes it
-by making `install.sh` carry its install-time `PATH` into the trigger (a `PATH=` line in the
-crontab block, `Environment=PATH=` in the systemd unit), and the property is asserted end to
+by making `install.sh` carry a `PATH` into the trigger (a `PATH=` line in the crontab
+block, `Environment=PATH=` in the systemd unit) — since 2026-10-19 a minimal one built from
+the directories the needed tools resolve from, because macOS cron drops an over-long
+`PATH=` line (§2) — and the property is asserted end to
 end in `client/tests/e2e/test_phase3_e2e.py` — the command line the installer wrote, executed
 under a minimal gitleaks-free PATH, must still quarantine a planted high-entropy secret with a
 **gitleaks** rule id in the quarantine record's findings. This row is the same property
