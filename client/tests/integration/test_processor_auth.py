@@ -141,6 +141,55 @@ def test_a_failed_renewal_does_not_stop_the_pass(env):
     assert not (env.home / "auth_rejected.json").exists()
 
 
+# D19: `cfg` is loaded before the processor takes its lock (`loom process`, `python -m
+# loom.processor`). Another pass can renew and release the lock in between, so the pass
+# must renew with the token `config.json` holds once the lock is ITS, not the one it
+# loaded: re-issuing over a fresh successor would revoke it (renew re-issues, D19 B1b).
+def _another_pass_rewrites_the_token(env, *, token: str, issued_ago: timedelta) -> None:
+    path = env.home / "config.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    data.update({"token": token, "token_issued_at": _iso(now - issued_ago),
+                 "token_expires_at": _iso(now - issued_ago + 90 * DAY)})
+    path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def test_a_successor_written_after_cfg_was_loaded_is_not_renewed_again(env):
+    env.register_projects()
+    env.httpserver.expect_request("/api/entries", method="POST").respond_with_json({"id": 1}, status=201)
+    calls = []
+    _mock_renew(env, calls=calls)
+    cfg = _device_config(env, issued_ago=70 * DAY)  # loaded while renewal was due
+    _another_pass_rewrites_the_token(env, token="dev-token-fresh", issued_ago=timedelta(0))
+    env.drop_marker("sess-after-other-pass")
+
+    report = processor.run_once(cfg)
+
+    assert _actions(report) == ["posted"]
+    assert calls == []  # the fresh successor is not re-issued over
+    assert json.loads((env.home / "config.json").read_text())["token"] == "dev-token-fresh"
+    posts = _requests(env, "/api/entries")
+    assert [r.headers["Authorization"] for r in posts] == ["Bearer dev-token-fresh"]
+
+
+def test_the_renewal_uses_the_token_in_config_as_re_read_after_the_lock(env):
+    env.register_projects()
+    env.httpserver.expect_request("/api/entries", method="POST").respond_with_json({"id": 1}, status=201)
+    calls = []
+    _mock_renew(env, calls=calls)
+    cfg = _device_config(env, issued_ago=80 * DAY, token="dev-token-loaded")
+    _another_pass_rewrites_the_token(env, token="dev-token-on-disk", issued_ago=70 * DAY)
+    env.drop_marker("sess-reread")
+
+    report = processor.run_once(cfg)
+
+    assert _actions(report) == ["posted"]
+    assert calls == ["Bearer dev-token-on-disk"]
+    assert json.loads((env.home / "config.json").read_text())["token"] == "dev-token-new"
+    posts = _requests(env, "/api/entries")
+    assert [r.headers["Authorization"] for r in posts] == ["Bearer dev-token-new"]
+
+
 # --------------------------------------------------------------------------- #
 # Loud 401                                                                     #
 # --------------------------------------------------------------------------- #

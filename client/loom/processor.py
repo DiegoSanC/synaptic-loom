@@ -1741,6 +1741,21 @@ def _bound_attempts(
 # --------------------------------------------------------------------------- #
 # Public entry point                                                           #
 # --------------------------------------------------------------------------- #
+def _reread_token(cfg: Config) -> None:
+    """Take the token ``config.json`` holds NOW; call it only under the processor lock.
+
+    ``cfg`` is loaded before the lock, so another pass may have renewed and released it
+    in between. Renewing with the stale token would re-issue over that fresh successor
+    (D19). An unreadable config keeps the token in memory: the pass goes on with it.
+    """
+    try:
+        fresh = Config.load(cfg.loom_home)
+    except (OSError, KeyError, ValueError, TypeError):
+        return
+    cfg.token, cfg.token_issued_at, cfg.token_expires_at = (
+        fresh.token, fresh.token_issued_at, fresh.token_expires_at)
+
+
 def _renew_device_token(cfg: Config, api: ApiClient) -> None:
     """Renew when less than a quarter of the token's life remains; never abort the pass.
 
@@ -1854,6 +1869,7 @@ def run_once(cfg: Config) -> RunReport:
             return report
         _clear_scanner_paused(cfg)
 
+        _reread_token(cfg)
         api = ApiClient(cfg.server_url, cfg.token)
         # Silent device-token renewal (issue #20) rides on a pass that was already going
         # to talk to the server: no timer of its own, no human. Both unattended entry
