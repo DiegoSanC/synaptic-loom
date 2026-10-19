@@ -276,12 +276,16 @@ def test_cron_block_path_drops_components_that_cannot_be_written_safely(tmp_path
     """HIGH-2, amended for env-assignment lines: ':' is legal in a PATH value (cron reads
     it literally, no /bin/sh) but '%' — cron's "rest is stdin" separator — a CR or a space
     are not. One odd directory must be dropped, not poison the whole line and not abort the
-    parity mechanism."""
+    parity mechanism.
+
+    Amended for the minimal trigger PATH (2026-10-19): only the directories needed binaries
+    resolve from are carried, so an odd directory matters — and is reported — when a needed
+    binary resolves from it. `claude` lives in the '%' directory here; it is left out, by
+    name, instead of the old count of dropped components."""
     state = tmp_path / "cron.txt"
     _crontab_shim(tmp_path, state)
     toolbox = _fake_gitleaks_dir(tmp_path)
-    poison = tmp_path / "pct%dir"
-    poison.mkdir()
+    poison = _tool_dir(tmp_path, "pct%dir", "claude", decoy=True)
     spaced = tmp_path / "has space"
     spaced.mkdir()
 
@@ -295,7 +299,9 @@ def test_cron_block_path_drops_components_that_cannot_be_written_safely(tmp_path
     assert str(spaced) not in assignments["PATH"]
     # ...and the safe components are still there, so parity survives the drop.
     assert shutil.which("gitleaks", path=assignments["PATH"]) == str(toolbox / "gitleaks")
+    assert "'claude' resolves from a PATH directory" in proc.stderr, proc.stderr
     assert "left out of the trigger environment" in proc.stderr
+    assert str(poison) not in proc.stderr, "the directory itself is never echoed"
 
 
 def test_cron_block_path_carries_absolute_directories_only(tmp_path, home):
@@ -372,6 +378,214 @@ def test_systemd_unit_carries_the_scanner_environment(tmp_path, home):
     body = unit.split("[Service]", 1)[1]
     assert body.count("Environment=PATH=") == 1
     assert body.count("Environment=LOOM_HOME=") == 1
+
+
+# --------------------------------------------------------------------------- #
+# The trigger's PATH is MINIMAL: the resolved tools' directories + system dirs #
+# --------------------------------------------------------------------------- #
+# What install.sh appends after the tools' directories, as literals (never the code's own
+# constant): the standard system directories, and nothing else — no /usr/local, no
+# homebrew prefix (the anti-host-guess rule of the frozen wave d).
+SYSTEM_DIRS = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+# The bound install.sh enforces on the whole `PATH=` line: below the 998-byte assignment
+# that macOS cron still accepts (cron.h MAX_ENVSTR 1000).
+PATH_LINE_LIMIT = 900
+
+
+def _tool_dir(tmp_path: Path, name: str, *tools: str, decoy: bool = False) -> Path:
+    """A directory holding ``tools``: symlinks to the REAL binary (install.sh itself runs
+    git, jq and python3, so a stub would break the install), or an inert stub for a tool
+    the build host may not have (claude, gitleaks) or for a ``decoy``."""
+    d = tmp_path / name
+    d.mkdir(parents=True, exist_ok=True)
+    for tool in tools:
+        real = None if decoy else shutil.which(tool)
+        if real:
+            (d / tool).symlink_to(real)
+        else:
+            (d / tool).write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            (d / tool).chmod(0o755)
+    return d
+
+
+def _filler_dirs(tmp_path: Path, n: int = 30) -> list[Path]:
+    """Empty directories with long names, the shape of an nvm/homebrew/cryptex PATH."""
+    out = []
+    for i in range(n):
+        d = tmp_path / "filler" / f"versions-node-v22.23.{i:02d}-darwin-arm64-cryptex-bin"
+        d.mkdir(parents=True)
+        out.append(d)
+    return out
+
+
+def _long_install_path(tmp_path: Path) -> tuple[str, list[str]]:
+    """An install-time PATH over 1000 bytes and the trigger PATH it must produce.
+
+    The tools sit in an order that differs from any fixed list (python3's dir first, the
+    claude dir between the two git/jq ones), git and jq SHARE a directory, that directory
+    appears twice, and a decoy ``claude`` sits in a directory AFTER the real one — so the
+    expected value checks resolution order, de-duplication and first-hit-wins at once.
+    """
+    py = _tool_dir(tmp_path, "py_bin", "python3")
+    gj = _tool_dir(tmp_path, "gitjq_bin", "git", "jq")
+    cl = _tool_dir(tmp_path, "claude_bin", "claude")
+    gl = _fake_gitleaks_dir(tmp_path, "gitleaks_bin")
+    decoy = _tool_dir(tmp_path, "decoy_bin", "claude", decoy=True)
+    filler = _filler_dirs(tmp_path)
+    shims = tmp_path / "shims"
+    shims.mkdir(exist_ok=True)
+    safe_path = _sandbox_path(tmp_path)  # shims + allowlist (for sh, awk, mkdir, ...)
+    parts = [str(shims), *map(str, filler[:15]), str(py), str(gj), str(cl), str(gj),
+             str(decoy), *map(str, filler[15:]), str(gl), safe_path]
+    install_path = os.pathsep.join(parts)
+    loom_home = tmp_path / "home" / ".loom"
+    expected = [f"{loom_home}/venv/bin", str(py), str(gj), str(cl), str(gl), *SYSTEM_DIRS]
+    return install_path, expected
+
+
+def test_trigger_path_is_the_tools_directories_plus_system_dirs_only(tmp_path, home):
+    """The 2026-10-19 macOS finding: a 1040-byte install-time PATH copied into the block
+    made macOS cron DROP the assignment (it ignores env lines of MAX_ENVSTR-1 bytes and
+    more), so every pass ran on cron's /usr/bin:/bin and could not find gitleaks — nor
+    claude. The trigger now carries only what the unattended pass resolves."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    install_path, expected = _long_install_path(tmp_path)
+    assert len(install_path) > 1000, "fixture: the install-time PATH must be the long kind"
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    lines = state.read_text().splitlines()
+    path_lines = [line for line in lines if line.startswith("PATH=")]
+    assert len(path_lines) == 1, lines
+    assert len(path_lines[0]) <= PATH_LINE_LIMIT, len(path_lines[0])
+    assert path_lines[0][len("PATH="):].split(os.pathsep) == expected
+    # Nothing the install shell resolved is reported missing.
+    assert "not on this shell's PATH" not in proc.stderr, proc.stderr
+
+
+def test_trigger_path_leaves_out_gitleaks_when_loom_home_has_it(tmp_path, home):
+    """D16: $LOOM_HOME/bin/gitleaks runs by absolute path, so its PATH directory is not
+    something the trigger needs to carry."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    install_path, expected = _long_install_path(tmp_path)
+    _fake_gitleaks_dir(tmp_path, "home/.loom/bin")
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    value = _assignments(state.read_text().splitlines())["PATH"]
+    assert value.split(os.pathsep) == [d for d in expected
+                                       if d != str(tmp_path / "gitleaks_bin")]
+
+
+def test_a_required_binary_missing_at_install_time_is_reported(tmp_path, home):
+    """No `claude` anywhere on the install PATH: the install still completes (the
+    operator may install claude next), but says so instead of writing a PATH that
+    silently cannot run the summarizer."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    assert shutil.which("claude", path=_sandbox_path(tmp_path)) is None
+
+    proc = _run(tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "'claude' is not on this shell's PATH" in proc.stderr, proc.stderr
+    assert CRON_TAG in state.read_text().splitlines()
+
+
+def test_the_configured_claude_bin_is_the_one_resolved(tmp_path, home):
+    """`claude_bin` in config.json is the binary the processor runs. A bare name is
+    resolved through PATH like `claude`; the default name is then irrelevant."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    mine = _tool_dir(tmp_path, "my_claude_bin", "my-claude", decoy=True)
+    (home / ".loom").mkdir(parents=True)
+    (home / ".loom" / "config.json").write_text('{"claude_bin": "my-claude"}\n')
+
+    proc = _run(tmp_path, PATH=_sandbox_path(tmp_path, mine))
+
+    assert proc.returncode == 0, proc.stderr
+    value = _assignments(state.read_text().splitlines())["PATH"]
+    assert str(mine) in value.split(os.pathsep)
+    assert "'claude' is not on this shell's PATH" not in proc.stderr
+    assert "'my-claude' is not on this shell's PATH" not in proc.stderr
+
+
+def test_an_absolute_claude_bin_needs_no_path_entry(tmp_path, home):
+    """An absolute `claude_bin` is executed as is (no PATH lookup), so it adds no
+    directory — and it is reported when it is not executable."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    (home / ".loom").mkdir(parents=True)
+    missing = tmp_path / "nowhere" / "claude"
+    (home / ".loom" / "config.json").write_text(f'{{"claude_bin": "{missing}"}}\n')
+
+    proc = _run(tmp_path)
+
+    assert proc.returncode == 0, proc.stderr
+    value = _assignments(state.read_text().splitlines())["PATH"]
+    assert str(missing.parent) not in value
+    assert f"'{missing}' is not executable" in proc.stderr, proc.stderr
+
+
+def _over_limit_path(tmp_path: Path) -> str:
+    """Tools in directories so deep that even the minimal trigger PATH is too long."""
+    deep = "very-long-directory-name-" * 6
+    cl = _tool_dir(tmp_path, f"{deep}/a/{deep}/claude", "claude")
+    gj = _tool_dir(tmp_path, f"{deep}/b/{deep}/gitjq", "git", "jq")
+    py = _tool_dir(tmp_path, f"{deep}/c/{deep}/py", "python3")
+    return _sandbox_path(tmp_path, cl, gj, py).replace(
+        str(tmp_path / "safe_bin"), os.pathsep.join([str(cl), str(gj), str(py),
+                                                     str(tmp_path / "safe_bin")]))
+
+
+def test_a_trigger_path_over_the_limit_fails_loudly_and_writes_nothing(tmp_path, home):
+    """Writing a line the scheduler will drop is the silent failure this replaces: the
+    install must stop, say why, and leave the crontab exactly as it was."""
+    state = tmp_path / "cron.txt"
+    original = "# precious\n0 3 * * * /opt/keep.sh\n"
+    state.write_text(original)
+    _crontab_shim(tmp_path, state)
+
+    proc = _run(tmp_path, PATH=_over_limit_path(tmp_path))
+
+    assert proc.returncode != 0
+    assert "trigger PATH" in proc.stderr and str(PATH_LINE_LIMIT) in proc.stderr, proc.stderr
+    assert state.read_text() == original
+    assert "cron entry installed" not in proc.stdout
+
+
+def test_a_trigger_path_over_the_limit_fails_the_systemd_branch_too(tmp_path, home):
+    _systemctl_shim(tmp_path, tmp_path / "systemctl.log")
+    _crontab_shim(tmp_path, tmp_path / "cron.txt")
+
+    proc = _run(tmp_path, PATH=_over_limit_path(tmp_path))
+
+    assert proc.returncode != 0
+    assert "trigger PATH" in proc.stderr, proc.stderr
+    assert not (home / ".config" / "systemd" / "user" / "loom-process.service").exists()
+
+
+def test_systemd_unit_gets_the_same_minimal_path(tmp_path, home):
+    """Parity between the branches: the unit's `Environment=PATH=` is the very value the
+    crontab block would carry."""
+    _systemctl_shim(tmp_path, tmp_path / "systemctl.log")
+    _crontab_shim(tmp_path, tmp_path / "cron.txt")
+    install_path, expected = _long_install_path(tmp_path)
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    unit = (home / ".config" / "systemd" / "user" / "loom-process.service").read_text()
+    env = dict(
+        line.strip()[len("Environment="):].split("=", 1)
+        for line in unit.splitlines() if line.strip().startswith("Environment=")
+    )
+    assert env["PATH"].split(os.pathsep) == expected
+    assert not (tmp_path / "cron.txt").exists(), "one trigger, one owner"
 
 
 def test_install_replaces_a_stale_loom_block_in_place(tmp_path, home):

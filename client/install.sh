@@ -22,10 +22,13 @@
 #      (macOS, hosts without a user manager). Replace-in-place, never duplicated. The previous
 #      crontab is backed up to $LOOM_HOME/backup/crontab.<ts> before every write.
 #      The trigger carries the environment the unattended pass needs (P2.F5): LOOM_HOME, so
-#      it works on the right queue/config/token, and the install-time PATH, so it resolves
-#      the same binaries an interactive run does under cron's minimal PATH (docs/RUNBOOK.md
-#      §2). The scanner no longer depends on it: loom runs $LOOM_HOME/bin/gitleaks by
-#      absolute path (D16), and with no gitleaks at all capture PAUSES instead of degrading.
+#      it works on the right queue/config/token, and a MINIMAL PATH — $LOOM_HOME/venv/bin,
+#      the directories claude (or config.json's claude_bin), git, jq, python3 and a PATH
+#      gitleaks resolve from in this shell, then /usr/bin:/bin:/usr/sbin:/sbin — never the
+#      whole interactive PATH: macOS cron silently drops an environment line of 999 bytes or
+#      more. A needed binary that does not resolve is reported; a PATH line over 900 bytes
+#      fails the install before the scheduler is touched (docs/RUNBOOK.md §2). The scanner
+#      itself is $LOOM_HOME/bin/gitleaks, run by absolute path (D16).
 #   +  Adds the loom instruction block to ~/.claude/CLAUDE.md (D10): the one user-level
 #      rule that makes the agent run `loom check` at the start of a task. Between
 #      `<!-- loom:start -->` / `<!-- loom:end -->` markers; creates the file when absent,
@@ -124,28 +127,45 @@ CRON_CMD_MARKER="/venv/bin/loom process"
 CRON_BACKUP_DIR="$LOOM_HOME/backup"
 LOOM_BIN="$LOOM_HOME/venv/bin/loom"
 
-# ---- trigger environment parity (P2.F5) --------------------------------------------------
+# ---- trigger environment (P2.F5): a MINIMAL PATH ------------------------------------------
 # Both schedulers start the periodic pass with a MINIMAL environment: cron gives it
 # `/usr/bin:/bin`, and a systemd *user* service inherits the user manager's environment, not
-# the installing shell's. Before D16, `loom process` resolved its secret scanner through
-# PATH only (`scanner.engine = auto` → gitleaks when reachable, regex otherwise), so on a
-# host where gitleaks lived outside that minimal PATH — /opt/homebrew on darwin, ~/.local/bin
-# on many Linux boxes — the unattended pass silently downgraded to the weaker engine while
-# the interactive `loom doctor` reported `✓ gitleaks` (RUNBOOK §7, finding 1). Since D16 the
-# scanner is $LOOM_HOME/bin/gitleaks (step 1b), run by absolute path, so it no longer depends
-# on this PATH at all; PATH stays the fallback for a host that installed gitleaks itself, and
-# with no gitleaks anywhere capture PAUSES rather than degrading.
+# the installing shell's. The unattended `loom process` still resolves binaries through PATH:
+# the summarizer (`claude`, or config.json's `claude_bin`), `git` for project attribution,
+# and — only when there is no $LOOM_HOME/bin/gitleaks, which D16 runs by absolute path — a
+# gitleaks the operator installed themselves. So the trigger carries a PATH of its own.
 #
-# The PATH carry-over is kept: the unattended pass still resolves git, jq and that fallback
-# gitleaks through it, so it should resolve the same binaries the operator resolved when they
-# ran this script. The value goes into an
-# ENVIRONMENT ASSIGNMENT (a crontab `PATH=` line, a unit `Environment=PATH=`), never into the
-# command field, which is why it gets its OWN whitelist: cron reads an assignment value
-# literally (no /bin/sh), so ':' — mandatory in a PATH — is safe there, while the command
-# field keeps the stricter, colon-free class of `loom_home_is_scheduler_safe`. Newline/CR
-# would forge extra crontab lines and '%' is cron's "rest of the line is stdin" separator, so
-# per-component whitelisting (below) rejects them before anything is written.
+# It carries a MINIMAL one, never the whole install-time PATH. Apple's cron (cron-52, the
+# vixie-derived source in apple-oss-distributions/cron) reads each environment line into a
+# buffer of MAX_ENVSTR = 1000 bytes (cron/cron.h), and `load_env` (lib/env.c) returns FALSE
+# when `strlen(name) + 1 + strlen(value) >= MAX_ENVSTR - 1` — after it has consumed the
+# line, so the assignment is DROPPED without a word from `crontab -` or from cron, and the
+# next line parses as an ordinary entry. A `PATH=` line of 999 bytes or more simply does not
+# exist for the job. A real macOS install-time PATH (nvm, Homebrew, cryptex paths) was 1040
+# bytes (2026-10-19): every pass ran on cron's /usr/bin:/bin, could not find gitleaks
+# (capture paused) and would not have found `claude` either.
+#
+# The value is $LOOM_HOME/venv/bin (the identity marker, below), then the directory each
+# needed binary resolves from — in the order those directories appear on the install-time
+# PATH, de-duplicated — then the standard system directories. Keeping the PATH's own ORDER,
+# rather than the order of the list of binaries, is what makes each binary resolve to the
+# very file it resolves to here: no kept directory that comes before a binary's own can hold
+# that binary, or it would have resolved there. /usr/local/bin and Homebrew prefixes are NOT
+# added as guesses: a needed tool that lives there brings its own directory.
+#
+# The value goes into an ENVIRONMENT ASSIGNMENT (a crontab `PATH=` line, a unit
+# `Environment=PATH=`), never into the command field, which is why it gets its OWN whitelist:
+# cron reads an assignment value literally (no /bin/sh), so ':' — mandatory in a PATH — is
+# safe there, while the command field keeps the stricter, colon-free class of
+# `loom_home_is_scheduler_safe`. Newline/CR would forge extra crontab lines and '%' is cron's
+# "rest of the line is stdin" separator, so per-directory whitelisting (below) rejects them
+# before anything is written.
 TRIGGER_PATH_VALUE=""
+TRIGGER_SYSTEM_DIRS="/usr/bin:/bin:/usr/sbin:/sbin"
+# The longest `PATH=<value>` line install.sh writes: comfortably below the 998 bytes cron
+# still accepts (see above). A longer one fails the install instead of being written and
+# silently dropped.
+TRIGGER_PATH_LINE_MAX=900
 # The first component is also the line's IDENTITY MARKER, and the anchoring is what makes it
 # one: `PATH=` is a shared namespace (a user may well have their own `PATH=` line, and it may
 # perfectly reasonably include our venv), so `cron_filter` recognises OUR assignment by this
@@ -153,45 +173,95 @@ TRIGGER_PATH_VALUE=""
 # value. Removing a foreign PATH line would silently change what every entry after it can run.
 TRIGGER_PATH_MARKER="$LOOM_HOME/venv/bin"
 
-# Builds TRIGGER_PATH_VALUE from the install-time PATH, dropping any component that cannot be
-# written into a scheduler assignment safely. Dropping (rather than refusing outright) keeps
-# one odd directory in the operator's PATH from disabling the whole parity mechanism; the
-# count is reported so the operator can tell why something is missing. The value is never
-# echoed: it is untrusted text on its way to a terminal.
-build_trigger_path() {
-  local out="$TRIGGER_PATH_MARKER" comp dropped=0
-  local parts=()
+# The install-time PATH component `$1` resolves from: the first one holding an executable
+# regular file of that name — the lookup `command -v` makes, done by hand so the component
+# comes back exactly as the PATH spells it. An empty component means the current directory.
+trigger_path_hit() {
+  local comp parts=()
   IFS=':' read -r -a parts <<<"${PATH:-}"
   for comp in ${parts+"${parts[@]}"}; do
-    # An empty component (`::`, a trailing ':') and '.' both mean "the current directory".
-    # Interactively that is the operator's choice; in an unattended pass that runs from
-    # $HOME every 15 minutes it is a way for a dropped file to become an executable, so the
-    # trigger's PATH takes ABSOLUTE directories only. Silently, and on purpose: this is not
-    # a defect in the operator's PATH, just a narrower rule for the copy we install.
-    case "$comp" in
-      "" | "." | ".." | ./* | ../*) continue ;;
-      /*) ;;
-      *) continue ;;
-    esac
-    if [[ ! $comp =~ ^[A-Za-z0-9_./@+-]+$ ]]; then
-      dropped=$((dropped + 1))
+    if [ -f "${comp:-.}/$1" ] && [ -x "${comp:-.}/$1" ]; then
+      printf '%s' "$comp"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Builds TRIGGER_PATH_VALUE. A needed binary that does not resolve, or resolves from a
+# directory no scheduler entry can carry, is REPORTED (the install goes on: the operator may
+# install it next, and `loom doctor` keeps saying so); a value over TRIGGER_PATH_LINE_MAX
+# returns 1 so the caller can fail the install before writing anything. Directories are
+# never echoed: they are untrusted text on their way to a terminal.
+build_trigger_path() {
+  local claude_bin="claude" configured=""
+  if [ -f "$LOOM_HOME/config.json" ]; then
+    configured="$(jq -r '.claude_bin // empty | strings' "$LOOM_HOME/config.json" 2>/dev/null || true)"
+  fi
+  [ -n "$configured" ] && claude_bin="$configured"
+  # python3: the interpreter of any `#!/usr/bin/env python3` tool the pass runs (a wrapper
+  # set as claude_bin, for one). With the venv's bin first it usually resolves there; the
+  # directory it resolves from in this shell is carried for a host where it does not.
+  local required=(git jq python3) optional=()
+  case "$claude_bin" in
+    */*)
+      # A name with a '/' is executed as is, never looked up on PATH: no directory needed,
+      # only a check that it runs.
+      if [ ! -f "$claude_bin" ] || [ ! -x "$claude_bin" ]; then
+        echo "     WARNING: claude_bin '$claude_bin' is not executable; the periodic pass" >&2
+        echo "     cannot run the summarizer (fix config.json's claude_bin)." >&2
+      fi
+      ;;
+    *) required=("$claude_bin" "${required[@]}") ;;
+  esac
+  [ -x "$GITLEAKS_BIN" ] || optional=(gitleaks)
+
+  local hits=":" name hit is_required
+  for name in "${required[@]}" ${optional+"${optional[@]}"}; do
+    is_required=1
+    [ "$name" = gitleaks ] && is_required=0
+    if ! hit="$(trigger_path_hit "$name")"; then
+      if [ "$is_required" = 1 ]; then
+        echo "     WARNING: '$name' is not on this shell's PATH, so the periodic trigger cannot" >&2
+        echo "     resolve it either. Install it and re-run install.sh (docs/RUNBOOK.md §2)." >&2
+      fi
       continue
     fi
-    case ":$out:" in
-      *":$comp:"*) continue ;; # already there: the trigger PATH stays de-duplicated
-    esac
+    # Absolute directories only: '.', an empty component or a relative one mean "wherever the
+    # pass happens to run", which in a 15-minute unattended job turns a dropped file into an
+    # executable.
+    if [[ $hit != /* || ! $hit =~ ^[A-Za-z0-9_./@+-]+$ ]]; then
+      echo "     WARNING: '$name' resolves from a PATH directory that is relative or holds characters" >&2
+      echo "     a scheduler entry cannot carry; it is left out of the trigger environment, so the" >&2
+      echo "     periodic pass will not find it (docs/RUNBOOK.md §2)." >&2
+      continue
+    fi
+    case "$hits" in *":$hit:"*) ;; *) hits="$hits$hit:" ;; esac
+  done
+
+  local out="$TRIGGER_PATH_MARKER" comp parts=() sys=()
+  IFS=':' read -r -a parts <<<"${PATH:-}"
+  IFS=':' read -r -a sys <<<"$TRIGGER_SYSTEM_DIRS"
+  for comp in ${parts+"${parts[@]}"}; do
+    case "$hits" in *":$comp:"*) ;; *) continue ;; esac
+    case ":$out:" in *":$comp:"*) continue ;; esac # de-duplicated
     out="$out:$comp"
   done
-  if [ "$dropped" -gt 0 ]; then
-    echo "     note: $dropped PATH component(s) left out of the trigger environment (they" >&2
-    echo "     hold characters a scheduler entry cannot carry). See docs/RUNBOOK.md §2." >&2
-  fi
-  # Belt over the per-component braces: whatever we assembled must still be a single safe
+  for comp in "${sys[@]}"; do
+    case ":$out:" in *":$comp:"*) continue ;; esac
+    out="$out:$comp"
+  done
+  # Belt over the per-directory checks: whatever we assembled must still be a single safe
   # assignment value (letters, digits, _ . / @ + - and the ':' separator — no CR, no '%').
   if [[ ! $out =~ ^[A-Za-z0-9_./@+:-]+$ ]]; then
-    TRIGGER_PATH_VALUE=""
-    echo "     WARNING: could not build a safe PATH for the trigger; the periodic pass will" >&2
-    echo "     run with the scheduler's minimal PATH (docs/RUNBOOK.md §2)." >&2
+    echo "install.sh: could not build a safe PATH for the periodic trigger." >&2
+    return 1
+  fi
+  if [ "${#out}" -gt $((TRIGGER_PATH_LINE_MAX - 5)) ]; then
+    echo "install.sh: the trigger PATH would make a $((${#out} + 5))-byte 'PATH=' line, over the" >&2
+    echo "  $TRIGGER_PATH_LINE_MAX-byte limit: macOS cron silently DROPS environment lines of 999 bytes" >&2
+    echo "  or more, and the pass would then run without claude/git/gitleaks. The directories" >&2
+    echo "  of claude, git, jq and python3 are too long together; see docs/RUNBOOK.md §2." >&2
     return 1
   fi
   TRIGGER_PATH_VALUE="$out"
@@ -513,9 +583,10 @@ install_trigger_systemd() {
   # and a systemd *user* service inherits the user manager's environment, not this shell's.
   # Resolve both ExecStart and LOOM_HOME as the unit is copied, so the timer is correct by
   # construction. ENVIRON (not -v) carries the value through awk verbatim.
-  # `Environment=PATH=` rides along with LOOM_HOME for scanner parity (P2.F5): the user
-  # manager's environment is not this shell's, so without it the timer's `loom process`
-  # resolves a different — weaker — scanner engine than the operator just verified.
+  # `Environment=PATH=` rides along with LOOM_HOME (P2.F5): the user manager's environment
+  # is not this shell's, so without it the timer's `loom process` would not resolve the
+  # claude, git and fallback gitleaks the operator just resolved. It is the SAME minimal
+  # value the crontab block carries (build_trigger_path), for parity between the branches.
   # `loom doctor`'s unit-integrity row re-derives exactly these substitutions from the
   # shipped template, so their ORDER here is part of that contract.
   local svc="$SYSTEMD_USER_DIR/loom-process.service"
@@ -565,10 +636,8 @@ install_trigger_cron() {
     echo "     cron entry installed (tag '$CRON_TAG'), replacing any previous one:"
     echo "       $CRON_ENV_LINE"
     if [ -n "$TRIGGER_PATH_VALUE" ]; then
-      # The value itself is not echoed (it is the operator's PATH, and this is a terminal);
-      # `crontab -l` shows it in full to anyone who wants to audit it.
-      echo "       PATH=<the install-time PATH, so the periodic scan resolves the same"
-      echo "            engine as this shell — see docs/RUNBOOK.md §2>"
+      # Short and whitelisted by construction (build_trigger_path), so it can be shown.
+      echo "       PATH=$TRIGGER_PATH_VALUE"
     fi
     echo "       $CRON_LINE"
     echo "     Review it with 'crontab -l'."
@@ -875,9 +944,13 @@ if [ "${LOOM_SKIP_TRIGGER:-0}" = "1" ]; then
 elif ! loom_home_is_scheduler_safe; then
   echo "     WARNING: no periodic trigger installed (unsafe LOOM_HOME); see docs/RUNBOOK.md §2." >&2
 else
-  # Resolved once, used by both branches: an unbuildable PATH is a warning, never a reason to
-  # leave the host with no periodic trigger at all (a weaker scanner beats no scan).
-  build_trigger_path || true
+  # Resolved once, used by both branches. A PATH the scheduler would drop is a hard stop
+  # BEFORE either branch writes anything: installing a trigger that silently runs without
+  # claude/git is the failure this exists to prevent (RUNBOOK §2).
+  if ! build_trigger_path; then
+    echo "install.sh: the periodic trigger was NOT installed; nothing was written to the scheduler." >&2
+    exit 1
+  fi
   if systemd_user_available; then
     # A systemd host never ALSO gets a cron entry: one trigger, one owner.
     if ! install_trigger_systemd; then
