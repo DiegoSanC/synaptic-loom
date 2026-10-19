@@ -107,8 +107,8 @@ With `--server-url`, a pasted link must point at that same server, or enrolment 
 `loom init` (a permanent token at a hidden prompt) remains the break-glass form of this
 step. `loom doctor` flags such a token and tells you to re-enrol.
 
-**Re-enrolling this machine.** Ask the operator for a new invitation and run
-`loom enroll` again, exactly as above; every other setting in `~/.loom/config.json` is
+**Re-enrolling this machine.** Ask the operator for a new invitation (or, from another
+machine of yours, "Add a machine" in the web UI) and run `loom enroll` again, exactly as above; every other setting in `~/.loom/config.json` is
 kept. When the server is the one this machine already uses, `loom enroll` sends the old
 device token along and the server revokes it, so the token you replaced stops working at
 once. Moving the machine to another server sends nothing to the new one: ask the old
@@ -274,7 +274,8 @@ was reversed — open the read-only web UI:
 It opens your browser already signed in. There is no password to create: the command uses
 this machine's token to ask the server for a one-time link, opens it, and also prints it.
 The link works **once** and only for **two minutes**; the browser session it opens lasts
-12 hours. Run `loom ui` again for a new one. Nothing can be changed from the UI.
+12 hours. Run `loom ui` again for a new one. Nothing in the logbook can be changed from
+the UI; what you can change there is your own machines (below).
 
 | Page | What it shows |
 |---|---|
@@ -284,9 +285,22 @@ The link works **once** and only for **two minutes**; the browser session it ope
 | **→ Curation** | Items someone marked stale or not applicable, with who said so; the history of links between items. |
 | **An item** | Its text and state, what replaced it or what it replaced, where it came from (session, model, prompt), and every feedback on it. |
 | **Usage** | The same team totals as `loom stats`, over 7 days, 30 days or all time. |
+| **My machines** | One row per machine you enrolled: when it was enrolled, when it last renewed its token, when that expires, and whether it is live, expired or revoked. "Add a machine" and "Revoke" (below). |
 
 The pages carry the same "unverified reference" banner as `loom log`, and browsing is not
 counted as a recall in `loom stats`.
+
+**Add a machine.** On *My machines*, "Add a machine" shows a setup code and its
+`/ui/join#code=…` link, **once**. It enrols one more machine as yours, works once and
+expires in 10 minutes. On the new machine, install the client and run `loom enroll` as in
+[step 3](#3-enrol-this-machine), pasting that link. No operator is involved, so do not
+forward the link: whoever redeems it gets a machine of yours.
+
+**Revoke.** "Revoke" on a live machine's row revokes it at once: its device token and every
+renewal of it stop working, and so does every machine added with a setup code it issued
+(and the machines those added, and so on), together with its setup codes nobody has used
+yet. Revoke a machine you lost, sold or no longer use. Revoking the machine your browser
+session was opened from (marked *this session*) also signs you out.
 
 > **WSL2:** a stock install has no browser Python can open, so nothing pops up — copy the
 > printed link into your Windows browser within two minutes. To have it open by itself,
@@ -386,5 +400,5 @@ a `jq` filter that strips only Loom's hook and leaves your other settings untouc
 4. `rm -rf ~/.loom` (this also removes the venv).
 
 Uninstalling does not touch your transcripts and does not withdraw entries already posted.
-Ask the operator to revoke your device token when you are done
-(`admin.py revokedevice --id <n>`, RUNBOOK §4).
+Revoke this machine when you are done: "Revoke" on *My machines* in `loom ui`, or ask the
+operator (`admin.py revokedevice --id <n>`, RUNBOOK §4).

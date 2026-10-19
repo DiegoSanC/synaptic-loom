@@ -475,7 +475,8 @@ A bearer is either a developer's permanent token (`users.token_hash`, minted by
 the middleware tries the permanent one first. Revocation is per device (`revokedevice`,
 which revokes the machine's whole renewal chain) or per developer (`deactivate`, which
 revokes every chain of theirs, expires their pending enrolment codes and refuses their
-permanent token while they stay deactivated; there is no `reactivate`).
+permanent token while they stay deactivated; there is no `reactivate`). Since D20 every
+chain revocation also runs the issuer cascade (§6.4).
 
 **Credentials — owner decision of 2026-09-22 (issue #20), superseding "one permanent
 bearer token per developer, hand-delivered".** A hand-delivered permanent token never

@@ -857,6 +857,17 @@ It is **one-way** for machines and codes: there is no `reactivate`, and flipping
 which was refused, not revoked). A returning person is re-created with a new email (or by
 SQL) and enrols again.
 
+**The issuer cascade (D20).** A machine added from the web (*My machines* → "Add a
+machine") was enrolled with a setup code that names the machine whose `/ui` session issued
+it. Every chain revocation — `revokedevice`, `deactivate`, the web's "Revoke" and B2's
+re-enrolment — also revokes, in the same transaction, every chain minted from a setup code
+one of the revoked tokens issued, then the chains those issued, until nothing changes; and
+it expires every code still unredeemed, setup code or web invitation, that any of those
+tokens issued. A web invitation that someone already redeemed is not followed: the person
+it invited keeps their machine. Machines enrolled from an `admin.py invite` name no
+issuer, so revoking another machine never reaches them. The counts `revokedevice` and
+`deactivate` print include the cascade.
+
 **An enrolment code sent to the wrong person or channel** is not a reason to `deactivate`
 (that kills the person's working machines). Expire that user's unredeemed codes, then send
 a fresh `invite`. The image has no `sqlite3` binary; Python's own CLI does the same:
