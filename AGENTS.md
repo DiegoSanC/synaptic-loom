@@ -58,6 +58,11 @@ required for the same reason and has been since phase 2; since D16 every process
 test needs it too. Any test that runs `client/install.sh` must set `LOOM_SKIP_GITLEAKS=1`
 (or supply `LOOM_GITLEAKS_TARBALL`), or the installer's step 1b tries to download gitleaks.
 
+**Two suites may share one Docker daemon** (e.g. from two worktrees). Waves `r` and `s` fix
+their stacks' subnets, so a second suite does not fail with "Pool overlaps"; it waits for
+a host-wide lock and prints one `waiting for the Compose-wave host lock … (held by pid …)`
+line. Mechanism and lock file: `test/waves/README.md`.
+
 **A git worktree needs its own `.venv` before the suite will run.** The doctrine above
 says to work in a worktree, and `make test` resolves `PYTHON` as
 `[ -x .venv/bin/python ] && echo .venv/bin/python || echo python3` — so a fresh worktree

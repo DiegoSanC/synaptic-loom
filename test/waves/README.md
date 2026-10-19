@@ -50,18 +50,33 @@ not a per-epic oracle. It drives the real `deploy/compose` stack; the one layer 
 `r/compose.goal.yml`, moves Caddy's ports to a loopback port and fixes the `edge` subnet
 so client containers get literal addresses. TLS is real: `LOOM_DOMAIN=loom.localhost` is a
 name Caddy's automatic HTTPS issues from its internal CA, because a public ACME CA cannot
-validate a name from a test host. The stack's subnets are fixed by design, so two runs of
-wave `r` cannot share one Docker host at the same time.
+validate a name from a test host. The stack's subnets are fixed by design, so two stacks of
+wave `r` cannot be up on one Docker host at the same time; two suites on one host take turns
+instead (below).
 
 Wave `s` (D18, owner decision of 2026-10-17) is the same kind of wave for that topology's
 backups and restore. It drives the real `deploy/compose` stack (`loom` and `backup` only;
 Caddy is wave `r`'s) and the real `deploy/compose/restore.sh`; its one layer,
-`s/compose.goal.yml`, moves the `backend` subnet to `10.217.19.0/24`, so waves `r` and `s`
-can run at the same time on one host, but two runs of wave `s` cannot. The interval (2 s)
-and retention (3) it runs with come from its own env file; the defaults are asserted on the
-production file. **Amendment to wave `r` (D18):** `test_only_caddy_is_published_and_the_server_has_no_host_port`
+`s/compose.goal.yml`, moves the `backend` subnet to `10.217.19.0/24`, so the stacks of
+waves `r` and `s` can be up at the same time on one host, but two of wave `s` cannot. The
+interval (2 s) and retention (3) it runs with come from its own env file; the defaults are
+asserted on the production file. **Amendment to wave `r` (D18):** `test_only_caddy_is_published_and_the_server_has_no_host_port`
 asserted the service set `{loom, caddy}`; it now asserts `{loom, caddy, backup}` exactly,
 and that no service but Caddy has a host port.
+
+**Two suites on one Docker host.** `conftest.py` (accessory, like `_goalkit.py`) sets up
+the `stack` fixture of every wave that layers a `compose.goal.yml` — today `r` and `s` —
+under one host-wide lock, `_goalkit.compose_host_lock` (`flock` on
+`~/.cache/synaptic-loom/compose-waves.lock`, the passwd home's, so every checkout and
+worktree resolves the same file), and holds it until that stack is torn down. A second
+suite, from another worktree, waits for it and prints one line,
+`waiting for the Compose-wave host lock … (held by pid … in <checkout>)`, instead of failing
+with Docker's "Pool overlaps with other one on this server". It is ONE lock, re-entrant
+within a process, rather than one per subnet set: a session keeps both its stacks up until
+it ends, so per-subnet locks would deadlock two suites that reach `r` and `s` in opposite
+orders; the cost is that `r` in one suite and `s` in another take turns too. The kernel
+drops the lock however its holder exits. `test_compose_lock.py` grades it with real pytest
+runs of a synthetic wave tree and never touches the real lock.
 
 Seam ids such as `t-curation-watermark`, `p3-state-stat-fields` or `p4-coverage-cache`,
 cited across the code and tests, name interfaces frozen by the original build plan, whose
