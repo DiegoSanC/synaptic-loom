@@ -22,6 +22,7 @@ EXPECTED_PUBLIC_PATHS = {
 EXPECTED_URL_PARAMETERS = {
     "author", "before", "entry_id", "entry_ids", "limit", "link_id", "ordinal",
     "project_id", "q", "remote", "show_replaced", "since", "tab", "type", "user_id",
+    "device_id",    # D20 /ui/devices/{id}/revoke: a device_tokens row id (§6.4), not a secret
 }
 # FastAPI's own documentation routes: plain Starlette routes that take no parameter.
 DOC_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}

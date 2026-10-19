@@ -21,7 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from server import (auth, auth_events, client_ip, db, feedback, items, links, public_url, recall,
-                    search, ui_auth, ui_pages)
+                    search, ui_auth, ui_machines, ui_pages)
 from server.normalize import normalize
 from server.rate_limit import RateLimiter
 
@@ -755,7 +755,8 @@ def open_ui_session(payload: UiSessionRequest, request: Request):
     return response
 
 
-from server import ui_admin  # noqa: E402,F401  (registers its routes on ui_pages.router)
+# `ui_machines` (imported above) and `ui_admin` register their routes on `ui_pages.router`.
+from server import ui_admin  # noqa: E402,F401
 app.include_router(ui_pages.router)
 
 
