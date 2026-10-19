@@ -269,7 +269,7 @@ yourself:
 ### Browsing: `loom ui`
 
 To look at the logbook yourself — every registered project, what stands today and what
-was reversed — open the read-only web UI:
+was reversed — open the web UI:
 
 ```bash
 ~/.loom/venv/bin/loom ui              # the projects overview
@@ -280,7 +280,9 @@ It opens your browser already signed in. There is no password to create: the com
 this machine's token to ask the server for a one-time link, opens it, and also prints it.
 The link works **once** and only for **two minutes**; the browser session it opens lasts
 12 hours. Run `loom ui` again for a new one. Nothing in the logbook can be changed from
-the UI; what you can change there is your own machines (below).
+the UI; what you can change there is your own machines (below) and, if you are an admin,
+the team's accounts. **Sign out** (top right) ends this browser session at once; your
+machine and its other sessions are untouched.
 
 | Page | What it shows |
 |---|---|
@@ -291,6 +293,7 @@ the UI; what you can change there is your own machines (below).
 | **An item** | Its text and state, what replaced it or what it replaced, where it came from (session, model, prompt), and every feedback on it. |
 | **Usage** | The same team totals as `loom stats`, over 7 days, 30 days or all time. |
 | **My machines** | One row per machine you enrolled: when it was enrolled, when it last renewed its token, when that expires, and whether it is live, expired or revoked. "Add a machine" and "Revoke" (below). |
+| **Users** (admins only) | Every user with their role, state, pending invitation and machines: "Invite" (email, name, role) shows an invitation link once; "Change role", "Deactivate" and "Revoke" on any machine. The operator's side of it is `docs/RUNBOOK.md` §4. |
 
 The pages carry the same "unverified reference" banner as `loom log`, and browsing is not
 counted as a recall in `loom stats`.
@@ -355,7 +358,7 @@ directory's git remote when you omit it.
 | `log [project]` | Read the logbook. `--grep`, `--type`, `--limit`, `--all`. |
 | `feedback` | File a verdict on one item. Needs `--item`, `--verdict`, `--note`. |
 | `stats [--since 7d]` | Team totals. Never per person. |
-| `ui [project]` | Open the read-only web UI in your browser, signed in. |
+| `ui [project]` | Open the web UI in your browser, signed in: browse the logbook, manage your machines. |
 | `status` | Local panel: your account and role with its changes of the last 30 days, pending, parked, quarantined, recent errors. |
 | `doctor` | Environment checklist. Run it first when something looks wrong. |
 | `process` | Force a pass now instead of waiting for the scheduler. |

@@ -384,7 +384,8 @@ the 2026-09-23 plan, below).
 | GET | `/api/me` | Who the bearer is: `{name, email, role, device_id, events}`, `device_id` `null` for a permanent token, `events` the 20 most recent `auth_events` rows about the caller, newest first, without `client_ip` (D20, §6.4). Read by `loom status` and `loom doctor` |
 | POST | `/ui/session` | **Anonymous.** Redeem a login code for the `loom_ui` session cookie: `204` · `401 invalid_code` for unknown, expired, redeemed, deactivated-user or revoked-device codes alike (D14) |
 | GET | `/ui/join` | **Anonymous.** The static page an invitation link opens (D19): install steps and "paste this whole link into `loom enroll`". No script, no form; it never receives, redeems, looks up or renders a code |
-| GET | `/ui/…` | The read-only web UI (§6.3): server-rendered pages, `GET`/`HEAD` only, the session cookie only |
+| GET | `/ui/…` | The web UI (§6.3): server-rendered pages, `GET`/`HEAD`, the session cookie only; `/ui/machines` and, for admins, `/ui/admin/users` are listed in §6.4 |
+| POST | `/ui/…` | The web UI's writes (D20, §6.4): sign-out, *My machines* (setup code, revoke) and the admins' *Users* (invite, deactivate, role). Only the routes §6.4 lists, each behind its `Origin`, CSRF and session-kind checks; any other `POST` under `/ui` than these and `/ui/session` is `405` |
 
 **Items — owner decision of 2026-09-23 (D13).** `POST /api/entries` accepts an optional
 `items: [{item_type, labelled, text_md}]` in document order, added the way `item_types`
@@ -497,7 +498,8 @@ travels is short-lived and single-use, and the secret that persists never travel
   **silently** inside a pass it was already running once less than 25 % of its life
   remains (`POST /api/device-tokens/renew`), and the predecessor stays valid until its own
   expiry so a crash between receiving and persisting the successor costs a retry, never a
-  machine that stops capturing. There is deliberately no logout.
+  machine that stops capturing. There is deliberately no logout of a machine (the web's
+  sign-out, D20, ends one browser session, §6.4).
 - **Renewal chain (D19).** Each renewal links the old token to its successor
   (`replaced_by`), so one machine's tokens form a chain. **Renew re-issues, never forks:**
   inside one write transaction it re-checks that the caller is neither revoked nor

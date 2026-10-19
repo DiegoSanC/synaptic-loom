@@ -840,9 +840,7 @@ promote the successor first. A deactivated admin does not count. `promote`/`demo
 user who already has that role says so and changes nothing; an unknown email exits 1.
 They are the only `admin.py` commands that record an `auth_events` row (`promoted` /
 `demoted`, with no actor, since nobody is signed in to a shell); the other commands
-record none, as before. `auth_events` holds the client address of web actions, which is
-personal data: the server deletes rows older than `LOOM_AUTH_EVENTS_RETENTION_DAYS`
-(default 180) every time it starts.
+record none, as before (retention of these rows: "Settings for the web's writes" below).
 
 **From the web (D20, DESIGN §6.4).** An admin does the same in the browser: `loom ui` →
 *Users* (`/ui/admin/users`) lists every user with their role, state, pending invitation and
@@ -852,8 +850,17 @@ the invitation link once. **Deactivate** and **Change role** have `deactivate`'s
 `promote`/`demote`'s effects, the last-admin refusal included (`409 last_admin`), and each
 live machine has a **Revoke** button. Every web change records an `auth_events` row naming
 the admin (`user_invited`, `user_deactivated`, `promoted`, `demoted`); a member gets `403`
-on that page. The web writes nothing while the server has no public URL (`LOOM_PUBLIC_URL`,
-or Fly's hostname).
+on that page.
+
+**Settings for the web's writes (D20).** Three server settings, read from the environment
+(`fly.toml [env]`; on Compose, the `loom` service's `environment:` in
+`deploy/compose/docker-compose.yml`):
+
+| Setting | Default | What it does |
+|---|---|---|
+| `LOOM_PUBLIC_URL` | Fly: `https://$FLY_APP_NAME.fly.dev`; Compose: `https://${LOOM_DOMAIN}`; otherwise none | The URL people open the UI at. Every `/ui` write must come from that origin (`403 bad_origin` otherwise), so set it whenever the browser reaches the server under another name. With no URL at all, every write — sign-out, "Add a machine", "Revoke", the *Users* forms — answers `403 public_url_unset` while browsing still works, and startup logs one `WARNING` from the logger `uvicorn.error.loom.public_url`: `public_url_unset: no LOOM_PUBLIC_URL (or FLY_APP_NAME), so every /ui write is refused (D20)`. Seeing it after a deploy means: set `LOOM_PUBLIC_URL` and restart |
+| `LOOM_SETUP_CODE_TTL_S` | `600` (10 minutes) | Life of a setup code from *My machines* → "Add a machine", in seconds; read when a code is issued. A non-positive or non-numeric value is the default |
+| `LOOM_AUTH_EVENTS_RETENTION_DAYS` | `180` | `auth_events.client_ip` (the address of every web action and sign-in) is **personal data**, so the server deletes `auth_events` rows older than this many days every time it starts. A non-positive or non-numeric value is the default |
 
 Revoking a machine or deactivating a person also ends their open web-UI sessions (D14) on
 their next request; there is nothing UI-specific to revoke.
@@ -967,7 +974,7 @@ cd <project-repo> && ~/.loom/venv/bin/loom register
 #    at the start of a task, and in a registered-but-undecided repo it asks you once.
 ~/.loom/venv/bin/loom check       # not_registered | registered_undecided | enabled | disabled | unknown
 
-# 7. See what Loom holds, in a browser, signed in (D14; read-only)
+# 7. See what Loom holds, in a browser, signed in (D14; D20: My machines, Sign out)
 ~/.loom/venv/bin/loom ui          # the projects overview;  loom ui <project> opens that project
 #    WSL2: Python finds no browser on a stock install, so the link is always printed too
 #    (single-use, 2 minutes). To have it open by itself: sudo apt install wslu, then
@@ -1351,7 +1358,7 @@ counts PEOPLE per item, not rows: one person filing the same item twice counts o
 
 ### Reading the logbook in a browser: `loom ui` (D14)
 
-`loom ui` opens the read-only web UI signed in; `loom ui <project>` lands on that project.
+`loom ui` opens the web UI signed in; `loom ui <project>` lands on that project.
 The link it prints works once, within two minutes; the browser session then lasts 12 hours.
 
 - **Projects** — one row per project: entries, items current and replaced, open tasks,
@@ -1365,8 +1372,16 @@ The link it prints works once, within two minutes; the browser session then last
   every feedback row with its author: the curation tab tells you whose agent consumed a
   stale item.
 - **Usage** — the same totals as `loom stats`, over 7 days, 30 days or all time.
+- **My machines** (D20) — one row per machine the person enrolled (enrolled, last renewed,
+  expiry, state) with "Revoke" on each live one, and "Add a machine": a single-use setup
+  code and its `/ui/join#code=…` link, shown once, for `loom enroll` on the new machine
+  (10 minutes; §4 → "The issuer cascade").
+- **Users** (admins only, D20) — invitations, roles, deactivation and any machine's
+  revocation from the browser (§4 → "From the web").
 
-Nothing can be changed from the UI; browsing it is not counted as a recall.
+**Sign out** (top right) ends that browser session only. The logbook itself cannot be
+changed from the UI (no registration, feedback, links or curation); browsing it is not
+counted as a recall.
 
 ### Curating (manual, one machine)
 

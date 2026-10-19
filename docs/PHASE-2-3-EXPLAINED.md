@@ -3,6 +3,12 @@
 A detailed explanation of each requirement (R) in `PHASE-2-3-SPEC.md`, with step-by-step
 examples. A companion document; the normative spec is `PHASE-2-3-SPEC.md`.
 
+> **Settled since this was written** (read the rows in `DESIGN.md` §1 before acting on a
+> "pending" below): D14, the web UI's login (Q-3.3); D16, gitleaks mandatory with no
+> regex-only fallback (R2.3); D17, the client address the API's rate limits and audit
+> read (Q-3.8); D18, backups for the Docker Compose topology (R3.1); D20, global roles
+> and the web's account writes (Q-3.4 in part; per-project permissions stay open).
+
 ---
 
 ## 0. Mini-glossary (the terms used throughout this document)

@@ -217,7 +217,11 @@ fly ssh console -a <your-app-name> -u app -C "python -m server.admin promote --e
 From then on `demote` and `deactivate` refuse the last active admin (`last_admin`, exit
 1): promote a successor first. `listusers` shows each user's role; the rest of user
 administration is in `docs/RUNBOOK.md` §4. As an admin you can also invite, deactivate and change
-roles from the browser: `loom ui` → *Users*.
+roles from the browser: `loom ui` → *Users*. Every write in the browser (these, *My
+machines*, Sign out) needs the public URL above and must come from its origin; with none,
+startup logs a `public_url_unset` WARNING. That setting, `LOOM_SETUP_CODE_TTL_S` and
+`LOOM_AUTH_EVENTS_RETENTION_DAYS` are in `docs/RUNBOOK.md` §4 → "Settings for the web's
+writes".
 
 `adduser` also exists and prints a permanent token. It is the break-glass path only — see
 `server/README.md`.
@@ -633,7 +637,9 @@ export LOOM_DB=./loom.db
 .venv/bin/python -m uvicorn server.app:app --port 8765      # or `make serve`
 ```
 
-`server/README.md` covers this path, the admin CLI and the smoke curls.
+`server/README.md` covers this path, the admin CLI and the smoke curls. Neither run sets
+`LOOM_PUBLIC_URL`, so startup logs a `public_url_unset` WARNING and the web UI's writes
+answer `403 public_url_unset` (`docs/RUNBOOK.md` §4 → "Settings for the web's writes").
 
 ---
 

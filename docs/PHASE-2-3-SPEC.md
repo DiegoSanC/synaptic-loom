@@ -138,10 +138,12 @@ of path-fallback registrations into a logical project → token management.
 - **R3.2.1** Login mechanism: **resolved by DESIGN D14 (2026-09-29)** — `loom ui` trades
   the machine's bearer for a single-use login code; the browser gets a short, server-side
   session. The read-only part of R3.2 shipped with it (DESIGN §6.3); registration, merge
-  and token management remain.
+  and token management remain (token management: DESIGN D20, R3.2.2).
 - **R3.2.2** Token management: create/revoke per-dev tokens from the UI, replacing the
   `admin.py` CLI for day-to-day use (CLI remains for bootstrap). Requires an admin
-  concept (Q-3.4).
+  concept (Q-3.4). *(Delivered 2026-10-19 by DESIGN D20, phase 2a, §6.4: in `/ui` a
+  member adds and revokes their own machines and an admin invites, deactivates, changes
+  roles and revokes any machine; `admin.py` stays for bootstrap.)*
 - **R3.2.3** The read-only browsing need may be partially covered by R3.5 (OKF
   visualizer); the UI build should start AFTER R3.5 lands so its scope can shrink to
   what the visualizer does not cover (login, registration, merge, tokens).
@@ -265,8 +267,11 @@ Phase 2 proceeds regardless (it hardens the running pilot).
   JWT, where non-revocability stops mattering because of the short TTL. The CLI/
   processor keeps its opaque token untouched (see Q-3.2). This keeps machine and
   human credentials separate, each with the right lifecycle.
-- **Q-3.4** Admin model: who can create/revoke users and merge paths — any team member,
-  or an admin role (schema has no roles)?
+- **Q-3.4** *(Resolved in part 2026-10-19 by DESIGN D20: global roles, `admin` or
+  `member` in `users.role`; admins invite, deactivate, change roles and revoke any
+  machine, members manage their own machines. Per-project permissions remain open.)*
+  Admin model: who can create/revoke users and merge paths — any team member, or an
+  admin role (schema has no roles)?
 - **Q-3.5** Supersession mechanism (see R3.4): mutable status column vs link table vs
   digest-only. Entries are append-only by contract — which option preserves that?
 - **Q-3.6** OKF bundle delivery: zip, per-file routes, or both; and how the visualizer
