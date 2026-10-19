@@ -824,6 +824,15 @@ through the team's agreed channel. The code is single-use and expires (24 h by d
 nothing permanent ever travels. Step 3 reads it at a hidden prompt — there is no flag to
 pass it on the command line, so it cannot land in shell history.
 
+**Onboarding with a link (D19).** When the server knows its public URL (`LOOM_PUBLIC_URL`;
+on Fly it defaults to `https://<app>.fly.dev`; SERVER-GUIDE Part 1 §7), `invite` ends with
+an **invitation link**, `https://<app>.fly.dev/ui/join#code=…`, and that link is what the
+operator sends instead of the bare code. Opened in a browser, it shows a static page with
+the steps below; the code rides in the link's fragment, which the browser never sends to
+the server. At step 3 the engineer pastes the **whole link** at the same hidden prompt,
+in place of the bare code. If `invite` printed no link (a hint on stderr says why), pass
+`--public-url https://<app>.fly.dev` or send the bare code as before.
+
 ```bash
 # 1. Clone the tool's repo
 git clone <repo-url> loom && cd loom
@@ -834,8 +843,9 @@ git clone <repo-url> loom && cd loom
 #    ~/.claude/CLAUDE.md that makes the agent run `loom check` at task start)
 bash client/install.sh            # asks to confirm each merge; --yes for non-interactive
 
-# 3. Enrol this machine: paste the enrolment code at the hidden prompt. The machine mints
-#    its own 90-day device token, written to ~/.loom/config.json (600) and renewed silently.
+# 3. Enrol this machine: paste the invitation link (or the bare enrolment code) at the
+#    hidden prompt. The machine mints its own 90-day device token, written to
+#    ~/.loom/config.json (600) and renewed silently.
 ~/.loom/venv/bin/loom enroll --server-url=https://<app>.fly.dev
 #    The machine is listed server-side under its short host name (the part before the
 #    first dot, so no network domain; 'device' if there is none); --device-name=NAME

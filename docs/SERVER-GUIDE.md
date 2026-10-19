@@ -12,7 +12,7 @@ deployment.
 
 Every command below was **executed on 2026-09-29** against a throwaway Fly app
 (`loom-scratch-2609`) created for this purpose and destroyed afterwards, and against a
-locally built image. The one section that was not executed is marked in place and listed
+locally built image. The sections that were not executed are marked in place and listed
 again at the end. Where a step produced a surprise, the surprise is written down rather
 than smoothed over — that is most of this document's value.
 
@@ -194,6 +194,18 @@ The code is the only thing that travels; send it over the team's channel. The en
 redeems it with `loom enroll` and **their** machine mints its own 90-day device token,
 which never leaves that machine and renews itself.
 
+When the server knows its public URL, `invite` also prints an **invitation link** as its
+last line, `https://<your-app-name>.fly.dev/ui/join#code=…`. Send the link rather than the
+bare code: it carries the server's address as well, it opens a static page with the
+install steps, and the engineer pastes the whole link into `loom enroll`. The code rides
+in the link's fragment, which a browser never sends to the server. The URL comes from
+`LOOM_PUBLIC_URL`; on Fly it defaults to `https://$FLY_APP_NAME.fly.dev`, so set it (in
+`fly.toml [env]`) only if the server is reached under another name. `invite --public-url
+https://…` overrides both for one invitation. With no URL known, `invite` prints the code
+alone and says on stderr how to set one. **Not executed on Fly** (listed at the end):
+whether `FLY_APP_NAME` reaches a command run through `fly ssh console -C`; if the link line
+is missing, the stderr hint says so, and `--public-url` is the answer.
+
 `adduser` also exists and prints a permanent token. It is the break-glass path only — see
 `server/README.md`.
 
@@ -340,6 +352,10 @@ docker compose exec -u app loom python -m server.admin invite --email dev@exampl
 `-u app` for the same reason as on Fly: `exec` is root by default, and a root-created WAL
 sidecar in `/data` is a file the server process then cannot write. Then prove the round
 trip as in Part 1 §8, with `--server-url=https://loom.example.com`.
+
+`docker-compose.yml` sets `LOOM_PUBLIC_URL=https://${LOOM_DOMAIN}` for the server, so
+`invite` ends with the invitation link, `https://loom.example.com/ui/join#code=…` (Part 1
+§7); `LOOM_DOMAIN` stays the only setting you write.
 
 ## 6. Check that the server sees each client's own address
 
@@ -620,6 +636,10 @@ Stated so nobody mistakes the rest for equally solid:
 - **Custom domains and certificates.** Everything here uses the `*.fly.dev` hostname and
   Fly's platform TLS.
 - **Any region other than `cdg`, and any second Machine.** Out of scope by design.
+- **The invitation link on Fly (§7, D19).** `invite`'s link line and `/ui/join` were
+  exercised by the test suite against a local server, not on a Fly Machine; in particular,
+  whether `FLY_APP_NAME` is set inside `fly ssh console -C` (which the default public URL
+  relies on) was not checked.
 - **Part 2 on a real VPS: certificate renewal and IPv6.** Wave `r` runs the real Compose
   files with `LOOM_DOMAIN=loom.localhost`, which Caddy serves from its internal CA. On
   2026-10-17 Part 2, as it stood then, was followed verbatim on a throwaway cloud VPS

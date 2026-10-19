@@ -381,6 +381,7 @@ the 2026-09-23 plan, below).
 | POST | `/api/device-tokens/renew` | Mint the calling device token's successor (`403 not_a_device_token` for a legacy token) |
 | POST | `/api/ui-login` | Mint a single-use, 120 s login code for the caller's browser: `201 {code, expires_at}` (D14, §6.3) |
 | POST | `/ui/session` | **Anonymous.** Redeem a login code for the `loom_ui` session cookie: `204` · `401 invalid_code` for unknown, expired, redeemed, deactivated-user or revoked-device codes alike (D14) |
+| GET | `/ui/join` | **Anonymous.** The static page an invitation link opens (D19): install steps and "paste this whole link into `loom enroll`". No script, no form; it never receives, redeems, looks up or renders a code |
 | GET | `/ui/…` | The read-only web UI (§6.3): server-rendered pages, `GET`/`HEAD` only, the session cookie only |
 
 **Items — owner decision of 2026-09-23 (D13).** `POST /api/entries` accepts an optional
@@ -449,10 +450,25 @@ revokes. Curation stays manual (decision E7; RUNBOOK §6 "Curating"). Frozen by 
 Auth: `Authorization: Bearer <token>`, enforced by an **allow-list** middleware:
 `/api/health` and `/api/enroll` are the only API paths served without a credential, so
 FastAPI's own `/docs`, `/redoc` and `/openapi.json` require a token too. TLS mandatory.
-The browser has its own way in (D14): `/ui/login`, `/ui/session` and three static assets
-(`/ui/static/login.js`, `favicon.svg`, `ui.css`) are the only public `/ui` paths; every
-other `/ui` path needs the `loom_ui` session cookie and never reads a bearer, and `/api/*`
-never reads the cookie.
+The browser has its own way in (D14): `/ui/login`, `/ui/session`, `/ui/join` (D19) and
+three static assets (`/ui/static/login.js`, `favicon.svg`, `ui.css`) are the only public
+`/ui` paths; every other `/ui` path needs the `loom_ui` session cookie and never reads a
+bearer, and `/api/*` never reads the cookie. The allow-list (`PUBLIC_PATHS`,
+`server/app.py`) is exactly this set of eight paths, matched exactly (no prefix, no static
+mount), and a test asserts it: `/api/health`, `/api/enroll`, `/ui/login`, `/ui/session`,
+`/ui/join`, `/ui/static/login.js`, `/ui/static/favicon.svg`, `/ui/static/ui.css`.
+No route takes a secret in its path or query string (both reach the access log and the
+browser history); a test over the route table asserts that too. Secrets travel in a body,
+a header, a cookie or a URL fragment.
+
+**Invitation link (D19).** When the server's public URL is known, `admin.py invite`
+appends one line to its unchanged output: `<public-url>/ui/join#code=<code>`. The URL is
+`invite --public-url`, else `LOOM_PUBLIC_URL`, else `https://$FLY_APP_NAME.fly.dev` on Fly
+(the Compose stack sets `LOOM_PUBLIC_URL=https://${LOOM_DOMAIN}`); with none, the code is
+printed alone and a hint goes to stderr. The code rides in the fragment, which a browser
+never sends, so `/ui/join` is static: its CSP is the `/ui` one without `script-src` and
+`connect-src` and with `form-action 'none'`. The fragment does stay in the browser's
+history; the code's TTL bounds that.
 A bearer is either a developer's permanent token (`users.token_hash`, minted by
 `admin.py adduser`) or a **device token** (`device_tokens`, one per machine, expiring);
 the middleware tries the permanent one first. Revocation is per device (`revokedevice`)
