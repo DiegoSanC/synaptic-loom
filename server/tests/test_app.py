@@ -21,7 +21,7 @@ EXPECTED_PUBLIC_PATHS = {
 # a credential: a new one joins this list only once someone has checked that it is not.
 EXPECTED_URL_PARAMETERS = {
     "author", "before", "entry_id", "entry_ids", "limit", "link_id", "ordinal",
-    "project_id", "q", "remote", "show_replaced", "since", "tab", "type",
+    "project_id", "q", "remote", "show_replaced", "since", "tab", "type", "user_id",
 }
 # FastAPI's own documentation routes: plain Starlette routes that take no parameter.
 DOC_PATHS = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"}

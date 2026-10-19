@@ -216,7 +216,8 @@ fly ssh console -a <your-app-name> -u app -C "python -m server.admin promote --e
 
 From then on `demote` and `deactivate` refuse the last active admin (`last_admin`, exit
 1): promote a successor first. `listusers` shows each user's role; the rest of user
-administration is in `docs/RUNBOOK.md` §4.
+administration is in `docs/RUNBOOK.md` §4. As an admin you can also invite, deactivate and change
+roles from the browser: `loom ui` → *Users*.
 
 `adduser` also exists and prints a permanent token. It is the break-glass path only — see
 `server/README.md`.

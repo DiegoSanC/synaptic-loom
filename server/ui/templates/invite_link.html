@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}Loom — Invitation{% endblock %}
+{% block content %}
+<h1>Invitation for {{ invitee }} ({{ email }})</h1>
+<p>Send this link through the team's channel. It works once and is valid until {{ expires_at }}; it is shown only now.</p>
+<pre><code>{{ link }}</code></pre>
+<p>On their machine, <code>loom enroll</code> takes the link and mints that machine's own device token.</p>
+<p><a href="/ui/admin/users">Back to Users</a></p>
+{% endblock %}

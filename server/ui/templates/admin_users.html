@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Loom — Users{% endblock %}
+{% block content %}
+<h1>Users</h1>
+<section id="invite" class="panel">
+  <h2>Invite</h2>
+  <form method="post" action="/ui/admin/users/invite" class="filters">
+    {{ csrf_field() }}
+    <input type="email" name="email" placeholder="Email" required>
+    <input type="text" name="name" placeholder="Name (for a new user)">
+    <select name="role">
+      {% for r in roles|reverse %}
+      <option value="{{ r }}">{{ r }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Invite</button>
+  </form>
+  <p class="muted">A known email keeps its name and role and gets a new invitation link, valid 24 h, shown once.</p>
+</section>
+<section id="users">
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr><th>Name</th><th>Email</th><th>Role</th><th>State</th><th>Machines</th><th>Actions</th></tr>
+  </thead>
+  <tbody>
+  {% for u in users %}
+    <tr data-user="{{ u.id }}">
+      <td data-col="name">{{ u.name }}</td>
+      <td data-col="email">{{ u.email }}</td>
+      <td data-col="role">{{ u.role }}</td>
+      <td data-col="state">{{ "active" if u.active else "deactivated" }}{% if u.pending %} <span class="badge">pending invitation</span>{% endif %}</td>
+      <td data-col="machines">
+        {% if u.machines %}
+        <ul class="machines">
+        {% for m in u.machines %}
+          <li><span data-col="device">{{ m.name }}</span> <span class="muted">{{ m.state }}, enrolled {{ m.enrolled[:10] }}, expires {{ m.expires[:10] }}</span>
+            {% if m.state == "active" %}
+            <form method="post" action="/ui/devices/{{ m.id }}/revoke" class="inline">
+              {{ csrf_field() }}
+              <button type="submit">Revoke</button>
+            </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+        </ul>
+        {% else %}<span class="muted">none</span>{% endif %}
+      </td>
+      <td data-col="actions">
+        <form method="post" action="/ui/admin/users/{{ u.id }}/role" class="inline">
+          {{ csrf_field() }}
+          <select name="role">
+            {% for r in roles %}
+            <option value="{{ r }}"{% if r == u.role %} selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+          </select>
+          <button type="submit">Change role</button>
+        </form>
+        {% if u.active %}
+        <form method="post" action="/ui/admin/users/{{ u.id }}/deactivate" class="inline">
+          {{ csrf_field() }}
+          <button type="submit">Deactivate</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+</section>
+{% endblock %}

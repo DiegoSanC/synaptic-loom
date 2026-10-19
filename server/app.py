@@ -737,6 +737,7 @@ def open_ui_session(payload: UiSessionRequest, request: Request):
     return response
 
 
+from server import ui_admin  # noqa: E402,F401  (registers its routes on ui_pages.router)
 app.include_router(ui_pages.router)
 
 

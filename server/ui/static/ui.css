@@ -88,3 +88,6 @@ form.filters input, form.filters select, form.filters button {
 .fields dt { color: var(--muted); font-size: 0.9rem; }
 .fields dd { margin: 0; }
 .fields pre { margin: 0; }
+/* Admin → Users (D20): forms inside table cells. */
+form.inline { display: inline-flex; gap: 0.25rem; margin: 0 0.25rem 0.25rem 0; }
+ul.machines { list-style: none; padding: 0; margin: 0; }
