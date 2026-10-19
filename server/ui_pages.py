@@ -123,12 +123,13 @@ WRITE_REFUSALS = {
 }
 
 
-def _write(path: str):
+def _write(path: str, *, on: APIRouter | None = None):
     """A write: ``POST`` only, gated by ``write_refusal`` before the handler runs. The
-    handler reads its fields from ``request.state.form`` (the parsed form body)."""
+    handler reads its fields from ``request.state.form`` (the parsed form body). ``on`` is
+    the router of a page module of its own (``ui_machines``); this module's by default."""
     WRITE_ROUTES.append(path)
     _WRITE_PATTERNS.append(compile_path(path)[0])
-    return router.post(path)
+    return (on or router).post(path)
 
 
 def is_write_route(path: str) -> bool:

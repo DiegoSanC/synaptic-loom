@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Loom — add a machine{% endblock %}
+{% block content %}
+<h1>Add a machine</h1>
+<p>This setup code is shown only once. It enrols one machine as yours, works once, and
+expires at {{ expires_at }}. Do not forward it: whoever redeems it gets a machine of
+yours.</p>
+<p>On the new machine, install the client and run
+<code>~/.loom/venv/bin/loom enroll</code>, then paste this link at its hidden prompt:</p>
+<pre><code>{{ link }}</code></pre>
+<p>The code alone, for <code>loom enroll --server-url</code>:</p>
+<pre><code>{{ code }}</code></pre>
+<p><a href="/ui/machines">Back to My machines</a></p>
+{% endblock %}

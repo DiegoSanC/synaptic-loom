@@ -31,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 DEFAULT_ENROL_CODE_TTL = "24h"
 DEFAULT_DEVICE_TOKEN_TTL_S = 90 * 24 * 3600
 DEVICE_TOKEN_TTL_ENV = "LOOM_DEVICE_TOKEN_TTL_S"
+DEFAULT_SETUP_CODE_TTL_S = 600
+SETUP_CODE_TTL_ENV = "LOOM_SETUP_CODE_TTL_S"
 
 _DEVICE_TOKENS_DDL = (
     "CREATE TABLE IF NOT EXISTS device_tokens ("
@@ -136,12 +138,23 @@ def device_token_ttl_s() -> int:
     restarting anything. The override exists so renewal across a REAL expiry can be proven
     in seconds; a non-positive or non-numeric value falls back to the default.
     """
-    raw = os.environ.get(DEVICE_TOKEN_TTL_ENV)
+    return _ttl_from_env(DEVICE_TOKEN_TTL_ENV, DEFAULT_DEVICE_TOKEN_TTL_S)
+
+
+def setup_code_ttl_s() -> int:
+    """Setup code life in seconds (D20, DESIGN §6.4) — 10 minutes, or
+    ``LOOM_SETUP_CODE_TTL_S`` when set; read at call time, with
+    :func:`device_token_ttl_s`'s fallback rule."""
+    return _ttl_from_env(SETUP_CODE_TTL_ENV, DEFAULT_SETUP_CODE_TTL_S)
+
+
+def _ttl_from_env(name: str, default: int) -> int:
+    raw = os.environ.get(name)
     try:
         value = int(raw) if raw else 0
     except ValueError:
         value = 0
-    return value if value > 0 else DEFAULT_DEVICE_TOKEN_TTL_S
+    return value if value > 0 else default
 
 
 def _iso(moment: datetime) -> str:
@@ -373,19 +386,59 @@ def renew(conn: sqlite3.Connection, device_id: int) -> dict:
 
 
 def revoke_chain(conn: sqlite3.Connection, device_id: int, now: str) -> int:
-    """Revoke every live token of ``device_id``'s chain; returns how many.
+    """Revoke every live token of ``device_id``'s chain, with the issuer cascade; returns
+    how many tokens were revoked, the cascade's included.
 
     Joins the caller's transaction: it neither begins nor commits one.
     """
-    return conn.execute(
-        f"UPDATE device_tokens SET revoked_at = ? WHERE revoked_at IS NULL AND id IN ({_CHAIN_IDS})",
-        (now, device_id),
-    ).rowcount
+    return revoke_with_cascade(conn, [device_id], now)[0]
+
+
+def revoke_with_cascade(conn: sqlite3.Connection, device_ids: list[int],
+                        now: str) -> tuple[int, int]:
+    """Revoke the chains of ``device_ids`` and, transitively, every chain minted from a
+    setup code one of their tokens issued (D20, DESIGN §6.4 "Issuer cascade"); expire
+    every unredeemed code, of any kind, those tokens issued. Returns ``(tokens revoked,
+    codes expired)``.
+
+    A web invitation is not followed even once redeemed: its chain is the invitee's own
+    enrolment, not a machine the issuer added. The walk follows every id of a chain, live
+    or not, and visits each id once, so it reaches a fixpoint on any data. Joins the
+    caller's transaction: it neither begins nor commits one.
+    """
+    seen: set[int] = set()
+    frontier = set(device_ids)
+    revoked = expired = 0
+    while frontier:
+        chain: set[int] = set()
+        for start in frontier - seen:
+            chain.update(row[0] for row in conn.execute(_CHAIN_IDS, (start,)))
+        chain -= seen
+        if not chain:
+            break
+        seen |= chain
+        ids = sorted(chain)
+        marks = ", ".join("?" * len(ids))
+        revoked += conn.execute(
+            f"UPDATE device_tokens SET revoked_at = ? WHERE revoked_at IS NULL AND id IN ({marks})",
+            (now, *ids),
+        ).rowcount
+        expired += conn.execute(
+            "UPDATE enrolment_codes SET expires_at = ? WHERE redeemed_at IS NULL "
+            f"AND expires_at > ? AND issued_by_device_token_id IN ({marks})",
+            (now, now, *ids),
+        ).rowcount
+        frontier = {row[0] for row in conn.execute(
+            "SELECT device_token_id FROM enrolment_codes WHERE kind = 'setup' "
+            "AND redeemed_at IS NOT NULL AND device_token_id IS NOT NULL "
+            f"AND issued_by_device_token_id IN ({marks})", ids)}
+    return revoked, expired
 
 
 def revoke(conn: sqlite3.Connection, device_id: int) -> int:
-    """Revoke the whole chain ``device_id`` belongs to (any id of it); returns how many
-    tokens were still unrevoked — ``0`` when the id is unknown or its chain is all dead."""
+    """Revoke the whole chain ``device_id`` belongs to (any id of it), with the issuer
+    cascade; returns how many tokens were still unrevoked — ``0`` when the id is unknown
+    and nothing the cascade reaches is live."""
     now = _iso(datetime.now(timezone.utc))
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -456,9 +509,10 @@ def refuse_last_admin(conn: sqlite3.Connection, user_id: int) -> None:
 
 
 def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
-    """Deactivate the user, revoke every one of their chains and expire their pending
-    enrolment codes, in one transaction (D19 B3). Returns ``(tokens revoked, codes
-    expired)``, or ``None`` when no user has that email.
+    """Deactivate the user, revoke every one of their chains with the issuer cascade (D20)
+    and expire their pending enrolment codes, in one transaction (D19 B3). Returns
+    ``(tokens revoked, codes expired)``, the cascade's included, or ``None`` when no user
+    has that email.
 
     Every token of a chain belongs to one user (renew copies ``user_id``), so the user's
     tokens ARE the user's chains. UI sessions are left alone: the ``active`` join already
@@ -475,15 +529,15 @@ def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
             return None
         refuse_last_admin(conn, user["id"])
         conn.execute("UPDATE users SET active = 0 WHERE id = ?", (user["id"],))
-        revoked = conn.execute(
-            "UPDATE device_tokens SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
-            (now, user["id"]),
-        ).rowcount
         expired = conn.execute(
             "UPDATE enrolment_codes SET expires_at = ? "
             "WHERE user_id = ? AND redeemed_at IS NULL AND expires_at > ?",
             (now, user["id"], now),
         ).rowcount
+        own = [row[0] for row in conn.execute(
+            "SELECT id FROM device_tokens WHERE user_id = ?", (user["id"],))]
+        revoked, cascaded = revoke_with_cascade(conn, own, now)
+        expired += cascaded
         conn.commit()
     except BaseException:
         conn.rollback()

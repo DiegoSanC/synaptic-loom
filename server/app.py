@@ -21,7 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from server import (auth, auth_events, client_ip, db, feedback, items, links, public_url, recall,
-                    search, ui_auth, ui_pages)
+                    search, ui_auth, ui_machines, ui_pages)
 from server.normalize import normalize
 from server.rate_limit import RateLimiter
 
@@ -738,6 +738,7 @@ def open_ui_session(payload: UiSessionRequest, request: Request):
 
 
 app.include_router(ui_pages.router)
+app.include_router(ui_machines.router)
 
 
 @app.get("/api/health")

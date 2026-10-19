@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Loom — my machines{% endblock %}
+{% block content %}
+<h1>My machines</h1>
+<p>One row per machine you enrolled. A machine renews its device token by itself, so
+each row is the token it was enrolled with and every renewal since.</p>
+<div class="table-wrap">
+<table>
+  <thead><tr><th>Machine</th><th>Enrolled</th><th>Last renewed</th><th>Expires</th><th>State</th><th></th></tr></thead>
+  <tbody>
+  {% for chain in chains %}
+    <tr data-chain="{{ chain.id }}">
+      <td data-col="name">{{ chain.name }}{% if this_device in chain.ids %} <span class="badge">this session</span>{% endif %}</td>
+      <td data-col="created">{{ chain.created }}</td>
+      <td data-col="renewed">{{ chain.renewed }}</td>
+      <td data-col="expires">{{ chain.expires }}</td>
+      <td data-col="state">{{ chain.state }}</td>
+      <td>
+      {% if chain.state == "live" %}
+        <form method="post" action="/ui/devices/{{ chain.id }}/revoke">
+        {{ csrf_field() }}
+        <button type="submit">Revoke</button>
+        </form>
+      {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="6" class="muted">No machine is enrolled for you.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+<p class="muted">Revoking a machine also revokes every machine added with a setup code
+it issued, and so on down; its pending setup codes stop working. Revoking the machine
+this session was opened from signs you out.</p>
+
+<h2>Add a machine</h2>
+<p>Issues a setup code that enrols one more machine as yours. It works once, expires
+in {{ ttl }}, and is shown only once.</p>
+<form method="post" action="/ui/machines/setup-code">
+{{ csrf_field() }}
+<button type="submit">Add a machine</button>
+</form>
+{% endblock %}
