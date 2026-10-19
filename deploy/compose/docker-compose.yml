@@ -73,7 +73,7 @@ services:
     environment:
       LOOM_DB: /data/loom.db
       LOOM_BACKUP_DIR: /backups
-      LOOM_BACKUP_KEEP: ${LOOM_BACKUP_KEEP:-14}
+      LOOM_BACKUP_KEEP: ${LOOM_BACKUP_KEEP:-56}
       LOOM_SERVER_PY: /app/.venv/bin/python
     volumes:
       - loom_data:/data

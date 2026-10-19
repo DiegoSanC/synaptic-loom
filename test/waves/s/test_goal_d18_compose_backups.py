@@ -78,7 +78,7 @@ BACKUP_SH = "/app/server/backup.sh"                  # Dockerfile COPY server/ /
 DB_PATH = "/data/loom.db"                            # Dockerfile ENV LOOM_DB
 BACKUPS_DIR = "/backups"
 VENV_PY = "/app/.venv/bin/python"
-DEFAULT_INTERVAL, DEFAULT_KEEP = "6h", "14"          # D18 defaults
+DEFAULT_INTERVAL, DEFAULT_KEEP = "6h", "56"          # D18 defaults (56 × 6 h = 14 days, D8)
 GOAL_INTERVAL, GOAL_KEEP = "2s", 3                   # this wave's env file
 BACKUP_NAME = re.compile(r"loom-\d{8}T\d{6}\.\d{6}Z\.db")  # backup.sh's file name
 WROTE = re.compile(r"backup\.sh: wrote /backups/(loom-\S+\.db) ")

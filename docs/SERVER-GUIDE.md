@@ -432,7 +432,7 @@ else.
 | What runs | The `backup` service: the server's image, user `app`, no network, no port. It runs `server/backup.sh` once when it starts and then every `LOOM_BACKUP_INTERVAL`. |
 | A backup | SQLite's online backup API (consistent while the server writes), checked with `PRAGMA integrity_check` and renamed into place only when `ok`: `loom-<UTC time>.db`, mode 0600, in the volume `loom_loom_backups`. |
 | Interval | `LOOM_BACKUP_INTERVAL` in `.env`, default `6h`. |
-| Kept on the host | `LOOM_BACKUP_KEEP`, default 14: 3.5 days at 6 h. Longer history is the off-host copy's. |
+| Kept on the host | `LOOM_BACKUP_KEEP`, default 56: 14 days at 6 h (D8). Longer history is the off-host copy's. |
 | RPO | Database volume lost or damaged: **≤ the interval** (6 h). Whole host lost: **≤ the interval + the pull schedule** (≤ 12 h with the 6-hourly pull below). D8 asks for ≤ 24 h. |
 | A failed backup | The copy is deleted, no older backup is purged, and the service exits non-zero: Docker restarts it, which retries the backup, and `docker compose ps` shows `backup` restarting. Nothing alerts you — the check below is the only oracle. |
 

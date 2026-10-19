@@ -31,7 +31,7 @@
 # service sets all four):
 #   LOOM_DB           source database        (default ~/.loom-server/loom.db)
 #   LOOM_BACKUP_DIR   destination directory  (default ~/.loom-server/backups)
-#   LOOM_BACKUP_KEEP  backups to keep        (default 14)
+#   LOOM_BACKUP_KEEP  backups to keep        (default 56)
 #   LOOM_SERVER_PY    a Python 3 interpreter (default <repo>/.venv/bin/python)
 set -euo pipefail
 umask 077
@@ -39,7 +39,7 @@ umask 077
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DB="${LOOM_DB:-$HOME/.loom-server/loom.db}"
 BACKUP_DIR="${LOOM_BACKUP_DIR:-$HOME/.loom-server/backups}"
-KEEP="${LOOM_BACKUP_KEEP:-14}"
+KEEP="${LOOM_BACKUP_KEEP:-56}"
 PY="${LOOM_SERVER_PY:-$REPO_DIR/.venv/bin/python}"
 
 usage() {
