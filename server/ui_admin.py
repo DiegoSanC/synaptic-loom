@@ -127,12 +127,11 @@ def deactivate(request: Request, user_id: int):
             return not_found(request)
         if user["active"]:
             try:
-                auth.deactivate(conn, user["email"])
+                auth.deactivate(conn, user["email"],
+                                audit={"actor_user_id": request.state.user_id,
+                                       "client_ip": request.state.client_ip})
             except auth.LastAdmin:
                 return _last_admin(request, user["name"])
-            auth_events.record(conn, actor_user_id=request.state.user_id,
-                               event="user_deactivated", target_type="user",
-                               target_id=user_id, client_ip=request.state.client_ip)
     finally:
         conn.close()
     return _back()

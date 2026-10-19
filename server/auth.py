@@ -508,7 +508,8 @@ def refuse_last_admin(conn: sqlite3.Connection, user_id: int) -> None:
         raise LastAdmin()
 
 
-def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
+def deactivate(conn: sqlite3.Connection, email: str, *,
+               audit: dict | None = None) -> tuple[int, int] | None:
     """Deactivate the user, revoke every one of their chains with the issuer cascade (D20)
     and expire their pending enrolment codes, in one transaction (D19 B3). Returns
     ``(tokens revoked, codes expired)``, the cascade's included, or ``None`` when no user
@@ -519,7 +520,11 @@ def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
     ends them, and re-activating the row by SQL would bring no machine back.
 
     Raises :class:`LastAdmin`, with nothing changed, for the last active admin (D20).
+    ``audit`` (``actor_user_id`` and ``client_ip``, from the web) records
+    ``user_deactivated`` in the same transaction; ``admin.py`` passes none (§6.4).
     """
+    from server import auth_events  # function-level, like ``db`` above
+
     now = _iso(datetime.now(timezone.utc))
     conn.execute("BEGIN IMMEDIATE")
     try:
@@ -538,6 +543,9 @@ def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
             "SELECT id FROM device_tokens WHERE user_id = ?", (user["id"],))]
         revoked, cascaded = revoke_with_cascade(conn, own, now)
         expired += cascaded
+        if audit is not None:
+            auth_events.record(conn, event="user_deactivated", target_type="user",
+                               target_id=user["id"], **audit)
         conn.commit()
     except BaseException:
         conn.rollback()
