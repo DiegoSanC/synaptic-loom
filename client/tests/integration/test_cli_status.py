@@ -1,7 +1,7 @@
 """Tests for `loom status` (PLAN.md §T6, DESIGN §7 failure visibility).
 
-status is informational: always exit 0 unless the config is absent (exit ≠ 0). It never
-talks to the server. ``claude_bin`` points at a nonexistent binary so the real CLI is not run.
+status is informational: always exit 0 unless the config is absent (exit ≠ 0). Its one
+server call is the account line's `GET /api/me` (D20, `test_cli_account.py`). ``claude_bin`` points at a nonexistent binary so the real CLI is not run.
 """
 from __future__ import annotations
 
