@@ -1,9 +1,10 @@
 """*My machines*, setup codes and the web's revoke (D20, DESIGN §6.4; plan 2026-10-19,
 phase 2 slice 3).
 
-Every route is reached through ``app._ui_session_gate``: the page is a signed-in
-``GET``, and the two writes are registered with ``ui_pages._write``, so the gate has
-already checked the public URL, ``Origin``, the CSRF token and the session's kind before
+Every route is registered on ``ui_pages.router`` when this module is imported (so the
+write registry and the D14 crawl see it) and reached through ``app._ui_session_gate``: the
+page is a signed-in ``GET``, and the two writes are registered with ``ui_pages._write``,
+so the gate has already checked the public URL, ``Origin``, the CSRF token and the session's kind before
 a handler runs. A machine is a renewal chain, the connected component over
 ``replaced_by`` that ``auth.revoke_chain`` revokes; any id of it names it.
 """
@@ -11,13 +12,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from fastapi import APIRouter, Request
+from fastapi import Request
 from starlette.responses import RedirectResponse
 
 from server import auth, auth_events, db, public_url
-from server.ui_pages import _write, not_found, render
-
-router = APIRouter()
+from server.ui_pages import _page, _write, not_found, render
 
 _MAX_ROW_ID = 2**63 - 1   # SQLite's INTEGER: a longer path id names no row
 
@@ -60,7 +59,7 @@ def _ttl_text(seconds: int) -> str:
     return f"{seconds // 60} minutes" if seconds % 60 == 0 else f"{seconds} seconds"
 
 
-@router.api_route("/ui/machines", methods=["GET", "HEAD"])
+@_page("/ui/machines")
 def machines_page(request: Request):
     """*My machines*: the caller's chains, "Add a machine", and "Revoke" per live chain."""
     conn = db.connect()
@@ -73,7 +72,7 @@ def machines_page(request: Request):
                   ttl=_ttl_text(auth.setup_code_ttl_s()))
 
 
-@_write("/ui/machines/setup-code", on=router)
+@_write("/ui/machines/setup-code")
 def issue_setup_code(request: Request):
     """A single-use setup code for one more machine of the caller's, shown once. It names
     the device token of this session, which the issuer cascade follows."""
@@ -100,7 +99,7 @@ def issue_setup_code(request: Request):
     return render("setup_code.html", request, code=code, link=link, expires_at=expires_at)
 
 
-@_write("/ui/devices/{device_id:int}/revoke", on=router)
+@_write("/ui/devices/{device_id:int}/revoke")
 def revoke_device(request: Request, device_id: int):
     """Revoke the chain ``device_id`` belongs to, with the issuer cascade: the caller's
     own, or anyone's for an admin; any other id is a 404, unknown or not."""

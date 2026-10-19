@@ -171,13 +171,12 @@ def test_the_registry_lists_exactly_the_ui_post_routes():
     """Every registered write is a POST-only route, and every POST route under `/ui`
     other than the anonymous `/ui/session` is registered: the gate and the router
     cannot disagree about what is writable."""
-    from server import ui_machines, ui_pages
+    from server import ui_pages
     from server.app import app
 
     assert "/ui/signout" in ui_pages.WRITE_ROUTES
     posts = set()
-    # FastAPI keeps an included router's routes behind it, not in `app.routes`.
-    for route in [*app.routes, *ui_pages.router.routes, *ui_machines.router.routes]:
+    for route in [*app.routes, *ui_pages.router.routes]:
         path = getattr(route, "path", "")
         methods = getattr(route, "methods", None) or set()
         if (path == "/ui" or path.startswith("/ui/")) and "POST" in methods:

@@ -737,8 +737,8 @@ def open_ui_session(payload: UiSessionRequest, request: Request):
     return response
 
 
+# `ui_machines` (imported above) registers its routes on `ui_pages.router`.
 app.include_router(ui_pages.router)
-app.include_router(ui_machines.router)
 
 
 @app.get("/api/health")
