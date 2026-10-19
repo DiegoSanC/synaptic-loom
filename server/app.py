@@ -20,8 +20,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from server import (auth, auth_events, client_ip, db, feedback, items, links, recall, search,
-                    ui_auth, ui_pages)
+from server import (auth, auth_events, client_ip, db, feedback, items, links, public_url, recall,
+                    search, ui_auth, ui_pages)
 from server.normalize import normalize
 from server.rate_limit import RateLimiter
 
@@ -84,6 +84,9 @@ async def lifespan(app: FastAPI):
         auth_events.prune(conn)  # client_ip is personal data (D20, DESIGN §6.4)
     finally:
         conn.close()
+    if public_url.resolve() is None:
+        STARTUP_LOG.warning("public_url_unset: no LOOM_PUBLIC_URL (or FLY_APP_NAME), so "
+                            "every /ui write is refused (D20)")
     AUTH_FAILURES.clear()
     HEALTH_REQUESTS.clear()
     yield
@@ -251,16 +254,21 @@ def _lookup_ui_session(session: str) -> dict | None:
 
 
 async def _ui_session_gate(request: Request, call_next):
-    """`/ui` pages: `GET`/`HEAD` only, the `loom_ui` cookie only (D14).
+    """`/ui` pages: `GET`/`HEAD`, or `POST` on a listed write route; the `loom_ui` cookie
+    only (D14, D20).
 
-    The method is refused before any credential is read, which is what makes the UI
-    read-only by construction. A `Bearer` header is never consulted here, and the cookie
-    is never consulted on `/api/*`: the browser credential and the machine credential
-    open different surfaces. A valid session passes even when its address's failure
-    window is full (D17); only a refused one meets the 429.
+    Any other method, and a `POST` anywhere else, is refused before any credential is
+    read, which keeps the UI read-only by construction outside `ui_pages.WRITE_ROUTES`.
+    A `Bearer` header is never consulted here, and the cookie is never consulted on
+    `/api/*`: the browser credential and the machine credential open different surfaces.
+    A valid session passes even when its address's failure window is full (D17); only a
+    refused one meets the 429. A write then passes `ui_pages.write_refusal` (public URL,
+    origin, CSRF token, DESIGN §6.4) before its handler runs.
     """
-    if request.method not in _UI_METHODS:
-        return _err(405, "method_not_allowed", "The UI is read-only")
+    write = request.method == "POST" and ui_pages.is_write_route(request.url.path)
+    if request.method not in _UI_METHODS and not write:
+        return _err(405, "method_not_allowed",
+                    "The UI is read-only except the listed POST routes")
     cookie = request.cookies.get(ui_auth.SESSION_COOKIE, "")
     if not cookie:
         return _reject_ui(request, "ui_no_session")
@@ -279,6 +287,15 @@ async def _ui_session_gate(request: Request, call_next):
     request.state.user_id = session["user_id"]
     request.state.user_name = session["name"]
     request.state.ui_session_id = session["ui_session_id"]
+    request.state.csrf = ui_auth.csrf_token(cookie)
+    if write:
+        request.state.form = ui_pages.parse_form(request.headers.get("content-type", ""),
+                                                 await request.body())
+        refusal = ui_pages.write_refusal(request.headers, request.state.form, cookie)
+        if refusal is not None:
+            _audit_auth(request, f"ui_write_{refusal}", user_id=session["user_id"],
+                        ui_session_id=session["ui_session_id"])
+            return _err(403, refusal, ui_pages.WRITE_REFUSALS[refusal])
     return await call_next(request)
 
 
