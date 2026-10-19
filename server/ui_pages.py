@@ -22,7 +22,7 @@ from markupsafe import Markup, escape
 from starlette.responses import HTMLResponse, Response
 from starlette.routing import compile_path
 
-from server import db, feedback, public_url, search, ui_auth, ui_queries, ui_render
+from server import auth_events, db, feedback, public_url, search, ui_auth, ui_queries, ui_render
 
 UI_DIR = Path(__file__).with_name("ui")
 
@@ -341,6 +341,10 @@ def signout(request: Request):
     conn = db.connect()
     try:
         ui_auth.end_sessions(conn, session_id=request.state.ui_session_id)
+        auth_events.record(conn, actor_user_id=request.state.user_id, event="ui_signout",
+                           target_type="user", target_id=request.state.user_id,
+                           client_ip=request.state.client_ip)
+        conn.commit()
     finally:
         conn.close()
     response = message(200, "Signed out", "You are signed out of Loom. Run `loom ui` in a "

@@ -194,13 +194,13 @@ def lookup_session(conn: sqlite3.Connection, session: str) -> dict | None:
     """The session behind a cookie value, or ``None`` when no row has its hash.
 
     Returns ``{"ui_session_id", "user_id", "name", "active", "expires_at",
-    "device_revoked_at"}``. Like ``auth.lookup_bearer``, it reports and the middleware
+    "device_revoked_at", "kind"}``. Like ``auth.lookup_bearer``, it reports and the middleware
     decides, because the middleware owns the audit outcome names.
     """
     from server import db
 
     row = conn.execute(
-        "SELECT s.id, s.user_id, s.expires_at, u.name, u.active, "
+        "SELECT s.id, s.user_id, s.expires_at, s.kind, u.name, u.active, "
         "d.revoked_at AS device_revoked_at "
         "FROM ui_sessions s JOIN users u ON u.id = s.user_id "
         "LEFT JOIN device_tokens d ON d.id = s.device_token_id "
@@ -211,7 +211,12 @@ def lookup_session(conn: sqlite3.Connection, session: str) -> dict | None:
         return None
     return {"ui_session_id": row["id"], "user_id": row["user_id"], "name": row["name"],
             "active": row["active"], "expires_at": row["expires_at"],
-            "device_revoked_at": row["device_revoked_at"]}
+            "device_revoked_at": row["device_revoked_at"], "kind": row["kind"]}
+
+
+# The session kinds that may write (D20, §6.4): `cli` is the one `loom ui` opens; 2b adds
+# `password`.
+WRITABLE_KINDS = frozenset({"cli"})
 
 
 def csrf_token(session: str) -> str:

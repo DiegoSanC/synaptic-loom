@@ -485,3 +485,72 @@ def test_end_sessions_inside_a_callers_transaction_leaves_the_commit_to_it(env, 
     finally:
         conn.close()
     assert a.get("/ui/").status_code == 200
+
+
+# --------------------------------------------------------------------------- #
+# Integration of slices 1 and 2: the session kind, and the sign-in/out events   #
+# --------------------------------------------------------------------------- #
+def _events(env, event: str) -> list[tuple]:
+    conn = db.connect(env)
+    try:
+        return conn.execute(
+            "SELECT actor_user_id, target_type, target_id, client_ip FROM auth_events "
+            "WHERE event = ? ORDER BY id", (event,)).fetchall()
+    finally:
+        conn.close()
+
+
+def test_a_session_of_a_kind_that_cannot_write_is_refused_before_anything_changes(env, browser):
+    """§6.4: only `cli` sessions write in 2a; any other kind → `403 forbidden`."""
+    cookie = _cookie(browser)
+    conn = db.connect(env)
+    try:
+        conn.execute("UPDATE ui_sessions SET kind = 'password' WHERE session_hash = ?",
+                     (db.hash_token(cookie),))
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert browser.get("/ui/").status_code == 200    # reading is not a write
+    r = _signout(browser)
+
+    assert r.status_code == 403
+    assert r.json()["error"] == "forbidden"
+    assert _session_exists(env, cookie)
+
+
+def test_the_csrf_check_comes_before_the_kind_check(env, browser):
+    """§6.4's order: a wrong `csrf` is `bad_csrf` even on a session that cannot write."""
+    cookie = _cookie(browser)
+    conn = db.connect(env)
+    try:
+        conn.execute("UPDATE ui_sessions SET kind = 'password' WHERE session_hash = ?",
+                     (db.hash_token(cookie),))
+        conn.commit()
+    finally:
+        conn.close()
+    r = _signout(browser, csrf="0" * 64)
+    assert r.status_code == 403
+    assert r.json()["error"] == "bad_csrf"
+
+
+def test_signing_in_and_out_records_one_event_each(env, dev1):
+    """§6.4: `ui_signin` and `ui_signout` on the user, the actor the user, with the address."""
+    browser = _browser(dev1)
+    signins = _events(env, "ui_signin")
+    assert [(a, t, i) for a, t, i, _ in signins] == [(dev1["id"], "user", dev1["id"])]
+    assert signins[0][3]                              # the client address is recorded
+
+    assert _signout(browser).status_code == 200
+    signouts = _events(env, "ui_signout")
+    assert [(a, t, i) for a, t, i, _ in signouts] == [(dev1["id"], "user", dev1["id"])]
+
+
+def test_a_refused_sign_in_or_sign_out_records_no_event(env, browser):
+    """Failures stay log lines (§6.4)."""
+    from server.app import app
+
+    TestClient(app, base_url="https://testserver").post("/ui/session", json={"code": "x" * 43})
+    assert _signout(browser, csrf="0" * 64).status_code == 403
+    assert len(_events(env, "ui_signin")) == 1        # the fixture's own sign-in only
+    assert _events(env, "ui_signout") == []

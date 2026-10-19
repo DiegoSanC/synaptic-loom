@@ -290,6 +290,7 @@ async def _ui_session_gate(request: Request, call_next):
     request.state.user_name = session["name"]
     request.state.ui_session_id = session["ui_session_id"]
     request.state.csrf = ui_auth.csrf_token(cookie)
+    request.state.client_ip = _client_ip(request)
     if write:
         request.state.form = ui_pages.parse_form(request.headers.get("content-type", ""),
                                                  await request.body())
@@ -298,6 +299,10 @@ async def _ui_session_gate(request: Request, call_next):
             _audit_auth(request, f"ui_write_{refusal}", user_id=session["user_id"],
                         ui_session_id=session["ui_session_id"])
             return _err(403, refusal, ui_pages.WRITE_REFUSALS[refusal])
+        if session["kind"] not in ui_auth.WRITABLE_KINDS:
+            _audit_auth(request, "ui_write_forbidden_kind", user_id=session["user_id"],
+                        ui_session_id=session["ui_session_id"])
+            return _err(403, "forbidden", "This session cannot write")
     return await call_next(request)
 
 
@@ -709,6 +714,11 @@ def open_ui_session(payload: UiSessionRequest, request: Request):
     conn = db.connect()
     try:
         result = ui_auth.open_session(conn, payload.code)
+        if result is not None:
+            auth_events.record(conn, actor_user_id=result["user_id"], event="ui_signin",
+                               target_type="user", target_id=result["user_id"],
+                               client_ip=_client_ip(request))
+            conn.commit()
     finally:
         conn.close()
     if result is None:
