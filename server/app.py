@@ -701,6 +701,24 @@ def ui_login(request: Request):
     return {"code": code, "expires_at": expires_at}
 
 
+@app.get("/api/me")
+def me(request: Request):
+    """Who the bearer is, and the account events about them (D20, §6.4).
+
+    `device_id` is the calling device token, `None` for a permanent token. This is how a
+    user learns that an admin changed their role or revoked one of their machines.
+    """
+    conn = db.connect()
+    try:
+        user = conn.execute("SELECT name, email, role FROM users WHERE id = ?",
+                            (request.state.user_id,)).fetchone()
+        events = auth_events.about_user(conn, request.state.user_id)
+    finally:
+        conn.close()
+    return {"name": user["name"], "email": user["email"], "role": user["role"],
+            "device_id": request.state.device_token_id, "events": events}
+
+
 class UiSessionRequest(BaseModel):
     model_config = ConfigDict(extra="ignore")
     code: str = Field(min_length=1, max_length=256)

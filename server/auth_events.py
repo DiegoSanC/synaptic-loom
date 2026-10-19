@@ -127,3 +127,23 @@ def prune(conn: sqlite3.Connection, now: datetime | None = None) -> int:
     now = now or datetime.now(timezone.utc)
     cutoff = _iso(now - timedelta(days=retention_days()))
     return _write(conn, "DELETE FROM auth_events WHERE ts < ?", (cutoff,)).rowcount
+
+
+def about_user(conn: sqlite3.Connection, user_id: int, limit: int = 20) -> list[dict]:
+    """The ``limit`` newest events about ``user_id`` (``GET /api/me``, DESIGN §6.4).
+
+    "About" means aimed at the user, or at any of their device tokens (every chain,
+    revoked or not). Newest first, the later row first within one second. ``actor`` is
+    the actor's name, ``None`` for ``admin.py``. ``client_ip`` is never returned.
+    """
+    rows = conn.execute(
+        "SELECT e.ts, e.event, a.name AS actor, e.target_type, e.target_id "
+        "FROM auth_events e LEFT JOIN users a ON a.id = e.actor_user_id "
+        "WHERE (e.target_type = 'user' AND e.target_id = ?) "
+        "OR (e.target_type = 'device' AND e.target_id IN "
+        "(SELECT id FROM device_tokens WHERE user_id = ?)) "
+        "ORDER BY e.ts DESC, e.id DESC LIMIT ?",
+        (user_id, user_id, limit),
+    ).fetchall()
+    return [{"ts": r[0], "event": r[1], "actor": r[2], "target_type": r[3],
+             "target_id": r[4]} for r in rows]
