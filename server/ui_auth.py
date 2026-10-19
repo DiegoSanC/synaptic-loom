@@ -10,13 +10,19 @@ Two credentials, the shape of ``server.auth`` applied to a browser:
 
 Both are checked against the user's ``active`` flag and the originating device's
 ``revoked_at`` on every use, so ``admin.py deactivate`` and ``revokedevice`` end a browser
-session without any UI-specific revocation surface.
+session without any UI-specific revocation surface. A session also ends on purpose
+(D20): :func:`end_sessions` deletes rows, and sign-out is its first caller.
+
+A session that writes (D20, DESIGN §6.4) proves it with :func:`csrf_token`, derived from
+the cookie value and never stored.
 
 The schema is ADDITIVE via :func:`ensure_ui_schema`, the ``ensure_*_schema`` idiom:
 ``schema.sql`` never changes and an existing database gains the tables on its next start.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import secrets
 import sqlite3
@@ -201,3 +207,46 @@ def lookup_session(conn: sqlite3.Connection, session: str) -> dict | None:
     return {"ui_session_id": row["id"], "user_id": row["user_id"], "name": row["name"],
             "active": row["active"], "expires_at": row["expires_at"],
             "device_revoked_at": row["device_revoked_at"]}
+
+
+def csrf_token(session: str) -> str:
+    """The CSRF token of the session behind cookie value ``session`` (D20, §6.4).
+
+    Lowercase hex of ``HMAC-SHA256(key = the cookie value, msg = "csrf")``: derived, never
+    stored, and worth nothing without the cookie it was derived from.
+    """
+    return hmac.new(session.encode(), b"csrf", hashlib.sha256).hexdigest()
+
+
+def end_sessions(conn: sqlite3.Connection, *, session_id: int | None = None,
+                 user_id: int | None = None,
+                 device_token_ids: list[int] | None = None) -> int:
+    """Delete UI sessions, selected by exactly one of: one session id, every session of
+    one user, or every session opened by one of ``device_token_ids``. Returns how many.
+
+    Never commits a transaction it did not open (``ensure_ui_schema``'s rule), so a
+    revocation can call it inside its own ``BEGIN IMMEDIATE``.
+    """
+    selectors = [s for s in (session_id, user_id, device_token_ids) if s is not None]
+    if len(selectors) != 1:
+        raise ValueError("end_sessions takes exactly one of session_id, user_id, "
+                         "device_token_ids")
+    if session_id is not None:
+        where, params = "id = ?", [session_id]
+    elif user_id is not None:
+        where, params = "user_id = ?", [user_id]
+    else:
+        params = list(device_token_ids)
+        if not params:
+            return 0
+        where = f"device_token_id IN ({', '.join('?' * len(params))})"
+    outermost = not conn.in_transaction
+    try:
+        deleted = conn.execute(f"DELETE FROM ui_sessions WHERE {where}", params).rowcount
+    except BaseException:
+        if outermost:
+            conn.rollback()
+        raise
+    if outermost:
+        conn.commit()
+    return deleted

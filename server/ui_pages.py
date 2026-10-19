@@ -1,23 +1,28 @@
-"""Pages of the read-only UI (D14; plan 2026-09-29, slices 3–5).
+"""Pages of the UI (D14; plan 2026-09-29, slices 3–5) and its writes (D20, DESIGN §6.4).
 
 Everything here is reached through ``app._ui_session_gate`` (``GET``/``HEAD`` with a live
-session) except the public assets, which ``app.PUBLIC_PATHS`` lists one by one. The
-sign-in routes themselves (``/api/ui-login``, ``/ui/session``) live in ``server.app``,
-next to the audit and rate-limit helpers they share with ``/api/enroll``.
+session, or ``POST`` on a route of ``WRITE_ROUTES``) except the public assets, which
+``app.PUBLIC_PATHS`` lists one by one. The sign-in routes themselves (``/api/ui-login``,
+``/ui/session``) live in ``server.app``, next to the audit and rate-limit helpers they
+share with ``/api/enroll``.
 
 Templates are Jinja2 with autoescape ON and ``StrictUndefined``: a value reaches a page
 escaped unless it came out of ``ui_render.render_md``, the one producer of safe markup.
 """
 from __future__ import annotations
 
+import hmac
+import re
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 import jinja2
 from fastapi import APIRouter, Query, Request
+from markupsafe import Markup, escape
 from starlette.responses import HTMLResponse, Response
+from starlette.routing import compile_path
 
-from server import db, feedback, search, ui_queries, ui_render
+from server import db, feedback, public_url, search, ui_auth, ui_queries, ui_render
 
 UI_DIR = Path(__file__).with_name("ui")
 
@@ -51,6 +56,19 @@ _ENV = jinja2.Environment(
 )
 _ENV.globals["render_md"] = ui_render.render_md
 
+
+@jinja2.pass_context
+def _csrf_field(context) -> Markup:
+    """``{{ csrf_field() }}``: the one way a template puts the session's CSRF token in a
+    form (D20). A form rendered for nobody fails loudly instead of posting no token."""
+    token = context.get("csrf")
+    if not token:
+        raise RuntimeError("a form was rendered without the session's CSRF token")
+    return Markup('<input type="hidden" name="csrf" value="{}">').format(escape(token))
+
+
+_ENV.globals["csrf_field"] = _csrf_field
+
 router = APIRouter()
 
 
@@ -58,15 +76,21 @@ def is_ui_path(path: str) -> bool:
     return path == "/ui" or path.startswith("/ui/")
 
 
-def render(name: str, *, user: str | None, status: int = 200, **context) -> HTMLResponse:
-    """One template, rendered inside the shell (banner, navigation, who is signed in)."""
-    return HTMLResponse(_ENV.get_template(name).render(user=user, **context),
-                        status_code=status)
+def render(name: str, request: Request | None, *, status: int = 200,
+           **context) -> HTMLResponse:
+    """One template, rendered inside the shell (banner, navigation, who is signed in and
+    the sign-out form). ``request`` is the signed-in request the session gate let
+    through, or ``None`` for a page nobody is signed in to."""
+    state = request.state if request is not None else None
+    return HTMLResponse(
+        _ENV.get_template(name).render(user=getattr(state, "user_name", None),
+                                       csrf=getattr(state, "csrf", None), **context),
+        status_code=status)
 
 
-def message(status: int, heading: str, text: str, *, user: str | None = None,
+def message(status: int, heading: str, text: str, *, request: Request | None = None,
             headers: dict[str, str] | None = None) -> HTMLResponse:
-    response = render("message.html", user=user, status=status, heading=heading,
+    response = render("message.html", request, status=status, heading=heading,
                       message=text)
     response.headers.update(headers or {})
     return response
@@ -74,12 +98,80 @@ def message(status: int, heading: str, text: str, *, user: str | None = None,
 
 def not_found(request: Request) -> HTMLResponse:
     return message(404, "Not found", "There is no such page, project, entry or item.",
-                   user=getattr(request.state, "user_name", None))
+                   request=request)
 
 
 def _page(path: str):
     """A signed-in page: ``GET`` and ``HEAD`` (the gate refuses every other method)."""
     return router.api_route(path, methods=["GET", "HEAD"])
+
+
+# --------------------------------------------------------------------------- #
+# Writes (D20, DESIGN §6.4)                                                    #
+# --------------------------------------------------------------------------- #
+# The exact registry of write routes: the POST path templates the session gate lets
+# through. `_write` is the only way in, so a route and its registration cannot drift.
+WRITE_ROUTES: list[str] = []
+_WRITE_PATTERNS: list[re.Pattern] = []
+FORM_TYPE = "application/x-www-form-urlencoded"
+WRITE_REFUSALS = {
+    "public_url_unset": "This server has no public URL (LOOM_PUBLIC_URL), so the UI "
+                        "accepts no write",
+    "bad_origin": "The request did not come from this server's own pages",
+    "bad_csrf": "The form's CSRF token is missing or wrong; reload the page",
+}
+
+
+def _write(path: str):
+    """A write: ``POST`` only, gated by ``write_refusal`` before the handler runs. The
+    handler reads its fields from ``request.state.form`` (the parsed form body)."""
+    WRITE_ROUTES.append(path)
+    _WRITE_PATTERNS.append(compile_path(path)[0])
+    return router.post(path)
+
+
+def is_write_route(path: str) -> bool:
+    return any(pattern.match(path) for pattern in _WRITE_PATTERNS)
+
+
+def parse_form(content_type: str, body: bytes) -> dict[str, str]:
+    """A urlencoded body's fields (the first value of each); any other body has none."""
+    if content_type.split(";")[0].strip().lower() != FORM_TYPE:
+        return {}
+    fields = parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True)
+    return {name: values[0] for name, values in fields.items()}
+
+
+def _origin(url: str) -> str:
+    """``scheme://host[:port]`` as a browser serialises an ``Origin`` (no default port)."""
+    parts = urlsplit(url)
+    scheme, host, port = parts.scheme.lower(), parts.hostname or "", parts.port
+    if ":" in host:
+        host = f"[{host}]"
+    default = {"https": 443, "http": 80}.get(scheme)
+    return f"{scheme}://{host}" + (f":{port}" if port and port != default else "")
+
+
+def write_refusal(headers, form: dict[str, str], session: str) -> str | None:
+    """Why a signed-in write must be refused (a ``WRITE_REFUSALS`` code), or ``None``.
+
+    In §6.4's order: no resolved public URL; then ``Origin``, which when present must be
+    the public URL's origin, and when absent leaves the call to ``Sec-Fetch-Site:
+    same-origin`` (neither header is a refusal); then the ``csrf`` field.
+    """
+    base = public_url.resolve()
+    if base is None:
+        return "public_url_unset"
+    origin = headers.get("origin")
+    if origin is not None:
+        if origin != _origin(base):
+            return "bad_origin"
+    elif headers.get("sec-fetch-site") != "same-origin":
+        return "bad_origin"
+    if not hmac.compare_digest(form.get("csrf", "").encode(),
+                               ui_auth.csrf_token(session).encode()):
+        return "bad_csrf"
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -132,7 +224,7 @@ def home(request: Request):
         projects, pulse = ui_queries.overview(conn), ui_queries.pulse(conn)
     finally:
         conn.close()
-    return render("home.html", user=request.state.user_name, projects=projects, pulse=pulse)
+    return render("home.html", request, projects=projects, pulse=pulse)
 
 
 TABS = (("current", "Current"), ("timeline", "Timeline"), ("curation", "Curation"))
@@ -190,7 +282,7 @@ def project_page(
     finally:
         conn.close()
     return render(
-        "project.html", user=request.state.user_name, project=proj, tab=tab, tabs=TABS,
+        "project.html", request, project=proj, tab=tab, tabs=TABS,
         view=view, error=error, older_url=older_url, types=search.ITEM_TYPES,
         filtering=bool(item_type or author or q),
         filters={"type": item_type, "author": author, "q": q,
@@ -209,7 +301,7 @@ def item_page(request: Request, entry_id: int, ordinal: int):
         conn.close()
     if item is None:
         return not_found(request)
-    return render("item.html", user=request.state.user_name, item=item)
+    return render("item.html", request, item=item)
 
 
 @_page("/ui/entries/{entry_id:int}")
@@ -222,7 +314,7 @@ def entry_page(request: Request, entry_id: int):
         conn.close()
     if entry is None:
         return not_found(request)
-    return render("entry.html", user=request.state.user_name, entry=entry)
+    return render("entry.html", request, entry=entry)
 
 
 USAGE_TABS = (("7d", "Last 7 days"), ("30d", "Last 30 days"), ("all", "All time"))
@@ -238,5 +330,21 @@ def usage_page(request: Request, since: str = "7d"):
         stats = ui_queries.usage(conn, since)
     finally:
         conn.close()
-    return render("usage.html", user=request.state.user_name, stats=stats, window=since,
+    return render("usage.html", request, stats=stats, window=since,
                   windows=USAGE_TABS)
+
+
+@_write("/ui/signout")
+def signout(request: Request):
+    """Ends this session, and only this one: the row goes, and the cookie is cleared
+    with the attributes ``/ui/session`` set it with."""
+    conn = db.connect()
+    try:
+        ui_auth.end_sessions(conn, session_id=request.state.ui_session_id)
+    finally:
+        conn.close()
+    response = message(200, "Signed out", "You are signed out of Loom. Run `loom ui` in a "
+                       "terminal to sign in again.")
+    response.delete_cookie(ui_auth.SESSION_COOKIE, path="/ui", secure=True, httponly=True,
+                           samesite="strict")
+    return response

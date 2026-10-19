@@ -1,4 +1,4 @@
-/* Loom read-only UI (D14). One stylesheet, no inline styles: the CSP allows neither
+/* Loom UI (D14, D20). One stylesheet, no inline styles: the CSP allows neither
    inline <style> nor style="" attributes. */
 :root {
   --bg: #fbfbfa; --fg: #1d2127; --muted: #626a75; --line: #dfe2e6; --panel: #ffffff;
@@ -28,6 +28,11 @@ a { color: var(--accent); }
 .brand { font-weight: 700; text-decoration: none; letter-spacing: 0.02em; }
 .top nav a { margin-right: 1rem; }
 .who { margin-left: auto; color: var(--muted); font-size: 0.9rem; }
+.signout { margin: 0; }
+.signout button {
+  font: inherit; font-size: 0.9rem; color: var(--accent); background: none; border: none;
+  padding: 0; cursor: pointer; text-decoration: underline;
+}
 .banner {
   margin: 0; padding: 0.5rem 1rem; background: var(--banner-bg); color: var(--banner-fg);
   font-size: 0.9rem;
