@@ -2716,12 +2716,43 @@ def _trigger_parity_check(cfg: Config | None) -> tuple[str, str]:
 _SCHEDULER_DEFAULT_PATH = "/usr/bin:/bin"
 
 
+_INTERPRETER_NAME_CHARS = frozenset(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_.+-"
+)
+
+
+def _env_interpreter(path: str) -> str | None:
+    """The interpreter a ``#!/usr/bin/env NAME`` script looks up on PATH, if any.
+
+    Mirrors install.sh's ``trigger_env_interpreter``: an npm-installed claude starts with
+    ``#!/usr/bin/env node``, so the trigger must resolve node too. ``open`` follows a
+    symlink to the file the kernel reads; a native binary or an absolute ``#!`` needs
+    nothing from PATH.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(256)
+    except OSError:
+        return None
+    if not head.startswith(b"#!"):
+        return None
+    words = head[2:].split(b"\n", 1)[0].decode("latin-1").split()
+    if len(words) < 2 or not words[0].endswith("/env"):
+        return None
+    for word in words[1:]:
+        if word.startswith("-") or "=" in word:
+            continue
+        return word if set(word) <= _INTERPRETER_NAME_CHARS else None
+    return None
+
+
 def _trigger_tools_check(cfg: Config | None) -> tuple[str, str]:
     """Would the unattended pass resolve the SAME summarizer and git as this shell? (P2.F5)
 
     The 2026-10-19 macOS finding: a 1040-byte trigger PATH was dropped by cron, so the pass
     ran on `/usr/bin:/bin` — and while D16's `$LOOM_HOME/bin/gitleaks` covers the scanner
-    (the row above), ``claude`` and ``git`` are still looked up through PATH. A summarizer
+    (the row above), ``claude`` and ``git`` are still looked up through PATH, and so is
+    ``node`` when claude is an npm ``#!/usr/bin/env node`` script. A summarizer
     the trigger cannot resolve fails every unattended summary. ``⚠``, not ``✗``, for the
     reason the scanner-parity row gives: the SessionEnd kick runs with the session's own
     environment and still captures. Binaries only, never paths, in the message (the frozen
@@ -2736,6 +2767,11 @@ def _trigger_tools_check(cfg: Config | None) -> tuple[str, str]:
     effective = trigger_path if trigger_path is not None else _SCHEDULER_DEFAULT_PATH
     # An absolute (or relative-with-a-slash) claude_bin is executed as is: no PATH lookup.
     names = [name for name in (cfg.claude_bin, "git") if os.sep not in name]
+    # ...but the interpreter its #! line asks PATH for (node, for npm) is looked up.
+    claude_file = cfg.claude_bin if os.sep in cfg.claude_bin else shutil.which(cfg.claude_bin)
+    interpreter = _env_interpreter(claude_file) if claude_file else None
+    if interpreter and interpreter not in names:
+        names.append(interpreter)
     checked, diverging = [], []
     for name in names:
         here = shutil.which(name)

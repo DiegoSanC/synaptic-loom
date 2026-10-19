@@ -23,8 +23,9 @@
 #      crontab is backed up to $LOOM_HOME/backup/crontab.<ts> before every write.
 #      The trigger carries the environment the unattended pass needs (P2.F5): LOOM_HOME, so
 #      it works on the right queue/config/token, and a MINIMAL PATH — $LOOM_HOME/venv/bin,
-#      the directories claude (or config.json's claude_bin), git, jq, python3 and a PATH
-#      gitleaks resolve from in this shell, then /usr/bin:/bin:/usr/sbin:/sbin — never the
+#      the directories claude (or config.json's claude_bin), git, jq, python3, the node an
+#      npm claude's `#!/usr/bin/env node` needs, and a PATH gitleaks resolve from in this
+#      shell, then /usr/bin:/bin:/usr/sbin:/sbin — never the
 #      whole interactive PATH: macOS cron silently drops an environment line of 999 bytes or
 #      more. A needed binary that does not resolve is reported; a PATH line over 900 bytes
 #      fails the install before the scheduler is touched (docs/RUNBOOK.md §2). The scanner
@@ -188,6 +189,30 @@ trigger_path_hit() {
   return 1
 }
 
+# The interpreter a script asks PATH for through its `#!/usr/bin/env NAME` line (env's
+# options and VAR=value words skipped), printed; failure when there is none. That is how an
+# npm-installed claude starts — `#!/usr/bin/env node` — so the trigger needs node's
+# directory as well as claude's, and node need not live next to it (a Homebrew node with a
+# custom npm prefix). Reading the file follows a symlink to its target, which is what the
+# kernel reads too. A native binary (Mach-O/ELF) or an absolute `#!/path/interp` needs
+# nothing from PATH.
+trigger_env_interpreter() {
+  local line word words=()
+  [ -f "$1" ] && [ -r "$1" ] || return 1
+  [ "$(LC_ALL=C head -c 2 "$1" 2>/dev/null)" = "#!" ] || return 1
+  line="$(LC_ALL=C head -n 1 "$1" 2>/dev/null | LC_ALL=C head -c 256)"
+  read -r -a words <<<"${line#\#!}"
+  [ "${#words[@]}" -ge 2 ] || return 1
+  case "${words[0]}" in */env) ;; *) return 1 ;; esac
+  for word in "${words[@]:1}"; do
+    case "$word" in -* | *=*) continue ;; esac
+    [[ $word =~ ^[A-Za-z0-9_.+-]+$ ]] || return 1
+    printf '%s' "$word"
+    return 0
+  done
+  return 1
+}
+
 # Builds TRIGGER_PATH_VALUE. A needed binary that does not resolve, or resolves from a
 # directory no scheduler entry can carry, is REPORTED (the install goes on: the operator may
 # install it next, and `loom doctor` keeps saying so); a value over TRIGGER_PATH_LINE_MAX
@@ -214,9 +239,18 @@ build_trigger_path() {
       ;;
     *) required=("$claude_bin" "${required[@]}") ;;
   esac
+  # Whatever claude's own #! line looks up on PATH (node, for an npm install) is needed too.
+  local claude_file="$claude_bin" hit interpreter
+  case "$claude_bin" in
+    */*) ;;
+    *) hit="$(trigger_path_hit "$claude_bin")" && claude_file="${hit:-.}/$claude_bin" ;;
+  esac
+  if interpreter="$(trigger_env_interpreter "$claude_file")"; then
+    required+=("$interpreter")
+  fi
   [ -x "$GITLEAKS_BIN" ] || optional=(gitleaks)
 
-  local hits=":" name hit is_required
+  local hits=":" name is_required
   for name in "${required[@]}" ${optional+"${optional[@]}"}; do
     is_required=1
     [ "$name" = gitleaks ] && is_required=0

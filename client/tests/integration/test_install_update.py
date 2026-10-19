@@ -588,6 +588,113 @@ def test_systemd_unit_gets_the_same_minimal_path(tmp_path, home):
     assert not (tmp_path / "cron.txt").exists(), "one trigger, one owner"
 
 
+# --------------------------------------------------------------------------- #
+# A claude that is a `#!/usr/bin/env node` script also needs node's directory  #
+# --------------------------------------------------------------------------- #
+def _npm_claude(tmp_path: Path, shebang: bytes = b"#!/usr/bin/env node\n") -> Path:
+    """An npm-global-style ``claude``: a symlink in a bin dir into a package dir whose
+    file starts with ``shebang``. Returns the bin dir (what PATH holds)."""
+    lib = tmp_path / "npm_lib" / "node_modules" / "claude-code"
+    lib.mkdir(parents=True)
+    cli = lib / "cli.js"
+    cli.write_bytes(shebang + b"// not run by these tests\n")
+    cli.chmod(0o755)
+    bin_dir = tmp_path / "npm_bin"
+    bin_dir.mkdir()
+    (bin_dir / "claude").symlink_to(cli)
+    return bin_dir
+
+
+def _npm_install_path(tmp_path: Path, claude_dir: Path, *, node: bool = True):
+    """Install PATH with claude, git/jq, node, python3 in separate dirs (node's dir AFTER
+    claude's, as with a Homebrew node and a custom npm prefix), and the trigger PATH
+    expected from it when claude needs node."""
+    gj = _tool_dir(tmp_path, "gitjq_bin", "git", "jq")
+    nd = _tool_dir(tmp_path, "node_bin", "node", decoy=True)
+    py = _tool_dir(tmp_path, "py_bin", "python3")
+    dirs = [claude_dir, gj, *([nd] if node else []), py]
+    install_path = os.pathsep.join([*(str(d) for d in dirs), _sandbox_path(tmp_path)])
+    venv = f"{tmp_path / 'home' / '.loom'}/venv/bin"
+    return install_path, [venv, *(str(d) for d in dirs), *SYSTEM_DIRS], nd
+
+
+def test_an_npm_claude_brings_nodes_directory_into_the_cron_path(tmp_path, home):
+    """`#!/usr/bin/env node` makes claude look node up on PATH: without node's directory
+    the trigger resolves claude and still cannot run it. The symlink's own directory is
+    what PATH needs (not the package dir it points into)."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    install_path, expected, _ = _npm_install_path(tmp_path, _npm_claude(tmp_path))
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    value = _assignments(state.read_text().splitlines())["PATH"]
+    assert value.split(os.pathsep) == expected
+    assert "npm_lib" not in value
+    assert "not on this shell's PATH" not in proc.stderr, proc.stderr
+
+
+def test_an_npm_claude_brings_nodes_directory_into_the_systemd_unit(tmp_path, home):
+    _systemctl_shim(tmp_path, tmp_path / "systemctl.log")
+    _crontab_shim(tmp_path, tmp_path / "cron.txt")
+    install_path, expected, _ = _npm_install_path(tmp_path, _npm_claude(tmp_path))
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    unit = (home / ".config" / "systemd" / "user" / "loom-process.service").read_text()
+    path_lines = [line for line in unit.splitlines() if line.startswith("Environment=PATH=")]
+    assert [line[len("Environment=PATH="):].split(os.pathsep)
+            for line in path_lines] == [expected]
+
+
+def test_a_native_claude_binary_adds_no_interpreter_directory(tmp_path, home):
+    """A Mach-O/ELF claude (the native installer, the Homebrew cask) runs by itself: node
+    being on PATH is no reason to carry its directory, even if the bytes say 'node'."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    native = _npm_claude(tmp_path, shebang=b"\xcf\xfa\xed\xfe\x0c\x00\x00\x01 env node\n")
+    install_path, expected, node_dir = _npm_install_path(tmp_path, native)
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    value = _assignments(state.read_text().splitlines())["PATH"]
+    assert value.split(os.pathsep) == [d for d in expected if d != str(node_dir)]
+
+
+def test_an_npm_claude_without_node_on_path_is_reported(tmp_path, home):
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    install_path, _, _ = _npm_install_path(tmp_path, _npm_claude(tmp_path), node=False)
+    assert shutil.which("node", path=install_path) is None
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    assert "'node' is not on this shell's PATH" in proc.stderr, proc.stderr
+    assert CRON_TAG in state.read_text().splitlines()
+
+
+def test_an_absolute_claude_bin_script_still_brings_node(tmp_path, home):
+    """An absolute claude_bin needs no directory of its own, but its `env node` line
+    still looks node up on PATH."""
+    state = tmp_path / "cron.txt"
+    _crontab_shim(tmp_path, state)
+    claude_dir = _npm_claude(tmp_path)
+    install_path, _, node_dir = _npm_install_path(tmp_path, tmp_path / "elsewhere")
+    (home / ".loom").mkdir(parents=True)
+    (home / ".loom" / "config.json").write_text(
+        f'{{"claude_bin": "{claude_dir / "claude"}"}}\n')
+
+    proc = _run(tmp_path, PATH=install_path)
+
+    assert proc.returncode == 0, proc.stderr
+    value = _assignments(state.read_text().splitlines())["PATH"].split(os.pathsep)
+    assert str(node_dir) in value and str(claude_dir) not in value
+
+
 def test_install_replaces_a_stale_loom_block_in_place(tmp_path, home):
     """A re-install after LOOM_HOME moved must not leave the old command behind."""
     state = tmp_path / "cron.txt"

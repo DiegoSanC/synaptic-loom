@@ -530,6 +530,13 @@ installer, de-duplicated and **in the order they appear on that shell's `PATH`**
 resolves to the very same file it did there), then `/usr/bin:/bin:/usr/sbin:/sbin`.
 Nothing else: no `/usr/local/bin` or homebrew prefix is guessed, and a tool living there
 brings its own directory. An absolute `claude_bin` is run as is and needs no directory.
+Like `python3` for a `#!/usr/bin/env python3` tool, **`node` comes along when claude needs
+it**: install.sh reads the first line of the file `claude` (or `claude_bin`) resolves to,
+following symlinks, and when it is a `#!/usr/bin/env node` script — how an npm global install
+starts it, often from a prefix that is not node's own directory — node's directory is carried
+too, under the same order, de-duplication and 900-byte rules, and a node that does not
+resolve is reported by name. A native claude binary (the standalone installer, the Homebrew
+cask) needs nothing extra.
 
 The reason it must be short: macOS cron silently **drops** an environment line of 999
 bytes or more. Apple's cron (`apple-oss-distributions/cron`, tag `cron-52`) reads each line
@@ -555,7 +562,7 @@ two rows about it: **trigger scanner parity** (`✓` when the pass will run
 `$LOOM_HOME/bin/gitleaks`; a warning when only a PATH gitleaks exists and the trigger's
 `PATH` cannot reach it — that pass would pause), and **trigger tool parity** (a warning when
 the trigger's `PATH` — or, with no `PATH=` line, cron's `/usr/bin:/bin` — does not resolve
-the same `claude` and `git` this shell does: unattended passes would fail to summarize or
+the same `claude` and `git` this shell does, nor the `node` an npm claude starts with: unattended passes would fail to summarize or
 attribute). Both are `⚠`, not `✗`: the SessionEnd kick still captures. Re-run
 `bash client/install.sh --yes` to fix either.
 

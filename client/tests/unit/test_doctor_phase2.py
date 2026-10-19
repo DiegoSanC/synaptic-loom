@@ -676,6 +676,62 @@ def test_tool_parity_does_not_check_what_this_shell_cannot_resolve(tmp_path, bin
     assert "not checked" in msg
 
 
+def _npm_claude(tmp_path, first_bytes: bytes = b"#!/usr/bin/env node\n"):
+    """``claude`` as npm installs it: a symlink into a package file with ``first_bytes``."""
+    lib = tmp_path / "npm_lib"
+    lib.mkdir(parents=True)
+    (lib / "cli.js").write_bytes(first_bytes + b"// inert\n")
+    (lib / "cli.js").chmod(0o755)
+    bin_dir = tmp_path / "npm_bin"
+    bin_dir.mkdir()
+    (bin_dir / "claude").symlink_to(lib / "cli.js")
+    return bin_dir
+
+
+def test_tool_parity_warns_when_the_trigger_cannot_resolve_an_npm_claudes_node(
+        tmp_path, bindir, monkeypatch):
+    """claude resolves under the trigger, but its `#!/usr/bin/env node` does not."""
+    cfg = _config(tmp_path)
+    npm = _npm_claude(tmp_path)
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "git", "node")
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{npm}{os.pathsep}{tools}")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{npm}"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "warn"
+    assert "'node'" in msg and "'claude'" not in msg
+
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{npm}:{tools}"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "ok", msg
+    assert "'node'" in msg
+
+
+def test_tool_parity_checks_the_node_of_an_absolute_claude_bin(tmp_path, bindir,
+                                                               monkeypatch):
+    npm = _npm_claude(tmp_path)
+    cfg = _config(tmp_path, claude_bin=str(npm / "claude"))
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "git", "node")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "warn"
+    assert "'node'" in msg
+
+
+def test_tool_parity_a_native_claude_needs_no_node(tmp_path, bindir, monkeypatch):
+    cfg = _config(tmp_path)
+    native = _npm_claude(tmp_path, first_bytes=b"\x7fELF\x02\x01\x01 env node\n")
+    tools = _shell_tools(tmp_path, bindir, monkeypatch, "git", "node")
+    # The trigger reaches claude and git, not node: fine for a binary that needs no node.
+    git_only = tmp_path / "git_only"
+    _stub(git_only, "git", "exit 0\n")
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{native}{os.pathsep}{git_only}"
+                               f"{os.pathsep}{tools}")
+    _crontab(bindir, _cron_block(cfg, f"{cfg.loom_home}/venv/bin:{native}:{git_only}"))
+    level, msg = cli._trigger_tools_check(cfg)
+    assert level == "ok", msg
+    assert "'node'" not in msg
+
+
 def test_tool_parity_without_config_is_a_warn():
     assert cli._trigger_tools_check(None)[0] == "warn"
 
