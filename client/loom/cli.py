@@ -55,8 +55,10 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import ipaddress
 import json
 import os
+import re
 import shutil
 import socket
 import stat
@@ -65,7 +67,7 @@ import sys
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from loom import auth, curate, okf, processor, projects_local, scan_engine
 from loom.api_client import ApiClient, ServerUnreachable
@@ -2129,6 +2131,104 @@ def default_device_name() -> str:
     return hostname.split(".", 1)[0].strip() or DEFAULT_DEVICE_NAME
 
 
+# D19: the invitation link is `https://<host>/ui/join#code=<code>`. It carries the server
+# URL, so a crafted one could point this machine at someone else's server: the parse is
+# strict, and nothing in a refusal quotes what was pasted (it holds a live code).
+_CODE_ALPHABET = re.compile(r"[A-Za-z0-9_-]+")  # secrets.token_urlsafe
+_HOST_LABEL = re.compile(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?")
+_JOIN_PATH = "/ui/join"
+_NOT_ENROLLED = "Not enrolled; nothing was sent."
+
+
+class _RefusedLink(ValueError):
+    """A pasted value that is not a usable link; the message never quotes it."""
+
+
+def _is_host_name(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        pass
+    return len(host) <= 253 and all(_HOST_LABEL.fullmatch(label) for label in host.split("."))
+
+
+def _is_loopback(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _parse_code_or_link(pasted: str) -> tuple[str, str | None]:
+    """``(code, server_url)`` from a bare code (``server_url`` is ``None``) or a link.
+
+    A link must be exactly ``https://<host>[:<port>]/ui/join#code=<code>`` (``http`` only
+    for a loopback host): no user info, no query, no other path or fragment key. Its
+    server URL is the scheme, host and port, with no path. Raises :class:`_RefusedLink`.
+    """
+    if _CODE_ALPHABET.fullmatch(pasted):
+        return pasted, None
+    malformed = _RefusedLink("that is neither an enrolment code nor an invitation link "
+                             f"(https://<server>{_JOIN_PATH}#code=…).")
+    if not pasted.isascii() or not pasted.isprintable() or any(ch.isspace() for ch in pasted):
+        raise malformed
+    try:
+        parts = urlsplit(pasted)
+        port = parts.port
+    except ValueError:
+        raise malformed from None
+    host = parts.hostname
+    key, sep, code = parts.fragment.partition("=")
+    if (parts.scheme not in ("https", "http") or "?" in pasted or "@" in parts.netloc
+            or parts.path != _JOIN_PATH or not host or not _is_host_name(host)
+            or (key, sep) != ("code", "=") or not _CODE_ALPHABET.fullmatch(code)):
+        raise malformed
+    if parts.scheme == "http" and not _is_loopback(host):
+        raise _RefusedLink("an invitation link must use https (plain http only for a "
+                           "server on this machine).")
+    shown = f"[{host}]" if ":" in host else host
+    return code, f"{parts.scheme}://{shown}" + (f":{port}" if port is not None else "")
+
+
+def _origin_key(url: str) -> tuple | None:
+    """What makes two server URLs the same server: scheme, host, port and path."""
+    try:
+        parts = urlsplit(url.strip())
+        scheme = parts.scheme.lower()
+        port = parts.port or {"https": 443, "http": 80}.get(scheme)
+    except ValueError:
+        return None
+    return scheme, parts.hostname, port, parts.path.rstrip("/")
+
+
+def _host_shown(url: str) -> str:
+    """Host and port of a server URL, as the person has to read it."""
+    try:
+        return urlsplit(url).netloc.rpartition("@")[2] or url
+    except ValueError:
+        return url
+
+
+def _confirm_link_server(link_url: str, configured: str | None) -> bool:
+    """Show the link's host on a line of its own and ask y/N; anything but yes is no."""
+    print("This invitation link enrols this machine with the Loom server at:\n")
+    print(f"    {_host_shown(link_url)}\n")
+    if configured is None:
+        print("This is this machine's first enrolment.")
+    else:
+        print(f"This machine is enrolled with {_host_shown(configured)} now; "
+              "enrolling here repoints it.")
+    print("Continue only if you expected an invitation to this server.")
+    try:
+        answer = input("Enrol with this server? [y/N]: ")
+    except EOFError:  # no terminal to answer from: never a silent yes
+        answer = ""
+    return answer.strip().lower() in ("y", "yes")
+
+
 def cmd_enroll(args: argparse.Namespace) -> int:
     """Redeem a single-use enrolment code for THIS machine's device token.
 
@@ -2139,13 +2239,45 @@ def cmd_enroll(args: argparse.Namespace) -> int:
     """
     loom_home = get_loom_home()
     loom_home.mkdir(parents=True, exist_ok=True)
+    existing = _read_json(loom_home / "config.json")
+    existing = existing if isinstance(existing, dict) else {}
 
-    server_url = args.server_url if args.server_url is not None else input(
-        "loom server URL (e.g. https://<app>.fly.dev): "
-    ).strip()
-    if not server_url:
-        print("loom enroll: server_url is required.", file=sys.stderr)
+    # The code comes first: an invitation link carries the server URL as well.
+    pasted = getpass.getpass("Enrolment code or invitation link "
+                             "(from the operator's 'admin.py invite'; not echoed): ").strip()
+    if not pasted:
+        print("loom enroll: an enrolment code is required.", file=sys.stderr)
         return 1
+    try:
+        code, link_url = _parse_code_or_link(pasted)
+    except _RefusedLink as exc:
+        print(f"loom enroll: {exc} {_NOT_ENROLLED}", file=sys.stderr)
+        return 1
+
+    if link_url is None:
+        server_url = args.server_url if args.server_url is not None else input(
+            "loom server URL (e.g. https://<app>.fly.dev): "
+        ).strip()
+        if not server_url:
+            print("loom enroll: server_url is required.", file=sys.stderr)
+            return 1
+    elif args.server_url is not None:
+        # An explicit --server-url is the person's own statement of where they enrol;
+        # a link that contradicts it is refused, never preferred.
+        if _origin_key(args.server_url) != _origin_key(link_url):
+            print(f"loom enroll: the link is for {_host_shown(link_url)}, which is not "
+                  f"--server-url ({args.server_url}). {_NOT_ENROLLED} Check where the link "
+                  "came from.", file=sys.stderr)
+            return 1
+        server_url = link_url
+    else:
+        configured = existing.get("server_url")
+        configured = configured if isinstance(configured, str) and configured else None
+        if configured is None or _origin_key(configured) != _origin_key(link_url):
+            if not _confirm_link_server(link_url, configured):
+                print(f"loom enroll: {_NOT_ENROLLED}", file=sys.stderr)
+                return 1
+        server_url = link_url
 
     reachable, hmsg = _check_health(server_url, "")
     if not reachable:
@@ -2153,10 +2285,6 @@ def cmd_enroll(args: argparse.Namespace) -> int:
         return 1
     print(f"Server reachable ✓ ({hmsg})")
 
-    code = getpass.getpass("Enrolment code (from the operator's 'admin.py invite'; not echoed): ").strip()
-    if not code:
-        print("loom enroll: an enrolment code is required.", file=sys.stderr)
-        return 1
     device_name = args.device_name or default_device_name()
 
     api = ApiClient(server_url, "")
@@ -2176,8 +2304,6 @@ def cmd_enroll(args: argparse.Namespace) -> int:
         print("loom enroll: the server's answer did not carry a device token.", file=sys.stderr)
         return 1
 
-    existing = _read_json(loom_home / "config.json")
-    existing = existing if isinstance(existing, dict) else {}
     config = {
         "cache_ttl_s": DEFAULT_CACHE_TTL_S,
         "summarizer": {
@@ -3147,7 +3273,9 @@ def _build_parser() -> argparse.ArgumentParser:
     p_enroll = sub.add_parser(
         "enroll", help="Redeem an enrolment code for this machine's device token (the default onboarding)."
     )
-    p_enroll.add_argument("--server-url", dest="server_url", help="Server URL (prompted if omitted).")
+    p_enroll.add_argument("--server-url", dest="server_url",
+                          help="Server URL (prompted if omitted and a bare code is pasted; an "
+                               "invitation link carries it, and must match it when both are given).")
     p_enroll.add_argument("--device-name", dest="device_name",
                           help="How this machine is listed server-side, sent verbatim "
                                "(default: short host name, without the domain).")
