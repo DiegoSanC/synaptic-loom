@@ -1,4 +1,4 @@
-# Usa el venv del proyecto si existe (.venv), si no cae a python3 del sistema.
+# Use the project venv if it exists (.venv); otherwise fall back to the system python3.
 PYTHON := $(shell [ -x .venv/bin/python ] && echo .venv/bin/python || echo python3)
 
 .PHONY: test contract serve install

@@ -36,7 +36,7 @@ def _kinds(text: str) -> set[str]:
     ],
 )
 def test_family_positive(kind, sample):
-    assert kind in _kinds(sample), f"{kind!r} debería detectarse en {sample!r}"
+    assert kind in _kinds(sample), f"{kind!r} should be detected in {sample!r}"
 
 
 # --- Negatives: one clean input per family ---------------------------------------

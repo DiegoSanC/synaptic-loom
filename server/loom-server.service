@@ -1,15 +1,15 @@
-# Unidad systemd de USUARIO para el servidor loom del piloto (PLAN §T7.1).
-# Instálala con:
+# systemd USER unit for the pilot's loom server (PLAN §T7.1).
+# Install it with:
 #   mkdir -p ~/.config/systemd/user
 #   cp server/loom-server.service ~/.config/systemd/user/
 #   systemctl --user daemon-reload
 #   systemctl --user enable --now loom-server
-#   loginctl enable-linger "$USER"   # para que sobreviva al cierre de sesión
+#   loginctl enable-linger "$USER"   # so it survives logging out
 #
-# Piloto: bind SOLO a 127.0.0.1 (sin TLS — ver fase-3 TODO en docs/RUNBOOK.md).
-# %h es tu HOME; ajusta la ruta del checkout si el repo está en otro sitio.
+# Pilot: bind ONLY to 127.0.0.1 (no TLS — see the phase-3 TODO in docs/RUNBOOK.md).
+# %h is your HOME; adjust the checkout path if the repo lives elsewhere.
 [Unit]
-Description=Synaptic Loom API server (piloto, solo localhost)
+Description=Synaptic Loom API server (pilot, localhost only)
 After=default.target
 
 [Service]

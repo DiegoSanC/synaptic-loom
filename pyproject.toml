@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "loom"
 version = "0.1.0"
-description = "Synaptic Loom - base de conocimiento de sesiones de Claude Code para revisiones cruzadas."
+description = "Synaptic Loom - knowledge base of Claude Code sessions for cross-reviews."
 requires-python = ">=3.12"
 dependencies = []
 
@@ -17,8 +17,8 @@ dev = ["pytest", "pytest-httpserver", "httpx"]
 [project.scripts]
 loom = "loom.cli:main"
 
-# Monorepo de un solo paquete instalable: `loom` (cliente, en client/loom) y `server`
-# (servidor, en server/). Ver PLAN.md §T1 / DESIGN.md §10.
+# Monorepo with a single installable package: `loom` (client, in client/loom) and `server`
+# (server, in server/). See PLAN.md §T1 / DESIGN.md §10.
 [tool.setuptools]
 packages = ["loom", "server"]
 

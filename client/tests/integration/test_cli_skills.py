@@ -19,7 +19,7 @@ INSTALL_SCRIPT = REPO_ROOT / "client" / "install.sh"
 
 def _frontmatter(text: str) -> dict[str, str]:
     """Parses the flat YAML frontmatter (name/description) of a SKILL.md."""
-    assert text.startswith("---\n"), "el SKILL.md debe empezar con frontmatter"
+    assert text.startswith("---\n"), "SKILL.md must start with frontmatter"
     _, block, _body = text.split("---\n", 2)
     out = {}
     for line in block.splitlines():
