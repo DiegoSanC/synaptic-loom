@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hmac
 import re
+from contextlib import contextmanager
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
@@ -33,18 +34,25 @@ SECURITY_HEADERS = {
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
         "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     ),
-    "Referrer-Policy": "no-referrer",
+    # Not `no-referrer` (D20, §6.3): under it a browser sends `Origin: null` on every form
+    # POST, which §6.4's Origin check must refuse. `same-origin` still sends no `Referer`
+    # to any other site.
+    "Referrer-Policy": "same-origin",
     "X-Content-Type-Options": "nosniff",
     "Cache-Control": "no-store",
 }
-# Per-path replacements for the policy above, applied by `app.security_headers_middleware`
-# (which overwrites whatever a route sets). `/ui/join` (D19) has no script and no form, so
-# its policy allows no script, no connection and no form target.
-CSP_OVERRIDES = {
-    "/ui/join": (
-        "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'none'; "
-        "base-uri 'none'; frame-ancestors 'none'"
-    ),
+# Per-path replacements for the headers above, applied by
+# `app.security_headers_middleware` (which overwrites whatever a route sets). `/ui/join`
+# (D19) has no script and no form, so its policy allows no script, no connection and no
+# form target, and it sends no `Referer` at all.
+HEADER_OVERRIDES = {
+    "/ui/join": {
+        "Content-Security-Policy": (
+            "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'none'; "
+            "base-uri 'none'; frame-ancestors 'none'"
+        ),
+        "Referrer-Policy": "no-referrer",
+    },
 }
 
 _ENV = jinja2.Environment(
@@ -115,12 +123,24 @@ def _page(path: str):
 WRITE_ROUTES: list[str] = []
 _WRITE_PATTERNS: list[re.Pattern] = []
 FORM_TYPE = "application/x-www-form-urlencoded"
+ADMIN_PREFIX = "/ui/admin/"
+# §6.4's refusal codes, each shown on its page next to its explanation.
 WRITE_REFUSALS = {
+    "method_not_allowed": "The UI is read-only except the listed POST routes",
     "public_url_unset": "This server has no public URL (LOOM_PUBLIC_URL), so the UI "
                         "accepts no write",
     "bad_origin": "The request did not come from this server's own pages",
     "bad_csrf": "The form's CSRF token is missing or wrong; reload the page",
+    "forbidden": "Only an admin can see the users page or change an account, and only a "
+                 "session opened by `loom ui` can make a change",
 }
+_REFUSAL_HEADINGS = {403: "Forbidden", 405: "Method not allowed"}
+
+
+def refusal(status: int, code: str, *, request: Request | None = None) -> HTMLResponse:
+    """The page of a §6.4 refusal: ``status``, and ``code`` named on it (never JSON)."""
+    return message(status, _REFUSAL_HEADINGS[status], f"{WRITE_REFUSALS[code]} ({code}).",
+                   request=request)
 
 
 def _write(path: str):
@@ -153,12 +173,13 @@ def _origin(url: str) -> str:
     return f"{scheme}://{host}" + (f":{port}" if port and port != default else "")
 
 
-def write_refusal(headers, form: dict[str, str], session: str) -> str | None:
+def write_refusal(headers, form: dict[str, str], session: str, kind: str) -> str | None:
     """Why a signed-in write must be refused (a ``WRITE_REFUSALS`` code), or ``None``.
 
     In §6.4's order: no resolved public URL; then ``Origin``, which when present must be
-    the public URL's origin, and when absent leaves the call to ``Sec-Fetch-Site:
-    same-origin`` (neither header is a refusal); then the ``csrf`` field.
+    the public URL's origin (so ``Origin: null`` is refused, whatever ``Sec-Fetch-Site``
+    says), and when absent leaves the call to ``Sec-Fetch-Site: same-origin`` (neither
+    header is a refusal); then the ``csrf`` field; then the session's ``kind``.
     """
     base = public_url.resolve()
     if base is None:
@@ -172,7 +193,47 @@ def write_refusal(headers, form: dict[str, str], session: str) -> str | None:
     if not hmac.compare_digest(form.get("csrf", "").encode(),
                                ui_auth.csrf_token(session).encode()):
         return "bad_csrf"
+    if kind not in ui_auth.WRITABLE_KINDS:
+        return "forbidden"
     return None
+
+
+class WriteRefused(Exception):
+    """:func:`write_transaction` found the session changed since the gate let the write
+    in; ``app`` answers it as the gate would (``status`` 401 or 403, ``outcome`` the
+    gate's audit outcome or refusal code)."""
+
+    def __init__(self, status: int, outcome: str):
+        super().__init__(outcome)
+        self.status, self.outcome = status, outcome
+
+
+@contextmanager
+def write_transaction(request: Request, conn):
+    """Every write's ``BEGIN IMMEDIATE`` (D20, §6.4): the block runs under the write lock
+    and is committed when it ends, rolled back when it raises.
+
+    Before the block, the session is read again under that lock — row, expiry, the user's
+    ``active`` and role, its device token — because the gate read it before the body
+    arrived. A session that would not pass the gate now raises :class:`WriteRefused`
+    (401), and so does a role that no longer opens a ``/ui/admin/`` route (403
+    ``forbidden``); nothing has changed. ``request.state.user_role`` is updated to the
+    role read here, so the block decides with it.
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        session = ui_auth.reread_session(conn, request.state.ui_session_id)
+        outcome = ui_auth.session_refusal(session, db.iso_now())
+        if outcome is not None:
+            raise WriteRefused(401, outcome)
+        if request.url.path.startswith(ADMIN_PREFIX) and session["role"] != "admin":
+            raise WriteRefused(403, "forbidden")
+        request.state.user_role = session["role"]
+        yield
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
 
 
 # --------------------------------------------------------------------------- #
@@ -250,6 +311,8 @@ def project_page(
     no filter; an unknown tab, type or page cursor is a 404 like an unknown project.
     """
     item_type, author, q = item_type or None, author or None, (q or "").strip() or None
+    if not db.is_row_id(project_id):
+        return not_found(request)
     if tab not in dict(TABS) or (item_type is not None and item_type not in search.ITEM_TYPES):
         return not_found(request)
     if before is not None and not before.isdigit():
@@ -295,6 +358,8 @@ def project_page(
 @_page("/ui/items/{entry_id:int}.{ordinal:int}")
 def item_page(request: Request, entry_id: int, ordinal: int):
     """C — one item: state, lineage, every link, provenance and NAMED feedback."""
+    if not (db.is_row_id(entry_id) and db.is_row_id(ordinal)):
+        return not_found(request)
     conn = db.connect()
     try:
         item = ui_queries.item_detail(conn, entry_id, ordinal)
@@ -308,6 +373,8 @@ def item_page(request: Request, entry_id: int, ordinal: int):
 @_page("/ui/entries/{entry_id:int}")
 def entry_page(request: Request, entry_id: int):
     """D — one entry: the served status over its frontmatter (D12), items, text."""
+    if not db.is_row_id(entry_id):
+        return not_found(request)
     conn = db.connect()
     try:
         entry = ui_queries.entry_detail(conn, entry_id)
@@ -341,11 +408,12 @@ def signout(request: Request):
     with the attributes ``/ui/session`` set it with."""
     conn = db.connect()
     try:
-        ui_auth.end_sessions(conn, session_id=request.state.ui_session_id)
-        auth_events.record(conn, actor_user_id=request.state.user_id, event="ui_signout",
-                           target_type="user", target_id=request.state.user_id,
-                           client_ip=request.state.client_ip)
-        conn.commit()
+        with write_transaction(request, conn):
+            if ui_auth.end_sessions(conn, session_id=request.state.ui_session_id):
+                auth_events.record(conn, actor_user_id=request.state.user_id,
+                                   event="ui_signout", target_type="user",
+                                   target_id=request.state.user_id,
+                                   client_ip=request.state.client_ip)
     finally:
         conn.close()
     response = message(200, "Signed out", "You are signed out of Loom. Run `loom ui` in a "

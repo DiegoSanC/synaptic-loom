@@ -21,7 +21,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from server import (auth, auth_events, client_ip, db, feedback, items, links, public_url, recall,
-                    search, ui_auth, ui_machines, ui_pages)
+                    search, ui_auth, ui_pages)
+# Imported for their side effect: both register their routes on `ui_pages.router` (and
+# their writes in `ui_pages.WRITE_ROUTES`), so they must be imported before
+# `app.include_router(ui_pages.router)` below.
+from server import ui_admin, ui_machines  # noqa: F401
 from server.normalize import normalize
 from server.rate_limit import RateLimiter
 
@@ -265,26 +269,20 @@ async def _ui_session_gate(request: Request, call_next):
     `/api/*`: the browser credential and the machine credential open different surfaces.
     A valid session passes even when its address's failure window is full (D17); only a
     refused one meets the 429. A write then passes `ui_pages.write_refusal` (public URL,
-    origin, CSRF token, DESIGN §6.4) before its handler runs.
+    origin, CSRF token, session kind, DESIGN §6.4) before its handler runs, and the handler
+    re-reads the session under its own write lock (`ui_pages.write_transaction`). Every
+    refusal is an HTML page.
     """
     write = request.method == "POST" and ui_pages.is_write_route(request.url.path)
     if request.method not in _UI_METHODS and not write:
-        return _err(405, "method_not_allowed",
-                    "The UI is read-only except the listed POST routes")
+        return ui_pages.refusal(405, "method_not_allowed")
     cookie = request.cookies.get(ui_auth.SESSION_COOKIE, "")
     if not cookie:
         return _reject_ui(request, "ui_no_session")
     session = await run_in_threadpool(_lookup_ui_session, cookie)
-    if session is None:
-        return _reject_ui(request, "ui_invalid_session")
-    if session["expires_at"] <= db.iso_now():
-        return _reject_ui(request, "ui_expired_session")
-    # `active` before revocation (D19): `deactivate` also revokes the user's machines, and
-    # the outcome must still name the deactivation.
-    if not session["active"]:
-        return _reject_ui(request, "ui_deactivated_user")
-    if session["device_revoked_at"] is not None:
-        return _reject_ui(request, "ui_revoked_device")
+    outcome = ui_auth.session_refusal(session, db.iso_now())
+    if outcome is not None:
+        return _reject_ui(request, outcome)
 
     request.state.user_id = session["user_id"]
     request.state.user_name = session["name"]
@@ -296,15 +294,12 @@ async def _ui_session_gate(request: Request, call_next):
     if write:
         request.state.form = ui_pages.parse_form(request.headers.get("content-type", ""),
                                                  await request.body())
-        refusal = ui_pages.write_refusal(request.headers, request.state.form, cookie)
+        refusal = ui_pages.write_refusal(request.headers, request.state.form, cookie,
+                                         session["kind"])
         if refusal is not None:
             _audit_auth(request, f"ui_write_{refusal}", user_id=session["user_id"],
                         ui_session_id=session["ui_session_id"])
-            return _err(403, refusal, ui_pages.WRITE_REFUSALS[refusal])
-        if session["kind"] not in ui_auth.WRITABLE_KINDS:
-            _audit_auth(request, "ui_write_forbidden_kind", user_id=session["user_id"],
-                        ui_session_id=session["ui_session_id"])
-            return _err(403, "forbidden", "This session cannot write")
+            return ui_pages.refusal(403, refusal, request=request)
     return await call_next(request)
 
 
@@ -391,9 +386,7 @@ async def security_headers_middleware(request: Request, call_next):
     if ui_pages.is_ui_path(request.url.path):
         # Outermost middleware, so it also dresses the gate's own 401/405/429 (AC-8).
         response.headers.update(ui_pages.SECURITY_HEADERS)
-        csp = ui_pages.CSP_OVERRIDES.get(request.url.path)
-        if csp is not None:
-            response.headers["Content-Security-Policy"] = csp
+        response.headers.update(ui_pages.HEADER_OVERRIDES.get(request.url.path, {}))
     return response
 
 
@@ -408,10 +401,21 @@ async def _validation_handler(request: Request, exc: RequestValidationError):
     return _err(422, "validation_error", detail or "Invalid request body")
 
 
+@app.exception_handler(ui_pages.WriteRefused)
+async def _write_refused_handler(request: Request, exc: ui_pages.WriteRefused):
+    """A write whose session changed after the gate let it in (§6.4) is refused as the
+    gate would refuse it: the same 401 (counted, audited), or `403 forbidden`."""
+    if exc.status == 401:
+        return _reject_ui(request, exc.outcome)
+    return ui_pages.refusal(exc.status, exc.outcome, request=request)
+
+
 @app.exception_handler(StarletteHTTPException)
 async def _http_handler(request: Request, exc: StarletteHTTPException):
     if exc.status_code == 404 and ui_pages.is_ui_path(request.url.path):
         return ui_pages.not_found(request)
+    if exc.status_code == 405 and ui_pages.is_ui_path(request.url.path):
+        return ui_pages.refusal(405, "method_not_allowed", request=request)
     codes = {404: "not_found", 405: "method_not_allowed", 401: "unauthorized", 403: "forbidden"}
     return _err(exc.status_code, codes.get(exc.status_code, "error"), str(exc.detail))
 
@@ -733,12 +737,7 @@ def open_ui_session(payload: UiSessionRequest, request: Request):
     """
     conn = db.connect()
     try:
-        result = ui_auth.open_session(conn, payload.code)
-        if result is not None:
-            auth_events.record(conn, actor_user_id=result["user_id"], event="ui_signin",
-                               target_type="user", target_id=result["user_id"],
-                               client_ip=_client_ip(request))
-            conn.commit()
+        result = ui_auth.open_session(conn, payload.code, client_ip=_client_ip(request))
     finally:
         conn.close()
     if result is None:
@@ -755,9 +754,7 @@ def open_ui_session(payload: UiSessionRequest, request: Request):
     return response
 
 
-# `ui_machines` (imported above) and `ui_admin` register their routes on `ui_pages.router`.
-from server import ui_admin  # noqa: E402,F401
-app.include_router(ui_pages.router)
+app.include_router(ui_pages.router)  # with `ui_machines`' and `ui_admin`'s routes
 
 
 @app.get("/api/health")

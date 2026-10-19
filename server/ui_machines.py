@@ -5,8 +5,10 @@ Every route is registered on ``ui_pages.router`` when this module is imported (s
 write registry and the D14 crawl see it) and reached through ``app._ui_session_gate``:
 the page is a signed-in ``GET``, and the two writes are registered with
 ``ui_pages._write``, so the gate has already checked the public URL, ``Origin``, the CSRF
-token and the session's kind before a handler runs. A machine is a renewal chain, the connected component over
-``replaced_by`` that ``auth.revoke_chain`` revokes; any id of it names it.
+token and the session's kind before a handler runs, and each write runs in
+``ui_pages.write_transaction``, which re-reads the session under the write lock. A machine
+is a renewal chain, the connected component over ``replaced_by`` that
+``auth.revoke_chain`` revokes; any id of it names it.
 """
 from __future__ import annotations
 
@@ -16,9 +18,7 @@ from fastapi import Request
 from starlette.responses import RedirectResponse
 
 from server import auth, auth_events, db, public_url
-from server.ui_pages import _page, _write, not_found, render
-
-_MAX_ROW_ID = 2**63 - 1   # SQLite's INTEGER: a longer path id names no row
+from server.ui_pages import _page, _write, not_found, render, write_transaction
 
 
 def chains(conn: sqlite3.Connection, user_id: int, now: str) -> list[dict]:
@@ -79,8 +79,7 @@ def issue_setup_code(request: Request):
     user_id = request.state.user_id
     conn = db.connect()
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with write_transaction(request, conn):
             code, expires_at = auth.create_invitation(
                 conn, user_id, auth.setup_code_ttl_s(), kind="setup",
                 created_by_user_id=user_id,
@@ -88,10 +87,6 @@ def issue_setup_code(request: Request):
             auth_events.record(conn, actor_user_id=user_id, event="setup_code_issued",
                                target_type="user", target_id=user_id,
                                client_ip=request.state.client_ip)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
     finally:
         conn.close()
     # The gate refused every write already when the public URL does not resolve.
@@ -103,27 +98,22 @@ def issue_setup_code(request: Request):
 def revoke_device(request: Request, device_id: int):
     """Revoke the chain ``device_id`` belongs to, with the issuer cascade: the caller's
     own, or anyone's for an admin; any other id is a 404, unknown or not."""
-    if device_id > _MAX_ROW_ID:
+    if not db.is_row_id(device_id):
         return not_found(request)
     user_id = request.state.user_id
     conn = db.connect()
     try:
-        conn.execute("BEGIN IMMEDIATE")
-        try:
+        with write_transaction(request, conn):
             row = conn.execute("SELECT user_id FROM device_tokens WHERE id = ?",
                                (device_id,)).fetchone()
+            # The role `write_transaction` read under the lock, not the gate's.
             if row is None or (row["user_id"] != user_id
                                and request.state.user_role != "admin"):
-                conn.rollback()
                 return not_found(request)
             if auth.revoke_chain(conn, device_id, db.iso_now()):
                 auth_events.record(conn, actor_user_id=user_id, event="device_revoked",
                                    target_type="device", target_id=device_id,
                                    client_ip=request.state.client_ip)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
     finally:
         conn.close()
     own = row["user_id"] == user_id

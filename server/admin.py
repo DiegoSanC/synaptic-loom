@@ -28,7 +28,7 @@ import secrets
 import sqlite3
 import sys
 
-from server import auth, auth_events, db, public_url
+from server import auth, db, public_url
 
 
 def _adduser(args: argparse.Namespace) -> int:
@@ -81,37 +81,6 @@ def _deactivate(args: argparse.Namespace) -> int:
         conn.close()
 
 
-def set_role(conn: sqlite3.Connection, user_id: int, role: str, *,
-             actor_user_id: int | None = None, client_ip: str | None = None) -> bool | None:
-    """Give ``user_id`` the ``role``, recording ``promoted``/``demoted`` in the same
-    transaction (DESIGN §6.4). Returns ``True`` when the role changed, ``False`` when the
-    user already had it (nothing written), ``None`` when no user has that id.
-
-    Raises :class:`auth.LastAdmin`, with nothing changed, for a demotion of the last
-    active admin; the check runs under ``BEGIN IMMEDIATE``. ``actor_user_id`` is ``None``
-    for this CLI, the signed-in admin for the web.
-    """
-    if role not in auth.ROLES:
-        raise ValueError(f"not a role: {role!r}")
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        user = conn.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
-        if user is None or user["role"] == role:
-            conn.rollback()
-            return None if user is None else False
-        if role != "admin":
-            auth.refuse_last_admin(conn, user_id)
-        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, user_id))
-        auth_events.record(conn, actor_user_id=actor_user_id,
-                           event="promoted" if role == "admin" else "demoted",
-                           target_type="user", target_id=user_id, client_ip=client_ip)
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
-    return True
-
-
 def _set_role(email: str, role: str) -> int:
     conn = db.init_db()
     try:
@@ -120,7 +89,7 @@ def _set_role(email: str, role: str) -> int:
             print(f"error: no user with email {email!r}", file=sys.stderr)
             return 1
         try:
-            changed = set_role(conn, user["id"], role)
+            changed = auth.set_role(conn, user["id"], role, audit=auth.CLI_AUDIT)
         except auth.LastAdmin:
             return _last_admin(email)
         if changed:
@@ -140,50 +109,15 @@ def _demote(args: argparse.Namespace) -> int:
     return _set_role(args.email, "member")
 
 
-def invite(conn: sqlite3.Connection, email: str, name: str | None, ttl_s: int, *,
-           role: str = "member", created_by_user_id: int | None = None,
-           issued_by_device_token_id: int | None = None) -> tuple[int, str, str, str] | None:
-    """One invitation for ``email``: ``(user_id, name, code, expires_at)``, or ``None``,
-    with nothing written, when no user has that email and no ``name`` was given.
-
-    An unknown email creates the user with ``name`` and ``role``; a known one keeps its
-    name and role and only gets a new code (DESIGN §6.4: this command's semantics, which
-    the web's invite shares). The issuer fields are the web's; ``NULL`` from here. The
-    caller commits.
-    """
-    if role not in auth.ROLES:
-        raise ValueError(f"not a role: {role!r}")
-    user = conn.execute("SELECT id, name FROM users WHERE email = ?", (email,)).fetchone()
-    if user is None:
-        if name is None:
-            return None
-        # The legacy column is NOT NULL. The preimage of this hash is discarded on
-        # purpose: nobody holds it, so enrolment is the only way onto the API for a
-        # user created here — no permanent token is ever printed for them.
-        cur = conn.execute(
-            "INSERT INTO users (name, email, token_hash, active, created_at, role) "
-            "VALUES (?, ?, ?, 1, ?, ?)",
-            (name, email, db.hash_token(secrets.token_urlsafe(32)), db.iso_now(), role),
-        )
-        user_id = cur.lastrowid
-    else:
-        user_id, name = user["id"], user["name"]
-    code, expires_at = auth.create_invitation(
-        conn, user_id, ttl_s, created_by_user_id=created_by_user_id,
-        issued_by_device_token_id=issued_by_device_token_id)
-    return user_id, name, code, expires_at
-
-
 def _invite(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
-        invited = invite(conn, args.email, args.name, args.ttl)
+        invited = auth.invite(conn, args.email, args.name, args.ttl)
         if invited is None:
             print(f"error: no user with email {args.email!r}; pass --name to create one",
                   file=sys.stderr)
             return 1
         _, name, code, expires_at = invited
-        conn.commit()
         print(f"Invitation for {name} ({args.email}): single use, valid until {expires_at}.")
         print()
         print("  ENROLMENT CODE (shown ONLY ONCE — burned when redeemed, useless afterwards):")

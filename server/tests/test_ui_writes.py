@@ -32,7 +32,7 @@ EXPECTED_HEADERS = {
         "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
         "connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'"
     ),
-    "referrer-policy": "no-referrer",
+    "referrer-policy": "same-origin",   # not no-referrer: §6.3 as amended for D20
     "x-content-type-options": "nosniff",
     "cache-control": "no-store",
 }
@@ -70,6 +70,13 @@ def _session_exists(env, cookie: str) -> bool:
                             (db.hash_token(cookie),)).fetchone() is not None
     finally:
         conn.close()
+
+
+def _assert_refusal_page(response, code: str):
+    """§6.4: "Every refusal of a `/ui` request is an HTML page with the status above that
+    names its code, never a JSON body"."""
+    assert "text/html" in response.headers["content-type"], response.text[:300]
+    assert code in response.text, response.text[:600]
 
 
 def _assert_headers(response, what: str):
@@ -136,7 +143,7 @@ def test_signout_accepts_no_other_write_method(env, browser, method):
     cookie = _cookie(browser)
     r = browser.request(method, "/ui/signout", headers=SAME_ORIGIN)
     assert r.status_code == 405
-    assert r.json()["error"] == "method_not_allowed"
+    _assert_refusal_page(r, "method_not_allowed")
     assert _session_exists(env, cookie)
 
 
@@ -157,14 +164,22 @@ def test_an_unregistered_post_is_405_without_reading_the_cookie(env, ui, path, c
         r = ui.post(path, data={"csrf": _csrf(forged)},
                     headers={**SAME_ORIGIN, "Cookie": f"loom_ui={forged}"})
     assert r.status_code == 405
-    assert r.json()["error"] == "method_not_allowed"
+    _assert_refusal_page(r, "method_not_allowed")
     # A cookie that was read and refused would be a 401 and an audit line.
     assert not [rec for rec in caplog.records if rec.name == AUDIT_LOGGER]
 
 
 def test_the_405_names_the_exception(env, ui):
-    detail = ui.put("/ui/").json()["detail"]
-    assert detail == "The UI is read-only except the listed POST routes"
+    r = ui.put("/ui/")
+    assert r.status_code == 405
+    _assert_refusal_page(r, "method_not_allowed")
+    assert "The UI is read-only except the listed POST routes" in r.text
+
+
+def test_a_get_on_a_write_route_is_a_405_page(env, browser):
+    r = browser.get("/ui/signout")
+    assert r.status_code == 405
+    _assert_refusal_page(r, "method_not_allowed")
 
 
 def test_the_registry_lists_exactly_the_ui_post_routes():
@@ -198,6 +213,8 @@ def test_the_registry_lists_exactly_the_ui_post_routes():
     ({"Origin": "https://loom-test.fly.dev:8443"}, False),                # port
     ({"Origin": "null"}, False),
     ({"Origin": "https://evil.example", "Sec-Fetch-Site": "same-origin"}, False),
+    # What a form POST carries under `Referrer-Policy: no-referrer`: still refused.
+    ({"Origin": "null", "Sec-Fetch-Site": "same-origin"}, False),
     ({"Sec-Fetch-Site": "same-origin"}, True),
     ({"Sec-Fetch-Site": "same-site"}, False),
     ({"Sec-Fetch-Site": "cross-site"}, False),
@@ -214,7 +231,7 @@ def test_a_write_must_come_from_the_public_origin(env, browser, headers, accepte
         assert not _session_exists(env, cookie)
     else:
         assert r.status_code == 403
-        assert r.json()["error"] == "bad_origin"
+        _assert_refusal_page(r, "bad_origin")
         assert _session_exists(env, cookie)
         assert browser.get("/ui/").status_code == 200
 
@@ -238,7 +255,7 @@ def test_no_public_url_refuses_every_write(env, browser, monkeypatch):
     for headers in ({"Origin": "https://testserver"}, {"Sec-Fetch-Site": "same-origin"}):
         r = _signout(browser, headers=headers)
         assert r.status_code == 403
-        assert r.json()["error"] == "public_url_unset"
+        _assert_refusal_page(r, "public_url_unset")
     assert _session_exists(env, cookie)
 
 
@@ -277,7 +294,7 @@ def test_the_session_gate_runs_before_the_origin_check(env, ui):
 def test_a_write_without_the_csrf_field_is_refused(env, browser):
     r = _signout(browser, csrf=None)
     assert r.status_code == 403
-    assert r.json()["error"] == "bad_csrf"
+    _assert_refusal_page(r, "bad_csrf")
     assert _session_exists(env, _cookie(browser))
 
 
@@ -285,14 +302,14 @@ def test_a_write_without_the_csrf_field_is_refused(env, browser):
 def test_a_wrong_csrf_token_is_refused(env, browser, token):
     r = _signout(browser, csrf=token)
     assert r.status_code == 403
-    assert r.json()["error"] == "bad_csrf"
+    _assert_refusal_page(r, "bad_csrf")
     assert _session_exists(env, _cookie(browser))
 
 
 def test_the_csrf_token_is_lowercase_hex(env, browser):
     r = _signout(browser, csrf=_csrf(_cookie(browser)).upper())
     assert r.status_code == 403
-    assert r.json()["error"] == "bad_csrf"
+    _assert_refusal_page(r, "bad_csrf")
 
 
 def test_another_sessions_csrf_token_is_refused(env, dev1):
@@ -301,7 +318,7 @@ def test_another_sessions_csrf_token_is_refused(env, dev1):
     r = _signout(mine, csrf=_csrf(_cookie(theirs)))
 
     assert r.status_code == 403
-    assert r.json()["error"] == "bad_csrf"
+    _assert_refusal_page(r, "bad_csrf")
     assert _session_exists(env, _cookie(mine)) and _session_exists(env, _cookie(theirs))
 
 
@@ -312,7 +329,7 @@ def test_the_csrf_token_travels_in_a_form_body_only(env, browser):
     in_header = browser.post("/ui/signout", headers={**SAME_ORIGIN, "X-CSRF-Token": token})
     for r in (as_json, in_query, in_header):
         assert r.status_code == 403
-        assert r.json()["error"] == "bad_csrf"
+        _assert_refusal_page(r, "bad_csrf")
     assert _session_exists(env, _cookie(browser))
 
 
@@ -515,7 +532,7 @@ def test_a_session_of_a_kind_that_cannot_write_is_refused_before_anything_change
     r = _signout(browser)
 
     assert r.status_code == 403
-    assert r.json()["error"] == "forbidden"
+    _assert_refusal_page(r, "forbidden")
     assert _session_exists(env, cookie)
 
 
@@ -531,7 +548,7 @@ def test_the_csrf_check_comes_before_the_kind_check(env, browser):
         conn.close()
     r = _signout(browser, csrf="0" * 64)
     assert r.status_code == 403
-    assert r.json()["error"] == "bad_csrf"
+    _assert_refusal_page(r, "bad_csrf")
 
 
 def test_signing_in_and_out_records_one_event_each(env, dev1):

@@ -20,7 +20,7 @@ from datetime import datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from server import admin, auth, db
+from server import auth, db
 
 PUBLIC_ORIGIN = "https://loom-test.fly.dev"
 SAME_ORIGIN = {"Origin": PUBLIC_ORIGIN}
@@ -153,6 +153,7 @@ def test_a_member_gets_403_forbidden_on_every_admin_route(env, member, user_fact
     for r in responses:
         assert r.status_code == 403, r.text
         assert "<h1>Forbidden</h1>" in r.text
+        assert "(forbidden)" in r.text            # §6.4: the page names its code
     assert _user(env, "smuggled@example.com") is None
     assert _user(env, victim["email"])["active"] == 1
     assert _user(env, member["email"])["role"] == "member"
@@ -182,8 +183,7 @@ def test_the_page_lists_every_user_with_role_state_and_pending_invitation(
     gone = user_factory("gone", active=0)
     conn = db.connect(env)
     try:
-        assert admin.invite(conn, "pending@example.com", "pending", INVITE_TTL_S) is not None
-        conn.commit()
+        assert auth.invite(conn, "pending@example.com", "pending", INVITE_TTL_S) is not None
     finally:
         conn.close()
 
@@ -407,6 +407,22 @@ def test_deactivating_an_unknown_id_is_a_404(env, boss):
     r = boss["browser"].post(_deactivate(987_654_321))
     assert r.status_code == 404
     assert _sql(env, "SELECT * FROM auth_events WHERE event = 'user_deactivated'") == []
+
+
+@pytest.mark.parametrize("too_large", [2**63, 10**20])
+@pytest.mark.parametrize("path", [_deactivate, _role, _revoke])
+def test_an_id_too_large_for_a_row_is_a_404_not_a_500(env, boss, path, too_large):
+    """SQLite cannot bind an id past int64; no row can have one, so it is unknown."""
+    r = boss["browser"].post(path(too_large), {"role": "admin"})
+    assert r.status_code == 404, r.text[:300]
+    assert "Not found" in r.text
+
+
+def test_a_member_is_refused_before_an_id_too_large_is_looked_at(env, member):
+    """§6.4's order: forbidden comes before 404."""
+    for path in (_deactivate(2**63), _role(2**63)):
+        r = member["browser"].post(path, {"role": "admin"})
+        assert r.status_code == 403 and "forbidden" in r.text, path
 
 
 def test_deactivating_a_deactivated_user_records_nothing_new(env, boss, user_factory):

@@ -7,7 +7,8 @@ before it includes that router.
 
 Admins only: every handler is wrapped by ``_admins_only``, which reads the role the gate
 put on ``request.state`` (from ``users``, on every request) before anything else runs, so
-a member learns nothing from an id and changes nothing.
+a member learns nothing from an id and changes nothing. Each write runs in
+``ui_pages.write_transaction``, which reads that role again under the write lock.
 """
 from __future__ import annotations
 
@@ -16,8 +17,9 @@ import functools
 from fastapi import Request
 from starlette.responses import HTMLResponse, RedirectResponse
 
-from server import admin, auth, auth_events, db, public_url
-from server.ui_pages import _page, _write, message, not_found, render
+from server import auth, db, public_url
+from server.ui_pages import (_page, _write, message, not_found, refusal, render,
+                             write_transaction)
 
 ADMIN_USERS = "/ui/admin/users"
 INVITE_TTL_S = auth.parse_ttl(auth.DEFAULT_ENROL_CODE_TTL)
@@ -27,10 +29,14 @@ def _admins_only(handler):
     @functools.wraps(handler)
     def guarded(request: Request, **kwargs):
         if request.state.user_role != "admin":
-            return message(403, "Forbidden", "Only an admin can see the users page or "
-                           "change an account.", request=request)
+            return refusal(403, "forbidden", request=request)
         return handler(request, **kwargs)
     return guarded
+
+
+def _audit(request: Request) -> dict:
+    """The audit context of the account functions of ``auth``: this admin, this address."""
+    return {"actor_user_id": request.state.user_id, "client_ip": request.state.client_ip}
 
 
 def _back() -> RedirectResponse:
@@ -95,20 +101,17 @@ def invite(request: Request):
                        request=request)
     conn = db.connect()
     try:
-        invited = admin.invite(conn, email, name or None, INVITE_TTL_S, role=role,
-                               created_by_user_id=request.state.user_id,
-                               issued_by_device_token_id=request.state.ui_device_token_id)
-        if invited is None:
-            conn.rollback()
-            return message(400, "Name needed", f"No user has the email {email}: give a name "
-                           "to create one.", request=request)
-        user_id, name, code, expires_at = invited
-        auth_events.record(conn, actor_user_id=request.state.user_id, event="user_invited",
-                           target_type="user", target_id=user_id,
-                           client_ip=request.state.client_ip)
-        conn.commit()
+        with write_transaction(request, conn):
+            invited = auth.invite(conn, email, name or None, INVITE_TTL_S, role=role,
+                                  created_by_user_id=request.state.user_id,
+                                  issued_by_device_token_id=request.state.ui_device_token_id,
+                                  audit=_audit(request))
     finally:
         conn.close()
+    if invited is None:
+        return message(400, "Name needed", f"No user has the email {email}: give a name "
+                       "to create one.", request=request)
+    _, name, code, expires_at = invited
     # The gate refuses every write while no public URL resolves, so there is one here.
     return render("invite_link.html", request, invitee=name, email=email,
                   link=public_url.join_link(public_url.resolve(), code), expires_at=expires_at)
@@ -117,21 +120,21 @@ def invite(request: Request):
 @_write(ADMIN_USERS + "/{user_id:int}/deactivate")
 @_admins_only
 def deactivate(request: Request, user_id: int):
-    """``admin.py deactivate``'s effects (``auth.deactivate``), then ``user_deactivated``
-    when the user was still active."""
+    """``admin.py deactivate``'s effects (``auth.deactivate``) and ``user_deactivated``,
+    for a user still active under the write lock; an inactive one is left as it is."""
+    if not db.is_row_id(user_id):
+        return not_found(request)
     conn = db.connect()
     try:
-        user = conn.execute("SELECT name, email, active FROM users WHERE id = ?",
-                            (user_id,)).fetchone()
-        if user is None:
-            return not_found(request)
-        if user["active"]:
-            try:
-                auth.deactivate(conn, user["email"],
-                                audit={"actor_user_id": request.state.user_id,
-                                       "client_ip": request.state.client_ip})
-            except auth.LastAdmin:
-                return _last_admin(request, user["name"])
+        with write_transaction(request, conn):
+            user = conn.execute("SELECT name, email, active FROM users WHERE id = ?",
+                                (user_id,)).fetchone()
+            if user is None:
+                return not_found(request)
+            if user["active"]:
+                auth.deactivate(conn, user["email"], audit=_audit(request))
+    except auth.LastAdmin:
+        return _last_admin(request, user["name"])
     finally:
         conn.close()
     return _back()
@@ -140,17 +143,19 @@ def deactivate(request: Request, user_id: int):
 @_write(ADMIN_USERS + "/{user_id:int}/role")
 @_admins_only
 def change_role(request: Request, user_id: int):
-    """``admin.set_role``: ``promoted``/``demoted`` in its transaction, never the last
+    """``auth.set_role``: ``promoted``/``demoted`` in its transaction, never the last
     active admin."""
     role = request.state.form.get("role", "")
     if role not in auth.ROLES:
         return message(400, "Role needed", "The role must be admin or member.",
                        request=request)
+    if not db.is_row_id(user_id):
+        return not_found(request)
     conn = db.connect()
     try:
         try:
-            changed = admin.set_role(conn, user_id, role, actor_user_id=request.state.user_id,
-                                     client_ip=request.state.client_ip)
+            with write_transaction(request, conn):
+                changed = auth.set_role(conn, user_id, role, audit=_audit(request))
         except auth.LastAdmin:
             name = conn.execute("SELECT name FROM users WHERE id = ?", (user_id,)).fetchone()
             return _last_admin(request, name["name"])

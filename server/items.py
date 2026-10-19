@@ -184,7 +184,6 @@ def insert(conn: sqlite3.Connection, entry_id: int, items: list[dict]) -> None:
 # --------------------------------------------------------------------------- #
 # One line, like a commit subject: why a person took a link back.
 MAX_REVOKE_REASON_LEN = 500
-_MAX_ROWID = 2**63 - 1
 
 
 class LinkRefused(Exception):
@@ -263,9 +262,9 @@ def revoke_link(conn: sqlite3.Connection, link_id: int, *, user_id: int, reason:
     The row stays: a revoked link is the record of a correction (#12), and it stops
     counting towards any status. 404 ``link_not_found``; 409 ``already_revoked``.
     """
-    if not 1 <= link_id <= _MAX_ROWID:
-        # The path parameter is an unbounded Python int; SQLite cannot even bind one
-        # past int64 (OverflowError → 500). No such row can exist.
+    from server import db  # function-level: server.db imports this module
+
+    if not db.is_row_id(link_id):
         raise LinkRefused(404, "link_not_found", f"No item link {link_id}")
     conn.execute("BEGIN IMMEDIATE")
     try:

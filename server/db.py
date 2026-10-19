@@ -113,6 +113,17 @@ def init_db(path: str | None = None) -> sqlite3.Connection:
     return conn
 
 
+# SQLite's INTEGER is a signed 64-bit value, so no row id is larger.
+MAX_ROW_ID = 2**63 - 1
+
+
+def is_row_id(value: int) -> bool:
+    """Whether a path id can name a row at all. A path parameter is an unbounded Python
+    int, and SQLite cannot even bind one past int64 (``OverflowError`` → 500); every
+    route with an id answers such an id as it answers an unknown one."""
+    return 1 <= value <= MAX_ROW_ID
+
+
 def hash_token(token: str) -> str:
     """sha256 hex of the Bearer token — what gets stored in users.token_hash."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
