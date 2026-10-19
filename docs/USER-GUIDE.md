@@ -124,6 +124,11 @@ Every row should be `✓`. A `⚠` is informational — an unpinned scanner vers
 Code version that has drifted from `contract/VERSION`. A `✗` is a real fault and the exit
 code is non-zero.
 
+The `account` row names you and your role (`member` or `admin`). It turns `⚠` when, in
+the last 7 days, someone else changed your account or your machines — an admin changed
+your role or revoked a machine, or the operator ran `admin.py`. `loom status` lists what
+happened (below). An older server without this information shows no `account` row.
+
 ---
 
 ## Connect a project
@@ -337,7 +342,7 @@ directory's git remote when you omit it.
 | `feedback` | File a verdict on one item. Needs `--item`, `--verdict`, `--note`. |
 | `stats [--since 7d]` | Team totals. Never per person. |
 | `ui [project]` | Open the read-only web UI in your browser, signed in. |
-| `status` | Local panel: pending, parked, quarantined, recent errors. |
+| `status` | Local panel: your account and role with its changes of the last 30 days, pending, parked, quarantined, recent errors. |
 | `doctor` | Environment checklist. Run it first when something looks wrong. |
 | `process` | Force a pass now instead of waiting for the scheduler. |
 | `push-quarantine` | Upload a quarantined entry after you have read it. |

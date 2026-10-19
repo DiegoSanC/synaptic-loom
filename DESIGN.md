@@ -381,6 +381,7 @@ the 2026-09-23 plan, below).
 | POST | `/api/enroll` | **Anonymous.** Redeem a single-use enrolment code for this machine's device token. `401 invalid_code` for unknown, expired, redeemed or deactivated-user codes alike. Optional header `Authorization: Bearer <old>` (D19 B2): the token the machine is replacing; never a body field |
 | POST | `/api/device-tokens/renew` | Mint the calling device token's successor (`403 not_a_device_token` for a legacy token) |
 | POST | `/api/ui-login` | Mint a single-use, 120 s login code for the caller's browser: `201 {code, expires_at}` (D14, §6.3) |
+| GET | `/api/me` | Who the bearer is: `{name, email, role, device_id, events}`, `device_id` `null` for a permanent token, `events` the 20 most recent `auth_events` rows about the caller, newest first, without `client_ip` (D20, §6.4). Read by `loom status` and `loom doctor` |
 | POST | `/ui/session` | **Anonymous.** Redeem a login code for the `loom_ui` session cookie: `204` · `401 invalid_code` for unknown, expired, redeemed, deactivated-user or revoked-device codes alike (D14) |
 | GET | `/ui/join` | **Anonymous.** The static page an invitation link opens (D19): install steps and "paste this whole link into `loom enroll`". No script, no form; it never receives, redeems, looks up or renders a code |
 | GET | `/ui/…` | The read-only web UI (§6.3): server-rendered pages, `GET`/`HEAD` only, the session cookie only |
