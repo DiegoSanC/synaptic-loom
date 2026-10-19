@@ -25,6 +25,7 @@ and as the post-fix regression gate.
 | q | D13 item links (slice E) | `q/test_goal_d13_item_links.py` | REAL uvicorn + temp LOOM_DB + admin CLI (two users); real `loom curate`/`log`/`unlink`; smart verdict replay stub (item grammars) |
 | r | D17 compose-caddy | `r/test_goal_d17_compose_caddy.py` | REAL `docker compose up --build` of `deploy/compose` (repo Dockerfile + pinned Caddy + named volume); client containers at literal addresses; Caddy's internal CA for `loom.localhost` |
 | s | D18 compose-backups | `s/test_goal_d18_compose_backups.py` | REAL `docker compose up --build` of `deploy/compose` (`loom` + `backup`, real named volumes); REAL `backup.sh` in the service and in one-off containers; REAL `deploy/compose/restore.sh` run on the host |
+| t | D20 roles-and-writes (phase 2a) | `t/test_goal_d20_roles_and_writes.py` | REAL `docker build` of the repo Dockerfile + `docker run` (named volumes, loopback ports, no Compose); `docker exec … server.admin`; the SQLite file read in the container; REAL `loom enroll`/`ui`/`status`/`doctor`; a FROZEN pre-D20 schema fixture |
 
 Waves `o`, `p` and `q` belong to the plan of 2026-09-23
 (`docs/plans/2026-09-23-fix-label-grammar-fidelity-plan.md`): `o` is slice B (decision
@@ -63,6 +64,19 @@ interval (2 s) and retention (3) it runs with come from its own env file; the de
 asserted on the production file. **Amendment to wave `r` (D18):** `test_only_caddy_is_published_and_the_server_has_no_host_port`
 asserted the service set `{loom, caddy}`; it now asserts `{loom, caddy, backup}` exactly,
 and that no service but Caddy has a host port.
+
+Wave `t` (D20, owner decision of 2026-10-19) is the frozen oracle of phase 2a of
+`docs/plans/2026-10-19-feat-invite-links-and-accounts-v2-plan.md`: roles, the writable
+`/ui` reached through `loom ui`, setup codes, the issuer cascade, `auth_events` and
+`GET /api/me`. It is derived from DESIGN.md's D20 row and §6.4 alone, and was written and
+committed red, before the implementation. Its boundary is the real server in Docker, run
+with `docker run` rather than Compose, so it shares no subnet with waves `r` and `s` and can
+run next to them; every container and volume it starts has a unique name and is removed at
+the end, failure or not. The server runs with `LOOM_PUBLIC_URL` set to the exact loopback
+origin the tests use, and with `LOOM_CLIENT_IP_SOURCE=header:x-goal-client-ip` and a fresh
+address per request, because the wave provokes far more refusals than the auth-failure
+window's ten per minute. `t/fixtures/pre_d20_schema.sql` is the schema as it stood before
+D20, for the migration-rule test; it is never regenerated from the code.
 
 **Two suites on one Docker host.** `conftest.py` (accessory, like `_goalkit.py`) sets up
 the `stack` fixture of every wave that layers a `compose.goal.yml` — today `r` and `s` —
