@@ -5,7 +5,8 @@ environment variable (default `./loom.db`) — the same one app.py uses.
 
     python -m server.admin invite --email dev2@example.test --name dev2 [--ttl 24h] [--public-url URL]
     python -m server.admin listdevices [--email dev2@example.test]
-    python -m server.admin revokedevice --id 3
+    python -m server.admin revokedevice --id 3          # any id of the machine's chain
+    python -m server.admin revoke-orphans               # once, after upgrading to D19
     python -m server.admin adduser --name dev2 --email dev2@example.test   # break-glass
     python -m server.admin deactivate --email dev2@example.test
     python -m server.admin listusers
@@ -139,6 +140,25 @@ def _revokedevice(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _revoke_orphans(args: argparse.Namespace) -> int:
+    conn = db.init_db()
+    try:
+        revoked = auth.revoke_orphans(conn)
+        if not revoked:
+            print("No orphaned device tokens.")
+            return 0
+        branches: dict[int, list[int]] = {}
+        for root, device_id in revoked:
+            branches.setdefault(root, []).append(device_id)
+        print(f"Revoked {len(revoked)} orphaned device token(s), by the chain they hung from:")
+        for root, ids in branches.items():
+            print(f"  chain {root}: {' '.join(str(i) for i in ids)}")
+        print("  A machine that was still using one of them gets a 401 and re-enrols.")
+        return 0
+    finally:
+        conn.close()
+
+
 def _listusers(args: argparse.Namespace) -> int:
     conn = db.init_db()
     try:
@@ -200,6 +220,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_revoke.add_argument("--id", type=int, required=True,
                           help="any device id of the machine's chain, from listdevices")
     p_revoke.set_defaults(func=_revokedevice)
+
+    p_orphans = sub.add_parser(
+        "revoke-orphans",
+        help="revoke the live device tokens no renewal chain reaches (left by pre-D19 renewals)",
+    )
+    p_orphans.set_defaults(func=_revoke_orphans)
 
     return parser
 

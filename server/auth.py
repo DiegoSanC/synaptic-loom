@@ -349,6 +349,45 @@ def revoke(conn: sqlite3.Connection, device_id: int) -> int:
     return count
 
 
+# Pre-D19 ``renew`` overwrote ``replaced_by``, so renewing one token twice left the first
+# successor pointing nowhere. An orphan root is a token nothing points at — no
+# ``replaced_by`` and no enrolment code — and its branch is the line forward from it
+# (nothing points back in, so that line is its whole connected component). Every LIVE
+# token of such a branch is one no chain from an enrolment reaches.
+_ORPHANS = (
+    "WITH RECURSIVE branch(id, root) AS ("
+    " SELECT d.id, d.id FROM device_tokens d"
+    " WHERE NOT EXISTS (SELECT 1 FROM device_tokens p WHERE p.replaced_by = d.id)"
+    " AND NOT EXISTS (SELECT 1 FROM enrolment_codes c WHERE c.device_token_id = d.id)"
+    " UNION SELECT d.replaced_by, b.root FROM device_tokens d JOIN branch b ON d.id = b.id"
+    " WHERE d.replaced_by IS NOT NULL) "
+    "SELECT b.root, d.id FROM branch b JOIN device_tokens d ON d.id = b.id "
+    "WHERE d.revoked_at IS NULL AND d.expires_at > ? ORDER BY b.root, d.id"
+)
+
+
+def orphans(conn: sqlite3.Connection) -> list[tuple[int, int]]:
+    """``(orphan root, live token id)`` for every live token of an orphaned branch."""
+    now = _iso(datetime.now(timezone.utc))
+    return [(row["root"], row["id"]) for row in conn.execute(_ORPHANS, (now,))]
+
+
+def revoke_orphans(conn: sqlite3.Connection) -> list[tuple[int, int]]:
+    """Revoke every token :func:`orphans` lists, in one transaction; returns them."""
+    now = _iso(datetime.now(timezone.utc))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        found = [(row["root"], row["id"]) for row in conn.execute(_ORPHANS, (now,))]
+        conn.executemany(
+            "UPDATE device_tokens SET revoked_at = ? WHERE id = ?", [(now, i) for _, i in found]
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return found
+
+
 def deactivate(conn: sqlite3.Connection, email: str) -> tuple[int, int] | None:
     """Deactivate the user, revoke every one of their chains and expire their pending
     enrolment codes, in one transaction (D19 B3). Returns ``(tokens revoked, codes

@@ -31,6 +31,9 @@ SECURITY_LOG = logging.getLogger("uvicorn.error.loom.security")
 SECURITY_LOG.setLevel(logging.INFO)
 STARTUP_LOG = logging.getLogger("uvicorn.error.loom.startup")
 STARTUP_LOG.setLevel(logging.INFO)
+# Its own logger: the startup logger's one line names the client-IP mode (D17).
+ORPHAN_LOG = logging.getLogger("uvicorn.error.loom.orphans")
+ORPHAN_LOG.setLevel(logging.INFO)
 AUTH_FAILURE_LIMIT = 10
 HEALTH_REQUEST_LIMIT = 120
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -58,12 +61,27 @@ def _resolve_client_ip_source() -> client_ip.ClientIpSource:
     return source
 
 
+def _log_orphan_count(conn) -> None:
+    """Count, never revoke (D19): live device tokens no renewal chain reaches, left by
+    the pre-D19 renew. Here and not in `init_db`, which every `admin.py` command runs."""
+    count = len(auth.orphans(conn))
+    if count:
+        ORPHAN_LOG.warning("device_token_orphans count=%d: run `python -m server.admin "
+                           "revoke-orphans` (RUNBOOK §2)", count)
+    else:
+        ORPHAN_LOG.info("device_token_orphans count=0")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global CLIENT_IP_SOURCE
     CLIENT_IP_SOURCE = _resolve_client_ip_source()
     # Ensure the schema on the configured DB at startup (idempotent).
-    db.init_db().close()
+    conn = db.init_db()
+    try:
+        _log_orphan_count(conn)
+    finally:
+        conn.close()
     AUTH_FAILURES.clear()
     HEALTH_REQUESTS.clear()
     yield

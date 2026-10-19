@@ -611,3 +611,127 @@ def test_an_existing_database_gains_the_replaced_by_index_on_its_next_start(env)
     index = _row(env, "SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'device_tokens' "
                       "AND sql LIKE '%(replaced_by)%'")
     assert index is not None
+
+
+# --------------------------------------------------------------------------- #
+# Orphans left by the pre-D19 renew (B1 "Orphans already in a database")       #
+# --------------------------------------------------------------------------- #
+ORPHAN_LOGGER = "uvicorn.error.loom.orphans"
+
+
+def _forked_database(env) -> dict[str, str]:
+    """A database as the pre-D19 server left it, built with that server's own writes.
+
+    Pre-D19 ``renew`` inserted the successor and OVERWROTE the caller's ``replaced_by``,
+    so renewing one token twice left the first successor pointing nowhere. Here:
+
+    - O enrolled; O renewed twice → S1, then S2 (S1 is orphaned);
+    - S1 renewed once → S1b (the orphan's own branch: S1b is referenced, by S1);
+    - S2 renewed twice → D, then S3; D was later revoked (a dead orphan);
+    - S3 renewed twice → E, then S4; E has expired since (a dead orphan).
+
+    Live tokens no chain from an enrolment reaches: S1 and S1b, and only those.
+    """
+    import secrets
+
+    from server import auth
+
+    conn = db.connect(env)
+    tokens: dict[str, str] = {}
+    ids: dict[str, int] = {}
+    try:
+        user_id = conn.execute(
+            "INSERT INTO users (name, email, token_hash, active, created_at) VALUES (?, ?, ?, 1, ?)",
+            ("dev2", "dev2@example.test", db.hash_token(secrets.token_urlsafe(32)), db.iso_now()),
+        ).lastrowid
+        code, _ = auth.create_invitation(conn, user_id, 3600)
+        conn.commit()
+        enrolled = auth.redeem(conn, code, "mac-1")
+        tokens["O"], ids["O"] = enrolled["token"], enrolled["device_token_id"]
+
+        def old_renew(caller: str, name: str, expires_at: str = "2099-01-01T00:00:00Z"):
+            tokens[name] = secrets.token_urlsafe(32)
+            ids[name] = conn.execute(
+                "INSERT INTO device_tokens (user_id, token_hash, device_name, issued_at, expires_at) "
+                "VALUES (?, ?, 'mac-1', ?, ?)",
+                (user_id, db.hash_token(tokens[name]), db.iso_now(), expires_at),
+            ).lastrowid
+            conn.execute("UPDATE device_tokens SET replaced_by = ? WHERE id = ?", (ids[name], ids[caller]))
+
+        old_renew("O", "S1")
+        old_renew("O", "S2")
+        old_renew("S1", "S1b")
+        old_renew("S2", "D")
+        old_renew("S2", "S3")
+        conn.execute("UPDATE device_tokens SET revoked_at = ? WHERE id = ?", (db.iso_now(), ids["D"]))
+        old_renew("S3", "E", expires_at="2001-01-01T00:00:00Z")
+        old_renew("S3", "S4")
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ids": ids, "tokens": tokens}
+
+
+def _orphan_lines(caplog) -> list[str]:
+    return [rec.getMessage() for rec in caplog.records if rec.name == ORPHAN_LOGGER]
+
+
+def test_startup_logs_the_orphan_count_and_revokes_nothing(env, caplog):
+    from fastapi.testclient import TestClient
+
+    from server.app import app
+
+    fork = _forked_database(env)
+    revoked_before = _rows(env, "SELECT id, revoked_at FROM device_tokens ORDER BY id")
+
+    with caplog.at_level(logging.INFO, logger=ORPHAN_LOGGER), TestClient(app) as client:
+        lines = [line for line in _orphan_lines(caplog) if "device_token_orphans" in line]
+        assert len(lines) == 1, _orphan_lines(caplog)
+        assert "device_token_orphans count=2" in lines[0]
+        assert "revoke-orphans" in lines[0]
+        # Never revoked at boot: the orphans still authenticate.
+        for name in ("S1", "S1b", "O", "S4"):
+            assert _status(client, fork["tokens"][name]) == 200, name
+
+    assert _rows(env, "SELECT id, revoked_at FROM device_tokens ORDER BY id") == revoked_before
+
+
+def test_revoke_orphans_revokes_exactly_the_orphaned_branches_and_prints_their_ids(env, capsys, caplog):
+    from fastapi.testclient import TestClient
+
+    from server.app import app
+
+    fork = _forked_database(env)
+    ids, tokens = fork["ids"], fork["tokens"]
+
+    assert admin.main(["revoke-orphans"]) == 0
+    out = capsys.readouterr().out
+
+    assert f"chain {ids['S1']}: {ids['S1']} {ids['S1b']}" in out
+    printed = {int(n) for line in out.splitlines() if line.strip().startswith("chain ")
+               for n in line.split(":", 1)[1].split()}
+    assert printed == {ids["S1"], ids["S1b"]}
+    assert {r["id"] for r in _rows(env, "SELECT id FROM device_tokens WHERE revoked_at IS NOT NULL")} == {
+        ids["S1"], ids["S1b"], ids["D"]}
+
+    with caplog.at_level(logging.INFO, logger=ORPHAN_LOGGER), TestClient(app) as client:
+        assert any("device_token_orphans count=0" in line for line in _orphan_lines(caplog))
+        assert [_status(client, tokens[n]) for n in ("S1", "S1b")] == [401, 401]
+        assert [_status(client, tokens[n]) for n in ("O", "S2", "S3", "S4")] == [200, 200, 200, 200]
+
+    # Idempotent: a second run finds nothing and says so.
+    assert admin.main(["revoke-orphans"]) == 0
+    assert "No orphaned device tokens" in capsys.readouterr().out
+
+
+def test_a_database_without_orphans_counts_zero_at_startup(client, env, capsys, caplog):
+    from fastapi.testclient import TestClient
+
+    from server.app import app
+
+    old = _enroll(client, _invite(capsys)).json()["token"]
+    _renew(client, old)
+    _renew(client, old)  # the D19 re-issue: no fork, so no orphan
+
+    with caplog.at_level(logging.INFO, logger=ORPHAN_LOGGER), TestClient(app):
+        assert any("device_token_orphans count=0" in line for line in _orphan_lines(caplog))
