@@ -325,6 +325,31 @@ item links yet", posts no whole-entry link in their place and keeps the verdicts
 replay; `loom unlink` says the same. **That is why no `loom curate` runs against the
 hosted server before this release is deployed.**
 
+#### Deploying chain revocation (D19): count the orphans, then revoke them
+
+Before D19, renewing the same device token twice (a lost `201`, a copied `config.json`, a
+thief) overwrote the link to the first successor, which then stayed **live for up to 90
+days and out of reach** of `revokedevice`. The D19 server never forks a chain again, but
+it does not touch what is already in the database: it only **counts** those orphaned
+tokens at every start. Revoking them is a **required** step of this upgrade:
+
+```bash
+# 1. Snapshot (§3a), then deploy.
+fly deploy --ha=false
+# 2. Read-only: the count the server logged at boot (Compose: docker compose logs loom | grep …)
+fly logs -a <app> --no-tail | grep device_token_orphans
+#   device_token_orphans count=0                       → nothing to do
+#   device_token_orphans count=N: run `python -m server.admin revoke-orphans` …
+# 3. Only when N > 0: revoke them. It prints every id it revoked, by the chain it hung
+#    from; their number must be N.
+fly ssh console -a <app> -u app -C "python -m server.admin revoke-orphans"
+```
+
+An orphaned branch may be the one a real machine kept using (the other branch then came
+from a copy or a thief). That machine gets a **loud 401** (`loom status`, `loom doctor`)
+and recovers by enrolling again with a fresh `invite`: the accepted trade-off. After step 3
+the next start logs `count=0`.
+
 #### Rollback restores the IMAGE, not the data
 
 Fly's own wording. `fly deploy --image` puts an old image back; it does **not** roll back
@@ -792,12 +817,33 @@ export LOOM_DB=~/.loom-server/loom.db
 .venv/bin/python -m server.admin listdevices [--email dev2@example.test]
 .venv/bin/python -m server.admin revokedevice --id 3                              # ONE machine
 .venv/bin/python -m server.admin deactivate --email dev2@example.test             # the person: every token of theirs
+.venv/bin/python -m server.admin revoke-orphans                                   # once, on the D19 upgrade (§2)
 # Break-glass: a permanent token printed once (pre-#20 flow; still valid, never expires)
 .venv/bin/python -m server.admin adduser --name dev2 --email dev2@example.test
 ```
 
 Revoking a machine or deactivating a person also ends their open web-UI sessions (D14) on
 their next request; there is nothing UI-specific to revoke.
+
+`revokedevice --id` takes **any** id of the machine's chain (the `chain` column of
+`listdevices` names it by its first token) and revokes the whole chain: every token the
+machine has renewed through, so no older one keeps working. `deactivate` does it for every
+machine of the person at once, **expires their pending enrolment codes** and refuses their
+break-glass `adduser` token, and prints how many tokens and codes it revoked and expired.
+It is **one-way** for machines and codes: there is no `reactivate`, and flipping
+`users.active` back by SQL brings no machine and no code back (only a break-glass token,
+which was refused, not revoked). A returning person is re-created with a new email (or by
+SQL) and enrols again.
+
+**An enrolment code sent to the wrong person or channel** is not a reason to `deactivate`
+(that kills the person's working machines). Expire that user's unredeemed codes, then send
+a fresh `invite`. The image has no `sqlite3` binary; Python's own CLI does the same:
+
+```bash
+.venv/bin/python -m sqlite3 "$LOOM_DB" "UPDATE enrolment_codes SET expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE redeemed_at IS NULL AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now') AND user_id = (SELECT id FROM users WHERE email = 'dev2@example.test')"
+# On Fly, inside the Machine (the volume's LOOM_DB is /data/loom.db):
+fly ssh console -a <app> -u app -C "python -m sqlite3 /data/loom.db \"UPDATE enrolment_codes SET expires_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE redeemed_at IS NULL AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now') AND user_id = (SELECT id FROM users WHERE email = 'dev2@example.test')\""
+```
 
 Send the enrolment code through the team's channel; it is useless once redeemed and dead
 after its TTL. Device tokens live 90 days and renew themselves while the machine keeps

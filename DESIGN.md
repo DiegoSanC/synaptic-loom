@@ -471,8 +471,10 @@ never sends, so `/ui/join` is static: its CSP is the `/ui` one without `script-s
 history; the code's TTL bounds that.
 A bearer is either a developer's permanent token (`users.token_hash`, minted by
 `admin.py adduser`) or a **device token** (`device_tokens`, one per machine, expiring);
-the middleware tries the permanent one first. Revocation is per device (`revokedevice`)
-or per developer (`deactivate`, which refuses every token of theirs).
+the middleware tries the permanent one first. Revocation is per device (`revokedevice`,
+which revokes the machine's whole renewal chain) or per developer (`deactivate`, which
+revokes every chain of theirs, expires their pending enrolment codes and refuses their
+permanent token while they stay deactivated; there is no `reactivate`).
 
 **Credentials — owner decision of 2026-09-22 (issue #20), superseding "one permanent
 bearer token per developer, hand-delivered".** A hand-delivered permanent token never
@@ -493,6 +495,16 @@ travels is short-lived and single-use, and the secret that persists never travel
   remains (`POST /api/device-tokens/renew`), and the predecessor stays valid until its own
   expiry so a crash between receiving and persisting the successor costs a retry, never a
   machine that stops capturing. There is deliberately no logout.
+- **Renewal chain (D19).** Each renewal links the old token to its successor
+  (`replaced_by`), so one machine's tokens form a chain. **Renew re-issues, never forks:**
+  inside one write transaction it re-checks that the caller is neither revoked nor
+  expired and that its user is active (else the middleware's own `401`/`403`), and a
+  caller that already has a successor — the retry after a lost `201`, or a copied
+  `config.json` — gets **every token after it revoked**; the last of those points at the
+  new token and no other pointer moves, so the chain stays one line. **Revoking any id
+  of a chain revokes the whole chain** (`revokedevice`, `deactivate`). A thief who renews
+  a stolen old token therefore kills the real machine's successor: that machine gets a
+  loud 401, and revoking it revokes the thief's token with the rest.
 - **Loud 401.** A credential the server refuses on an unattended path is recorded in
   `<LOOM_HOME>/auth_rejected.json` and surfaced by `loom status`, `loom doctor` and the
   hint on every CLI server error, because with expiring credentials a 401 is a normal

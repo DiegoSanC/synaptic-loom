@@ -254,3 +254,35 @@ def test_deactivate_refuses_the_legacy_token_too(client, env, capsys):
     assert "0 device token(s) revoked" in out
     r = _get(client, token)
     assert r.status_code == 403 and r.json()["error"] == "forbidden"
+
+
+def test_the_runbook_mis_sent_code_one_liner_expires_only_that_users_pending_codes(client, env, capsys):
+    """RUNBOOK §4's documented remedy, run as written (python -m sqlite3: the image has no
+    sqlite3 binary), with the Fly form carrying the very same SQL."""
+    import shlex
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    runbook = (Path(__file__).resolve().parents[2] / "docs" / "RUNBOOK.md").read_text(encoding="utf-8")
+    local = next(line for line in runbook.splitlines() if line.startswith(".venv/bin/python -m sqlite3 "))
+    on_fly = next(line for line in runbook.splitlines()
+                  if line.startswith("fly ssh console") and "python -m sqlite3" in line)
+    sql = shlex.split(local)[-1]
+    assert shlex.split(shlex.split(on_fly)[-1]) == ["python", "-m", "sqlite3", "/data/loom.db", sql]
+
+    mis_sent = _invite(capsys, "dev2@example.test", "dev2")
+    used = _invite(capsys, "dev2@example.test")
+    machine = _enroll(client, used, "laptop")
+    theirs = _invite(capsys, "dev3@x.com", "dev3")
+
+    argv = [sys.executable if a == ".venv/bin/python" else a for a in shlex.split(local)]
+    argv = [env if a == "$LOOM_DB" else a for a in argv]
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+    assert done.returncode == 0, done.stderr
+
+    assert client.post("/api/enroll", json={"code": mis_sent, "device_name": "x"}).status_code == 401
+    assert _get(client, machine).status_code == 200      # not a deactivate: the machine keeps working
+    assert client.post("/api/enroll", json={"code": theirs, "device_name": "y"}).status_code == 201
+    assert client.post("/api/enroll", json={"code": _invite(capsys, "dev2@example.test"),
+                                            "device_name": "z"}).status_code == 201  # a fresh invite works
