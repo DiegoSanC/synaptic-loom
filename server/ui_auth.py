@@ -30,7 +30,10 @@ from datetime import datetime, timedelta, timezone
 
 SESSION_COOKIE = "loom_ui"
 DEFAULT_LOGIN_CODE_TTL_S = 120
-DEFAULT_SESSION_TTL_S = 12 * 3600
+DEFAULT_SESSION_TTL_S = 7 * 86400
+# A used session is renewed to a full TTL at most once per step: one write an hour, not
+# one per page (owner decision of 2026-10-20, DESIGN §6.3).
+SESSION_RENEW_STEP_S = 3600
 LOGIN_CODE_TTL_ENV = "LOOM_UI_LOGIN_CODE_TTL_S"
 SESSION_TTL_ENV = "LOOM_UI_SESSION_TTL_S"
 
@@ -196,7 +199,7 @@ def open_session(conn: sqlite3.Connection, code: str, *,
 
 _SESSION_SELECT = (
     "SELECT s.id, s.user_id, s.device_token_id, s.expires_at, s.kind, u.name, u.active, "
-    "u.role, d.revoked_at AS device_revoked_at "
+    "u.role, d.revoked_at AS device_revoked_at, d.expires_at AS device_expires_at "
     "FROM ui_sessions s JOIN users u ON u.id = s.user_id "
     "LEFT JOIN device_tokens d ON d.id = s.device_token_id "
 )
@@ -208,7 +211,8 @@ def _session_dict(row: sqlite3.Row | None) -> dict | None:
     return {"ui_session_id": row["id"], "user_id": row["user_id"], "name": row["name"],
             "active": row["active"], "expires_at": row["expires_at"],
             "device_revoked_at": row["device_revoked_at"], "kind": row["kind"],
-            "role": row["role"], "device_token_id": row["device_token_id"]}
+            "role": row["role"], "device_token_id": row["device_token_id"],
+            "device_expires_at": row["device_expires_at"]}
 
 
 def lookup_session(conn: sqlite3.Connection, session: str) -> dict | None:
@@ -248,6 +252,27 @@ def session_refusal(session: dict | None, now: str) -> str | None:
     if session["device_revoked_at"] is not None:
         return "ui_revoked_device"
     return None
+
+
+def renew_session(conn: sqlite3.Connection, session: dict) -> int | None:
+    """Slide a live ``session`` (from :func:`lookup_session`) to a full TTL from now,
+    never past its device token's expiry; returns the cookie's new ``max_age``, or
+    ``None`` when it was renewed less than :data:`SESSION_RENEW_STEP_S` ago.
+
+    The caller has already refused an expired, deactivated or revoked session, and the
+    ``UPDATE`` only ever moves ``expires_at`` forward, so a renewal can neither revive a
+    session nor shorten one that a concurrent request renewed first.
+    """
+    now = _now()
+    target = now + timedelta(seconds=_ttl_from_env(SESSION_TTL_ENV, DEFAULT_SESSION_TTL_S))
+    if session["device_expires_at"] is not None:
+        target = min(target, _parse(session["device_expires_at"]))
+    if (target - _parse(session["expires_at"])).total_seconds() < SESSION_RENEW_STEP_S:
+        return None
+    cur = conn.execute("UPDATE ui_sessions SET expires_at = ? WHERE id = ? AND expires_at < ?",
+                       (_iso(target), session["ui_session_id"], _iso(target)))
+    conn.commit()
+    return int((target - now).total_seconds()) if cur.rowcount else None
 
 
 # The session kinds that may write (D20, §6.4): `cli` is the one `loom ui` opens; 2b adds

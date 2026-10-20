@@ -1,8 +1,8 @@
 """Browser login for the read-only UI (D14, plan 2026-09-29 slice 1: AC-1…AC-5).
 
 Expected values come from D14 and the plan, not from the implementation: a login code is
-minted only for a valid bearer, works once, lives 120 s; a UI session lives 12 h, never
-outlives the device token that asked for it, and dies on `deactivate` / `revokedevice`;
+minted only for a valid bearer, works once, lives 120 s; a UI session lives 7 days, renewed
+as it is used (at most once an hour), never outlives the device token that asked for it, and dies on `deactivate` / `revokedevice`;
 the `loom_ui` cookie opens `/ui` only, and a bearer never does.
 
 Expiry is REAL time, never a mocked clock (the `test_enrol.py` rule): the TTL overrides
@@ -20,7 +20,7 @@ from server import admin, db
 
 AUDIT_LOGGER = "uvicorn.error.loom.security"
 CODE_RE = re.compile(r"^[A-Za-z0-9_-]{32,}$")
-TWELVE_HOURS_S = 12 * 3600
+SEVEN_DAYS_S = 7 * 86400
 
 
 def _ts(value: str) -> datetime:
@@ -224,9 +224,9 @@ def test_the_session_cookie_is_httponly_secure_strict_and_scoped_to_ui(ui, env, 
     assert "httponly" in attrs and "secure" in attrs
     assert "samesite=strict" in attrs and "path=/ui" in attrs
     max_age = int(next(a for a in attrs if a.startswith("max-age=")).split("=")[1])
-    assert TWELVE_HOURS_S - 5 <= max_age <= TWELVE_HOURS_S
+    assert SEVEN_DAYS_S - 5 <= max_age <= SEVEN_DAYS_S
     session = _row(env, "SELECT * FROM ui_sessions")
-    assert _ts(session["expires_at"]) - _ts(session["created_at"]) == timedelta(hours=12)
+    assert _ts(session["expires_at"]) - _ts(session["created_at"]) == timedelta(days=7)
     # Only the hash is stored.
     assert session["session_hash"] == db.hash_token(r.cookies["loom_ui"])
 
@@ -359,3 +359,73 @@ def test_the_login_page_and_its_script_are_public_and_never_read_a_code(ui):
     assert "replaceState" in script.text
     icon = ui.get("/ui/static/favicon.svg")
     assert icon.status_code == 200 and "image/svg+xml" in icon.headers["content-type"]
+
+
+# --------------------------------------------------------------------------- #
+# The session slides (owner decision of 2026-10-20, DESIGN §6.3)                #
+# --------------------------------------------------------------------------- #
+def _set_expiry(env, moment: datetime) -> None:
+    conn = db.connect(env)
+    try:
+        conn.execute("UPDATE ui_sessions SET expires_at = ?",
+                     (moment.strftime("%Y-%m-%dT%H:%M:%SZ"),))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _cookie_max_age(r) -> int | None:
+    header = r.headers.get("set-cookie")
+    if not header or not header.lower().startswith("loom_ui="):
+        return None
+    attrs = [part.strip().lower() for part in header.split(";")]
+    return int(next(a for a in attrs if a.startswith("max-age=")).split("=")[1])
+
+
+def test_a_used_session_is_renewed_to_seven_days_with_its_cookie(ui, env, capsys):
+    _signed_in(ui, capsys)
+    _set_expiry(env, datetime.utcnow() + timedelta(days=7, hours=-2))
+
+    r = ui.get("/ui/")
+
+    assert r.status_code == 200
+    assert SEVEN_DAYS_S - 60 <= _cookie_max_age(r) <= SEVEN_DAYS_S
+    attrs = [part.strip().lower() for part in r.headers["set-cookie"].split(";")]
+    assert "httponly" in attrs and "secure" in attrs
+    assert "samesite=strict" in attrs and "path=/ui" in attrs
+    left = _ts(_row(env, "SELECT expires_at FROM ui_sessions")["expires_at"]) - _ts(
+        datetime.utcnow().isoformat() + "Z")
+    assert timedelta(days=7) - timedelta(minutes=1) <= left <= timedelta(days=7)
+
+
+def test_a_session_renewed_within_the_hour_is_not_written_again(ui, env, capsys):
+    _signed_in(ui, capsys)
+    before = _row(env, "SELECT expires_at FROM ui_sessions")["expires_at"]
+
+    r = ui.get("/ui/")
+
+    assert r.status_code == 200
+    assert _cookie_max_age(r) is None
+    assert _row(env, "SELECT expires_at FROM ui_sessions")["expires_at"] == before
+
+
+def test_a_renewal_never_outlives_the_device_token(ui, env, capsys, monkeypatch):
+    monkeypatch.setenv("LOOM_DEVICE_TOKEN_TTL_S", str(3 * 86400))
+    _signed_in(ui, capsys)
+    _set_expiry(env, datetime.utcnow() + timedelta(days=1))
+
+    r = ui.get("/ui/")
+
+    device = _row(env, "SELECT expires_at FROM device_tokens")["expires_at"]
+    assert _row(env, "SELECT expires_at FROM ui_sessions")["expires_at"] == device
+    assert 3 * 86400 - 60 <= _cookie_max_age(r) <= 3 * 86400
+
+
+def test_an_expired_session_is_not_brought_back(ui, env, capsys):
+    _signed_in(ui, capsys)
+    past = datetime.utcnow() - timedelta(seconds=5)
+    _set_expiry(env, past)
+    before = _row(env, "SELECT expires_at FROM ui_sessions")["expires_at"]
+
+    assert ui.get("/ui/").status_code == 401
+    assert _row(env, "SELECT expires_at FROM ui_sessions")["expires_at"] == before

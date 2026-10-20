@@ -259,6 +259,14 @@ def _lookup_ui_session(session: str) -> dict | None:
         conn.close()
 
 
+def _renew_ui_session(session: dict) -> int | None:
+    conn = db.connect()
+    try:
+        return ui_auth.renew_session(conn, session)
+    finally:
+        conn.close()
+
+
 async def _ui_session_gate(request: Request, call_next):
     """`/ui` pages: `GET`/`HEAD`, or `POST` on a listed write route; the `loom_ui` cookie
     only (D14, D20).
@@ -300,7 +308,15 @@ async def _ui_session_gate(request: Request, call_next):
             _audit_auth(request, f"ui_write_{refusal}", user_id=session["user_id"],
                         ui_session_id=session["ui_session_id"])
             return ui_pages.refusal(403, refusal, request=request)
-    return await call_next(request)
+        return await call_next(request)
+    # Reading slides the session (§6.3); a write never does, so sign-out's cleared cookie
+    # is the only Set-Cookie it answers with.
+    max_age = await run_in_threadpool(_renew_ui_session, session)
+    response = await call_next(request)
+    if max_age is not None:
+        response.set_cookie(ui_auth.SESSION_COOKIE, cookie, max_age=max_age, path="/ui",
+                            secure=True, httponly=True, samesite="strict")
+    return response
 
 
 @app.middleware("http")

@@ -1374,7 +1374,8 @@ counts PEOPLE per item, not rows: one person filing the same item twice counts o
 ### Reading the logbook in a browser: `loom ui` (D14)
 
 `loom ui` opens the web UI signed in; `loom ui <project>` lands on that project.
-The link it prints works once, within two minutes; the browser session then lasts 12 hours.
+The link it prints works once, within two minutes; the browser session then lasts 7 days
+and renews itself while it is used (`LOOM_UI_SESSION_TTL_S`), never past the machine's token.
 
 - **Projects** — one row per project: entries, items current and replaced, open tasks,
   last capture, authors of the last 30 days, curation signals. The strip on top is the

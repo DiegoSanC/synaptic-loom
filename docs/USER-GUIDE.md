@@ -279,7 +279,9 @@ was reversed — open the web UI:
 It opens your browser already signed in. There is no password to create: the command uses
 this machine's token to ask the server for a one-time link, opens it, and also prints it.
 The link works **once** and only for **two minutes**; the browser session it opens lasts
-12 hours. Run `loom ui` again for a new one. Nothing in the logbook can be changed from
+7 days and renews itself while you use it, so a bookmark keeps working until you stop
+using the UI for a week (or this machine's token expires). Run `loom ui` again for a new
+one. Nothing in the logbook can be changed from
 the UI; what you can change there is your own machines (below) and, if you are an admin,
 the team's accounts. **Sign out** (top right) ends this browser session at once; your
 machine and its other sessions are untouched.
