@@ -1,65 +1,125 @@
 # Synaptic Loom
 
-Centralized knowledge base of Claude Code sessions: it automatically captures the
-decisions (and the reasoning behind them) from each developer's sessions and exposes them
-as an advisory "logbook" for whoever reviews or inherits the project.
+[![CI](https://github.com/DiegoSanC/synaptic-loom/actions/workflows/ci.yml/badge.svg)](https://github.com/DiegoSanC/synaptic-loom/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-## Repo structure
+**A team logbook of the decisions, and the reasoning behind them, captured from Claude Code
+sessions.**
+
+When a team builds with coding agents, the code moves faster than anyone's understanding
+of it. Reviewing a teammate's work, or inheriting a project, means reconstructing *what*
+was decided and *why* from a diff that no longer says. The reasons were in the agent
+sessions, and those stay on one person's laptop.
+
+Synaptic Loom keeps them. When a session ends in a repo you chose to share, your machine
+summarizes the decisions, facts, methods and open tasks it contains, checks the summary
+for secrets, and posts **only that summary** to a small server your team runs. Your
+teammates' agents read the logbook before they propose an approach, and people can browse
+it on the web.
+
+## How it works
+
+![How a decision travels through Synaptic Loom](docs/diagrams/information-flow.svg)
+
+- **Capture is opt-in, per project and per machine.** `loom register` adds a project to
+  the logbook; `loom enable` lets this machine contribute to it. Nothing is captured from
+  a repo you did not enable, nor from before you enabled it.
+- **Only the summary leaves your machine.** The raw transcript, your file paths and your
+  token never do. gitleaks redacts the extract before the summarizer reads it, and scans
+  the summary before it is posted; a hit is quarantined, never uploaded. The summarizer
+  runs headless with no tools at all. Details: [What actually leaves your
+  machine](docs/USER-GUIDE.md#what-actually-leaves-your-machine).
+- **Entries are append-only.** A later decision is linked to the one it replaces, and the
+  logbook stops presenting the old one as current.
+- **The logbook is reference, not instruction.** Every read opens with a line saying so,
+  and the agent is told to check entries against the code.
+
+## What you get
+
+| | |
+|---|---|
+| **Automatic capture** | A Claude Code `SessionEnd` hook plus a 15-minute safety-net job (systemd user timer or cron). Killed and crashed sessions are picked up too. |
+| **Typed, addressable items** | Each summary lists `[decision]`, `[fact]`, `[method]` and `[task]` items, each with its rationale and status. |
+| **Consumption by agents** | A `CLAUDE.md` block and the `/loom` skill make your agent run `loom check` when a task starts and search the logbook (`loom log --grep`) before proposing an approach. |
+| **A web UI** | `loom ui` opens a signed-in browser session: projects, entries, usage, your machines; users and roles for admins. |
+| **Onboarding without shared secrets** | Single-use invitation links; each machine mints its own device token, which renews itself. Add another machine of yours with a setup code from the web. |
+| **Revocation that holds** | *Retire* a replaced machine, or *Revoke* a lost one together with every machine added from it. |
+| **Feedback and curation** | Mark entries as useful, not applicable or stale (`/loom-feedback`); `loom curate` links superseded decisions. |
+| **One small server** | FastAPI + SQLite, one process, one volume. Deploy guides for Fly.io and for any Linux host with Docker Compose + Caddy, including backups pulled off the host and a restore drill. |
+
+## Status
+
+**v0.1.0, a working pilot.** It runs for a small team and has been driven end to end on
+real hosts: Fly.io, and a VPS with Docker Compose and a public certificate. It is still
+under active development; expect changes between versions. Before upgrading a server,
+take a backup and follow the upgrade checks in the [runbook](docs/RUNBOOK.md).
+
+**It works with Claude Code only, for now.** The design keeps the agent-specific parts at
+the edges, so adapting it to Codex or another agent harness should be contained. These
+are the places that know about Claude Code:
+
+| Seam | Today | For another harness |
+|---|---|---|
+| Session end | Claude Code's `SessionEnd` hook (`client/hooks/sessionend.sh`) | The harness's own end-of-session hook, or the existing periodic sweep alone |
+| Transcript | Claude Code's JSONL transcripts (`client/loom/transcript_adapter.py`, `contract/SCHEMA.md`) | An adapter for that harness's transcript format |
+| Summarizer | `claude -p` headless, with no tools (`contract/FLAGS.md`) | Any CLI or API that takes the prompt in `prompts/` and returns Markdown |
+| Consumption | A `CLAUDE.md` block and skills under `client/skills/` | The harness's equivalent (`AGENTS.md`, its skill or command format) |
+
+The server, its API, the web UI and the logbook format are agent-agnostic.
+
+## Getting started
+
+- **Use it on your machine:** [User guide](docs/USER-GUIDE.md). You need an invitation
+  link from whoever runs your team's server, `git`, `jq`, Python 3.12+ and the Claude Code
+  CLI; the installer fetches a pinned gitleaks for you.
+- **Run the server for your team:** [Server guide](docs/SERVER-GUIDE.md): Fly.io (Part 1)
+  or one Linux host with Docker Compose + Caddy (Part 2). Then
+  `python -m server.admin invite --email you@example.com --name you` and
+  `python -m server.admin promote --email you@example.com` make you the first admin.
+- **Operate it:** [Runbook](docs/RUNBOOK.md): upgrades, backups, revocation, diagnostics.
+
+## Repository layout
 
 ```
-server/            # central FastAPI API + SQLite + token auth (T2)
-  app.py           # routes + Bearer auth middleware
-  db.py            # sqlite connection (WAL) + idempotent schema.sql
-  schema.sql       # literal schema (DESIGN.md §6.1)
-  admin.py         # CLI: adduser / deactivate / listusers
-  tests/
-client/            # per-developer-machine components
-  loom/            # installable package: cli, processor, transcript_adapter,
-                   # normalize, secret_scan, api_client, config (T3-T6)
-  hooks/           # SessionEnd hook (T5)
-  skills/          # Claude Code skills: loom, loom-register (T6)
-  install.sh       # installer: venv + hook + ~/.loom + config (T5)
-  tests/           # unit/ integration/ contract/
-prompts/           # summarizer_v1.md (versioned prompt, DESIGN.md §5)
-contract/          # T0 output: real fixtures, SCHEMA.md, FLAGS.md, verify.py
-                   # + ATTRIBUTION.md: how a session is assigned to a project
+server/            # FastAPI API, web UI (/ui), SQLite schema and migrations, admin CLI
+  admin.py         # adduser, invite, promote, demote, deactivate, listusers,
+                   # listdevices, revokedevice, revoke-orphans
+client/
+  loom/            # the `loom` CLI: process, register, enable, check, log, ui, status,
+                   # enroll, doctor, curate, feedback, …
+  hooks/           # the SessionEnd hook
+  skills/          # Claude Code skills: loom, loom-register, loom-feedback
+  install.sh       # idempotent installer (venv, hook, skills, scheduled job, gitleaks)
+prompts/           # versioned summarizer prompts
+contract/          # verified facts about the Claude Code CLI and transcript format,
+                   # and the project-attribution rule (ATTRIBUTION.md)
+deploy/compose/    # Docker Compose + Caddy deployment, backups and restore.sh
+fly.toml           # Fly.io deployment
+test/waves/        # frozen goal tests that drive the real boundary (Docker, real image)
+docs/              # user, server and operations guides; plans
 ```
 
-Sessions that run in an **ephemeral git worktree** (the usual agent-harness setup) keep
-their project attribution: the SessionEnd hook captures the repo's remote while the
-worktree still exists, and the processor falls back to it only when the directory is
-already gone. A live remote always wins, and an identity that cannot be established is
-dropped rather than guessed — `contract/ATTRIBUTION.md` is the authority.
-
-## make targets
-
-- `make test` — pytest over `server/tests` and `client/tests`.
-- `make contract` — runs `contract/verify.py` (requires a live `claude` CLI).
-- `make serve` — `uvicorn server.app:app --reload`.
-- `make install` — `bash client/install.sh`.
-
-## Continuous integration
-
-CI (`.github/workflows/ci.yml`) runs the full test suite (`make test`) plus the static
-contract assertions (`LOOM_SKIP_LIVE=1 make contract`) on every PR and push to `main`.
-The full `make contract` — which invokes the real `claude` CLI — stays a manual check,
-reserved for changes to session capture, transcript adaptation, or Claude integration.
-
-## Getting started (dev)
+## Development
 
 ```bash
-python3 -m venv .venv
-.venv/bin/pip install -e ".[server,client,dev]"
-make test
+uv venv .venv && uv pip install --python .venv/bin/python -e '.[server,client,dev]'
+make test                       # needs a running Docker daemon and gitleaks 8.30.1
+LOOM_SKIP_LIVE=1 make contract  # static contract assertions
 ```
 
-## Documentation
+Read [`AGENTS.md`](AGENTS.md) first: it is the working doctrine for humans and agents
+(test-first, real-boundary tests, frozen goal waves, shared contracts are read-only) and
+lists the environment the suite needs. [`DESIGN.md`](DESIGN.md) is the specification, with
+every decision recorded as `D<n>`; [`PLAN.md`](PLAN.md) is the original implementation
+plan. CI runs `make test` and the static contract on every push and pull request.
 
-- `DESIGN.md` — technical design (architecture, security, schema, invariants).
-- `PLAN.md` — phase-1 implementation plan (tasks, ACs, API contracts).
-- `contract/ATTRIBUTION.md` — the project-attribution authority rule (issue #4).
-- `docs/RUNBOOK.md` — pilot operations, including how to read the attribution
-  diagnostics in `~/.loom/log/processor.log`.
+Issue, PR and commit references in older docs and code comments (`#N`, or a commit hash)
+may refer to the original development repository and not resolve here.
 
-Issue, PR and commit references cited in the docs and code (`#N`, e.g. "issue #4", or a
-commit hash) refer to the original development repository; they do not resolve in this one.
+## Security
+
+Please report vulnerabilities privately: see [SECURITY.md](SECURITY.md).
+
+## License
+
+[Apache License 2.0](LICENSE).

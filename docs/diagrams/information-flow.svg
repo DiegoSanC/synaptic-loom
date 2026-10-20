@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="760" viewBox="0 0 1400 760" font-family="Inter, 'Helvetica Neue', Arial, sans-serif">
+  <defs>
+    <marker id="ah-teal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#0E6862"/>
+    </marker>
+    <marker id="ah-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1D63ED"/>
+    </marker>
+  </defs>
+  <rect width="100%" height="100%" fill="#FFFFFF"/>
+
+  <!-- Title -->
+  <text x="48" y="56" font-size="22" font-weight="600" fill="#212B36">How a decision travels through Synaptic Loom</text>
+  <text x="48" y="82" font-size="14" fill="#5B6B7B">From one developer's Claude Code session to the agents and browsers of the rest of the team.</text>
+
+  <!-- ===================== Column 1: the developer's machine ===================== -->
+  <rect x="48" y="112" width="528" height="600" rx="12" fill="#FFFFFF" stroke="#C9D1D9" stroke-width="1.5"/>
+  <g transform="translate(72, 132)" stroke="#212B36" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2" y="3" width="20" height="14" rx="2"/>
+    <line x1="8" y1="21" x2="16" y2="21"/>
+    <line x1="12" y1="17" x2="12" y2="21"/>
+  </g>
+  <text x="108" y="150" font-size="15" font-weight="600" fill="#212B36">Your machine</text>
+  <text x="216" y="150" font-size="13" fill="#5B6B7B">· the client, in ~/.loom</text>
+
+  <!-- step 1 -->
+  <circle cx="88" cy="200" r="16" fill="#1D63ED"/>
+  <text x="88" y="205" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">1</text>
+  <text x="120" y="195" font-size="14" font-weight="500" fill="#212B36">A Claude Code session ends</text>
+  <text x="120" y="215" font-size="13" fill="#5B6B7B">The SessionEnd hook marks it in <tspan font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">queue/</tspan>, in an enabled repo only</text>
+
+  <!-- step 2 -->
+  <circle cx="88" cy="276" r="16" fill="#1D63ED"/>
+  <text x="88" y="281" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">2</text>
+  <text x="120" y="271" font-size="14" font-weight="500" fill="#212B36">The processor reads only what is new</text>
+  <text x="120" y="291" font-size="13" fill="#5B6B7B">The transcript delta since the last pass</text>
+
+  <!-- step 3 -->
+  <circle cx="88" cy="352" r="16" fill="#0E6862"/>
+  <text x="88" y="357" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">3</text>
+  <text x="120" y="347" font-size="14" font-weight="500" fill="#212B36">gitleaks redacts secrets from the extract</text>
+  <text x="120" y="367" font-size="13" fill="#5B6B7B">Before the summarizer ever reads it</text>
+
+  <!-- step 4 -->
+  <circle cx="88" cy="428" r="16" fill="#0E6862"/>
+  <text x="88" y="433" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">4</text>
+  <text x="120" y="423" font-size="14" font-weight="500" fill="#212B36">The summarizer keeps decisions and their why</text>
+  <text x="120" y="443" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">claude -p</text>
+  <text x="196" y="443" font-size="13" fill="#5B6B7B">headless, with no tools and no file paths</text>
+
+  <!-- step 5 -->
+  <circle cx="88" cy="504" r="16" fill="#0E6862"/>
+  <text x="88" y="509" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">5</text>
+  <text x="120" y="499" font-size="14" font-weight="500" fill="#212B36">gitleaks scans the summary</text>
+  <text x="120" y="519" font-size="13" fill="#5B6B7B">A hit goes to <tspan font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">quarantine/</tspan> and is never uploaded</text>
+
+  <!-- step 6 -->
+  <circle cx="88" cy="580" r="16" fill="#0E6862"/>
+  <text x="88" y="585" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">6</text>
+  <text x="120" y="575" font-size="14" font-weight="500" fill="#212B36">The summary is posted, nothing else</text>
+  <text x="120" y="595" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">POST /api/entries</text>
+  <text x="258" y="595" font-size="13" fill="#5B6B7B">with this machine's device token</text>
+
+  <!-- rail between steps -->
+  <line x1="88" y1="218" x2="88" y2="258" stroke="#C9D1D9" stroke-width="1.5"/>
+  <line x1="88" y1="294" x2="88" y2="334" stroke="#C9D1D9" stroke-width="1.5"/>
+  <line x1="88" y1="370" x2="88" y2="410" stroke="#C9D1D9" stroke-width="1.5"/>
+  <line x1="88" y1="446" x2="88" y2="486" stroke="#C9D1D9" stroke-width="1.5"/>
+  <line x1="88" y1="522" x2="88" y2="562" stroke="#C9D1D9" stroke-width="1.5"/>
+
+  <!-- never leaves the machine -->
+  <rect x="72" y="624" width="480" height="68" rx="10" fill="#FFFFFF" stroke="#1D63ED" stroke-width="1.4" stroke-dasharray="4 4"/>
+  <g transform="translate(100, 648)">
+    <circle cx="0" cy="0" r="10" fill="#1D63ED"/>
+    <rect x="-1.2" y="-2.5" width="2.4" height="8" rx="1.2" fill="#FFFFFF"/>
+    <circle cx="0" cy="-5.5" r="1.4" fill="#FFFFFF"/>
+  </g>
+  <text x="124" y="653" font-size="13.5" font-weight="600" fill="#1D63ED">Never leaves your machine</text>
+  <g font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">
+    <rect x="124" y="664" width="128" height="20" rx="6" fill="#EDF3FE" stroke="#1D63ED" stroke-width="1"/>
+    <text x="188" y="678" text-anchor="middle">raw transcript</text>
+    <rect x="260" y="664" width="104" height="20" rx="6" fill="#EDF3FE" stroke="#1D63ED" stroke-width="1"/>
+    <text x="312" y="678" text-anchor="middle">file paths</text>
+    <rect x="372" y="664" width="112" height="20" rx="6" fill="#EDF3FE" stroke="#1D63ED" stroke-width="1"/>
+    <text x="428" y="678" text-anchor="middle">device token</text>
+  </g>
+
+  <!-- ===================== Column 2: the server ===================== -->
+  <rect x="656" y="232" width="320" height="368" rx="12" fill="#FFFFFF" stroke="#0E6862" stroke-width="1.5"/>
+  <rect x="657" y="233" width="318" height="76" rx="11" fill="#EFF6F5"/>
+  <g transform="translate(680, 252) scale(1.2)" stroke="#0E6862" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="12" cy="5" rx="7" ry="3"/>
+    <path d="M5 5v14c0 1.66 3.13 3 7 3s7-1.34 7-3V5"/>
+    <path d="M5 12c0 1.66 3.13 3 7 3s7-1.34 7-3"/>
+  </g>
+  <text x="724" y="266" font-size="15" font-weight="600" fill="#212B36">The team's logbook</text>
+  <text x="724" y="290" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="13" font-weight="600" fill="#0A4F4B">FastAPI + SQLite</text>
+
+  <text x="680" y="342" font-size="13" fill="#5B6B7B">One process, one volume.</text>
+  <text x="680" y="364" font-size="13" fill="#5B6B7B">Fly.io, or one host with</text>
+  <text x="680" y="386" font-size="13" fill="#5B6B7B">Docker Compose + Caddy.</text>
+
+  <g font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">
+    <line x1="672" y1="416" x2="960" y2="416" stroke="#E3E8EE" stroke-width="1"/>
+    <g transform="translate(680, 434)" fill="#0E6862">
+      <rect x="0" y="0" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="0" width="4.5" height="4.5" rx="1"/>
+      <rect x="0" y="6.5" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="6.5" width="4.5" height="4.5" rx="1"/>
+    </g>
+    <text x="704" y="444">append-only entries</text>
+    <line x1="672" y1="460" x2="960" y2="460" stroke="#E3E8EE" stroke-width="1"/>
+    <g transform="translate(680, 478)" fill="#0E6862">
+      <rect x="0" y="0" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="0" width="4.5" height="4.5" rx="1"/>
+      <rect x="0" y="6.5" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="6.5" width="4.5" height="4.5" rx="1"/>
+    </g>
+    <text x="704" y="488">one token per machine</text>
+    <line x1="672" y1="504" x2="960" y2="504" stroke="#E3E8EE" stroke-width="1"/>
+    <g transform="translate(680, 522)" fill="#0E6862">
+      <rect x="0" y="0" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="0" width="4.5" height="4.5" rx="1"/>
+      <rect x="0" y="6.5" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="6.5" width="4.5" height="4.5" rx="1"/>
+    </g>
+    <text x="704" y="532">roles: admin, member</text>
+    <line x1="672" y1="548" x2="960" y2="548" stroke="#E3E8EE" stroke-width="1"/>
+    <g transform="translate(680, 566)" fill="#0E6862">
+      <rect x="0" y="0" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="0" width="4.5" height="4.5" rx="1"/>
+      <rect x="0" y="6.5" width="4.5" height="4.5" rx="1"/><rect x="6.5" y="6.5" width="4.5" height="4.5" rx="1"/>
+    </g>
+    <text x="704" y="576">backups off the host</text>
+  </g>
+
+  <!-- step 6 -> server -->
+  <path d="M 584 580 H 600 a10 10 0 0 0 10 -10 V 478 a10 10 0 0 1 10 -10 H 648" fill="none" stroke="#0E6862" stroke-width="1.8" marker-end="url(#ah-teal)"/>
+
+  <!-- ===================== Column 3: the rest of the team ===================== -->
+  <!-- agents -->
+  <rect x="1056" y="168" width="296" height="200" rx="12" fill="#FFFFFF" stroke="#C9D1D9" stroke-width="1.5"/>
+  <g transform="translate(1080, 188)" stroke="#1D63ED" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="3" y="4" width="18" height="16" rx="3"/>
+    <polyline points="7 9 10.5 12 7 15"/>
+    <line x1="12.5" y1="15.5" x2="17" y2="15.5"/>
+  </g>
+  <text x="1116" y="206" font-size="15" font-weight="600" fill="#212B36">Teammates' agents</text>
+  <text x="1080" y="244" font-size="13" fill="#5B6B7B">When a task starts:</text>
+  <text x="1080" y="266" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">loom check</text>
+  <text x="1080" y="298" font-size="13" fill="#5B6B7B">Before proposing an approach,</text>
+  <text x="1080" y="318" font-size="13" fill="#5B6B7B">the <tspan font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">/loom</tspan> skill runs</text>
+  <text x="1080" y="342" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">loom log --grep "…"</text>
+
+  <!-- web -->
+  <rect x="1056" y="400" width="296" height="164" rx="12" fill="#FFFFFF" stroke="#C9D1D9" stroke-width="1.5"/>
+  <g transform="translate(1080, 420)" stroke="#1D63ED" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+    <circle cx="9" cy="7" r="4"/>
+    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+  </g>
+  <text x="1116" y="438" font-size="15" font-weight="600" fill="#212B36">People, in a browser</text>
+  <text x="1080" y="476" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">loom ui</text>
+  <text x="1140" y="476" font-size="13" fill="#5B6B7B">opens a 7-day session</text>
+  <text x="1080" y="508" font-size="13" fill="#5B6B7B">Projects, decisions, usage;</text>
+  <text x="1080" y="530" font-size="13" fill="#5B6B7B">machines and users for admins</text>
+
+  <!-- server -> consumers -->
+  <path d="M 984 340 H 1010 a10 10 0 0 0 10 -10 V 278 a10 10 0 0 1 10 -10 H 1048" fill="none" stroke="#0E6862" stroke-width="1.8" marker-end="url(#ah-teal)"/>
+  <path d="M 984 448 H 1010 a10 10 0 0 1 10 10 V 472 a10 10 0 0 0 10 10 H 1048" fill="none" stroke="#0E6862" stroke-width="1.8" marker-end="url(#ah-teal)"/>
+
+  <!-- reference callout -->
+  <rect x="1056" y="596" width="296" height="76" rx="10" fill="#FFFFFF" stroke="#1D63ED" stroke-width="1.4" stroke-dasharray="4 4"/>
+  <g transform="translate(1084, 622)">
+    <circle cx="0" cy="0" r="10" fill="#1D63ED"/>
+    <rect x="-1.2" y="-2.5" width="2.4" height="8" rx="1.2" fill="#FFFFFF"/>
+    <circle cx="0" cy="-5.5" r="1.4" fill="#FFFFFF"/>
+  </g>
+  <text x="1108" y="626" font-size="13.5" font-weight="500" fill="#1D63ED">Reference, not instructions:
+    <tspan x="1108" dy="20">check entries against the code.</tspan></text>
+</svg>
