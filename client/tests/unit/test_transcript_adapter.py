@@ -1,4 +1,4 @@
-"""Tests for transcript_adapter — over the real T0 fixture and synthetic ones.
+"""Tests for transcript_adapter — over the real contract fixture and synthetic ones.
 
 The real fixture (`contract/fixtures/real_session.jsonl`) is the primary input.
 It also checks that the semantics match the reference extractor `read_delta`

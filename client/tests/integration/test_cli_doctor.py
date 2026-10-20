@@ -1,4 +1,4 @@
-"""Tests for `loom doctor` (PLAN.md §T6/§T5.4).
+"""Tests for `loom doctor` (DESIGN.md §7, §4.1).
 
 Runs against a fully fake environment: HOME + LOOM_HOME under tmp, ``claude``/``jq`` as
 stubs on the PATH, mock server. The real ``~/.claude/settings.json`` is NEVER read or

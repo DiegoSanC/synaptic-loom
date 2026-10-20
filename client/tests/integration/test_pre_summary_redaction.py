@@ -173,7 +173,7 @@ def test_clean_extract_reaches_the_summarizer_unchanged(env, run_cli, tmp_path):
 
 
 def test_content_hash_is_computed_over_the_raw_extract(env, run_cli, tmp_path):
-    """I6 unchanged: the hash is PLAN §T4's formula over the UNREDACTED extract, so a
+    """I6 unchanged: the hash is DESIGN §4.2's formula over the UNREDACTED extract, so a
     range captured before D16 dedupes exactly as it did, whatever gitleaks finds."""
     _transcript(env, SECRET_TURNS)
     env.config(_recording_stub(env, tmp_path / "stdin.txt"))

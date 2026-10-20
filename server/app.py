@@ -1,6 +1,6 @@
 """Synaptic Loom central HTTP API (FastAPI + SQLite stdlib).
 
-Implements the normative contracts of PLAN.md §3. Cross-cutting rules:
+Implements the normative contracts of DESIGN.md §6.2. Cross-cutting rules:
 - Bearer auth on every route except `/api/health` (middleware) — an allow-list,
   so FastAPI's own `/docs`, `/redoc` and `/openapi.json` need a token too.
 - Errors are always JSON `{"error": "<code>", "detail": "..."}`.

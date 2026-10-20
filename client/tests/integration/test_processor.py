@@ -1,4 +1,4 @@
-"""Integration tests for processor.run_once (PLAN.md §T4, error matrix).
+"""Integration tests for processor.run_once (DESIGN.md §4.2, error matrix).
 
 Central server = pytest-httpserver (mock). Summarizer = an executable stub per scenario.
 The real ``claude`` CLI is NEVER invoked and the real ``~/.loom`` is never touched.

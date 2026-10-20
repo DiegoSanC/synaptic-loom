@@ -11,7 +11,7 @@ Derived from the acceptance criteria of RT.1/RT.2.3 in
 - the backfill is idempotent (rerun changes nothing, also on a COPY of a real
   DB file written by the running server) and the AFTER INSERT trigger covers
   every row added afterwards;
-- PLAN-T2's WAL concurrency AC, extended to concurrent insert + search;
+- the WAL concurrency test (`test_concurrency.py`), extended to concurrent insert + search;
 - the closed ``ITEM_TYPES`` vocabulary is enforced on both the write side
   (``POST /api/entries``) and the read side (``GET ?type=``), 422 never 500;
 - the un-queried listing keeps today's shape exactly (no ``snippet``/``rank``).
@@ -524,7 +524,7 @@ def test_unknown_item_type_is_refused_by_the_substrate(corpus):
 
 
 # --------------------------------------------------------------------------- #
-# T.F1 — WAL concurrency (PLAN-T2 AC, extended to insert + search)             #
+# T.F1 — WAL concurrency (test_concurrency.py, extended to insert + search)   #
 # --------------------------------------------------------------------------- #
 def test_concurrent_insert_and_search_neither_raise_nor_lose_rows(env):
     conn = db.connect(env)

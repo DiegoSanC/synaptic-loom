@@ -1,4 +1,4 @@
-"""Integration tests for the SessionEnd hook and the installer (PLAN.md §T5).
+"""Integration tests for the SessionEnd hook and the installer (DESIGN.md §4.1).
 
 Hard rules for these tests:
 - They ALWAYS run with ``HOME=<tmpdir>`` and ``LOOM_HOME=<tmpdir>/.loom``: the real
@@ -258,7 +258,7 @@ def test_hook_marks_transcript_and_kicks_processor(home):
     # marked_at = UTC ISO-8601 (jq `now | todate`), ends in Z.
     assert data["marked_at"].endswith("Z") and "T" in data["marked_at"]
 
-    # The kick fired with `-m loom.processor --quiet` (equivalent to `loom process`, T6).
+    # The kick fired with `-m loom.processor --quiet` (equivalent to `loom process`).
     kick_rec = _loom_home(home) / "kick_argv.txt"
     assert _wait_for(kick_rec), "the kick did not invoke the venv python"
     assert kick_rec.read_text().strip() == "-m loom.processor --quiet"

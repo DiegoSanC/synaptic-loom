@@ -7,7 +7,7 @@ This file is the project's committed home for project-intrinsic agent knowledge:
 ## Development doctrine
 
 Canonical working rules for any agent (or human) changing this codebase. `DESIGN.md` is the
-specification and `PLAN.md` the executable plan; an implementer should not need to make a
+specification; an implementer should not need to make a
 design decision that is not written there — if one comes up, note it and raise it, don't
 improvise.
 
@@ -22,8 +22,7 @@ improvise.
 5. **Verify continuously what you touch, and run the full suite at the end**
    (`make test`, plus `LOOM_SKIP_LIVE=1 make contract` for static contract assertions).
 6. **Refactor outside the red-green loop**, with the suite green before and after.
-7. **Respect the vocabulary and decisions of `DESIGN.md` / `PLAN.md`** (D-x, I-x, P-x,
-   T-x): reuse their terms; a deviation is a raised decision, not a local choice.
+7. **Respect the vocabulary and decisions of `DESIGN.md`** (D-x, I-x, P-x): reuse their terms; a deviation is a raised decision, not a local choice.
 8. **Self-review** your changes against repo standards and against the fidelity of the
    original request before declaring work done.
 9. **Turn every acceptance criterion into executable assertions before implementing,**

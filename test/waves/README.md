@@ -27,8 +27,8 @@ and as the post-fix regression gate.
 | s | D18 compose-backups | `s/test_goal_d18_compose_backups.py` | REAL `docker compose up --build` of `deploy/compose` (`loom` + `backup`, real named volumes); REAL `backup.sh` in the service and in one-off containers; REAL `deploy/compose/restore.sh` run on the host |
 | t | D20 roles-and-writes (phase 2a) | `t/test_goal_d20_roles_and_writes.py` | REAL `docker build` of the repo Dockerfile + `docker run` (named volumes, loopback ports, no Compose); `docker exec … server.admin`; the SQLite file read in the container; REAL `loom enroll`/`ui`/`status`/`doctor`; a FROZEN pre-D20 schema fixture |
 
-Waves `o`, `p` and `q` belong to the plan of 2026-09-23
-(`docs/plans/2026-09-23-fix-label-grammar-fidelity-plan.md`): `o` is slice B (decision
+Waves `o`, `p` and `q` belong to the label-grammar plan of 2026-09-23 (kept in the
+repository's history, like every plan their docstrings cite): `o` is slice B (decision
 D11), `p` is slice C (decision D13, the HTTP boundary of addressable items; slice D
 extends it by adding cases) and `q` is slice E (item links, their revocation and
 item-level curation). Wave `o` follows the wave-i E14 pattern: its goldens are re-recorded only with the recipe in its
@@ -66,7 +66,7 @@ asserted the service set `{loom, caddy}`; it now asserts `{loom, caddy, backup}`
 and that no service but Caddy has a host port.
 
 Wave `t` (D20, owner decision of 2026-10-19) is the frozen oracle of phase 2a of
-`docs/plans/2026-10-19-feat-invite-links-and-accounts-v2-plan.md`: roles, the writable
+the accounts v2 plan (DESIGN.md §6.4 is its contract): roles, the writable
 `/ui` reached through `loom ui`, setup codes, the issuer cascade, `auth_events` and
 `GET /api/me`. It is derived from DESIGN.md's D20 row and §6.4 alone, and was written and
 committed red, before the implementation. Its boundary is the real server in Docker, run

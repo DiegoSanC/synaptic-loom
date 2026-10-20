@@ -1,4 +1,4 @@
-"""Phase-2 end-to-end regression suite (PLAN §T-phase2, epic E4).
+"""Phase-2 end-to-end regression suite (phase 2, epic E4).
 
 The repo's OWN e2e, run by ``make test`` / ``pytest`` alongside the unit and integration
 suites. It exercises the phase-2 capture chain across a **real boundary**:

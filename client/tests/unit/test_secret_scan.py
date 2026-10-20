@@ -1,4 +1,4 @@
-"""Tests for secret_scan — each regex family with a positive and a negative (PLAN.md §T4).
+"""Tests for secret_scan — each regex family with a positive and a negative (DESIGN.md §1, P3).
 
 The critical negatives (40-hex git SHA, UUID) must not trigger ANY family: they are
 the false alarms that would make the secret gate useless.

@@ -1,4 +1,4 @@
-"""HTTP client for the central API (PLAN.md §3), a thin wrapper over ``requests``.
+"""HTTP client for the central API (DESIGN.md §6.2), a thin wrapper over ``requests``.
 
 ``Authorization: Bearer <token>`` auth on every route except ``/api/health``. Short
 connect/read timeouts: a server that is down must not block the processor. Connection and
@@ -96,7 +96,7 @@ class ApiClient:
         """``GET /api/projects?remote=<remote>`` → project or ``None`` (404).
 
         Raises :class:`ServerUnreachable` on a connection failure. Used by ``loom
-        register`` (T6); the processor uses the cache (:meth:`list_projects`).
+        register``; the processor uses the cache (:meth:`list_projects`).
         """
         resp = self._request("GET", "/api/projects", params={"remote": remote})
         if resp.status_code == 404:

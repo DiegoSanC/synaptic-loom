@@ -1,6 +1,6 @@
 # Uninstalling the loom client
 
-Reverts what `client/install.sh` did (PLAN.md §T5). Four steps; the order does not matter.
+Reverts what `client/install.sh` did (DESIGN.md §4.1). Four steps; the order does not matter.
 
 > Every path below assumes the default installation (`LOOM_HOME=~/.loom`, settings in
 > `~/.claude/settings.json`). If you installed with a different `LOOM_HOME`, substitute

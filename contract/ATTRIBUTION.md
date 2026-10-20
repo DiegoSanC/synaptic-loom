@@ -42,7 +42,7 @@ sweep's synthetic markers (§5).
 
 **Raw, not normalized.** `normalize()` (`client/loom/normalize.py`) is the identity
 authority (D1) and the server copies its test table character for character
-(`PLAN.md` §T2). Canonicalizing in the hook would mean a **second implementation in
+(`DESIGN.md` §3). Canonicalizing in the hook would mean a **second implementation in
 `jq`/shell** that can drift from the Python one — and a drift here does not fail loudly,
 it files sessions under a `host/org/repo` key nobody else computes. The hook captures a
 string and makes no judgement; every semantic decision stays in Python, on the existing

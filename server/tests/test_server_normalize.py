@@ -1,4 +1,4 @@
-"""Remote normalization table (DESIGN.md §3 / PLAN.md §T3).
+"""Remote normalization table (DESIGN.md §3).
 
 The client and the server share EXACTLY this table.
 """

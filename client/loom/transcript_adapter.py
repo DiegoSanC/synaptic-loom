@@ -4,7 +4,7 @@ Every dependency on the internal ``.jsonl`` format lives here, in a single modul
 with shape validation (DESIGN.md §9). If the shape does not fit → ``AdapterError``
 (fail-loud, I4/P5): a "half-read" delta is never transmitted silently.
 
-**Allowlist** semantics (corrected by T0/D-4): ONLY the lines whose ``type`` is in
+**Allowlist** semantics (corrected by the phase-1 preflight, D-4 in contract/FLAGS.md): ONLY the lines whose ``type`` is in
 {"user", "assistant"} and that carry a valid ``message`` are processed. Any other
 ``type`` (attachment, system, mode, file-history-snapshot, ai-title,
 queue-operation, unknown future types…) is skipped silently and counted in
@@ -40,7 +40,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Tool text truncation (DESIGN.md §4.2 / PLAN.md §T3).
+# Tool text truncation (DESIGN.md §4.2).
 TOOL_TRUNCATE = 500
 TRUNCATE_SUFFIX = "[…]"
 

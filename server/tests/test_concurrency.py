@@ -1,4 +1,4 @@
-"""Concurrency: simultaneous writes neither corrupt nor raise (AC PLAN.md §T2).
+"""Concurrency: simultaneous writes neither corrupt nor raise (DESIGN.md §6).
 
 WAL + busy_timeout must absorb the contention of several clients writing at once.
 """

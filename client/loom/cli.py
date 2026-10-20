@@ -1,6 +1,6 @@
-"""`loom` CLI — the client's single entry point (PLAN.md §T6, §0 P2).
+"""`loom` CLI — the client's single entry point (DESIGN.md §7, P2).
 
-All client logic lives here and in the T3/T4 modules (`processor`, `api_client`,
+All client logic lives here and in the pipeline modules (`processor`, `api_client`,
 `normalize`, `secret_scan`, `config`); the Claude Code skills are thin wrappers that
 invoke these subcommands and show their output (P2).
 
@@ -46,7 +46,7 @@ Subcommands and exit semantics:
   (D16).
 - ``doctor`` — ✓/⚠/✗ checklist of the environment. Exit 0 if there is no ✗, **1** if there is.
 
-`api_client` (T4) is frozen and does not expose a method for every endpoint; for those
+`api_client` is frozen and does not expose a method for every endpoint; for those
 without one (POST /api/projects, GET .../entries, GET /api/health) the CLI uses its
 transport primitive ``ApiClient._request`` — reusing auth, timeouts and the distinction
 between ``ServerUnreachable`` (server down) and a concrete HTTP status.
@@ -247,7 +247,7 @@ def _git_remote_url(cwd: str) -> str | None:
 
 
 def _print_http_error(resp) -> None:
-    """Prints a server error shaped as ``{"error","detail"}`` to stderr (PLAN §3)."""
+    """Prints a server error shaped as ``{"error","detail"}`` to stderr (DESIGN §6.2)."""
     body = None
     try:
         body = resp.json()

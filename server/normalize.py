@@ -1,6 +1,6 @@
 """Git remote normalization to the project's canonical identity (DESIGN.md §3).
 
-Server-side copy of the same function the client uses (PLAN.md §T2/§T3): the client
+Server-side copy of the same function the client uses (DESIGN.md §3): the client
 sends the raw or normalized URL and the server re-normalizes — it is the authority.
 Both satisfy the SAME table of tests, which guarantees consistency.
 

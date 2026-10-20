@@ -1,4 +1,4 @@
-"""Tests for `loom process` (PLAN.md §T6) — wrapper around processor.run_once.
+"""Tests for `loom process` (DESIGN.md §7) — wrapper around processor.run_once.
 
 Exit semantics: exit 0 on a normal pass, 2 if the config is missing; ``--quiet`` prints
 nothing on a clean pass. The pipeline logic is covered in test_processor.py.

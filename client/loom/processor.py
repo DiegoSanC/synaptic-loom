@@ -1,4 +1,4 @@
-"""Decoupled processor (DESIGN.md §4.2, PLAN.md §T4).
+"""Decoupled processor (DESIGN.md §4.2).
 
 Walks the markers in ``queue/`` (oldest first) and applies, to each one, the 9-step
 pipeline: transcript exists → remote gate → registry cache → delta from the pointer →
@@ -15,7 +15,7 @@ Invariants materialized here:
   pre-summary redaction fails or does not reach a fixpoint, the summarizer is not run.
 - **I6**: reprocessing does not duplicate (pointer + unique ``content_hash`` server-side).
 
-Normative behavior: the error matrix in PLAN.md §T4.
+Normative behavior: the error matrix in DESIGN.md §4.2.
 """
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ class MarkerOutcome:
 
 @dataclass
 class RunReport:
-    """Summary of one :func:`run_once` pass (consumed by ``loom process``/``status``, T6).
+    """Summary of one :func:`run_once` pass (consumed by ``loom process``/``status``).
 
     ``sweep`` is additive (phase 2, R2.1): the orphan-sweep's counters when the sweep
     ran in this pass, ``None`` when it did not (disabled, lock held, or it crashed).
@@ -827,7 +827,7 @@ def compute_content_hash(
     model: str,
     delta_text: str,
 ) -> str:
-    """``sha256(covered_from|covered_to|prompt_version|model|sha256(delta_text))`` in hex (PLAN §T4).
+    """``sha256(covered_from|covered_to|prompt_version|model|sha256(delta_text))`` in hex (DESIGN §4.2).
 
     Deterministic: same delta + same range + same model/prompt ⇒ same hash ⇒ the server
     dedupes with a 409 (idempotency, I6).

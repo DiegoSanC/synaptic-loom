@@ -1,7 +1,6 @@
 """Recall telemetry: who consulted which logbook, from where, and what came back.
 
-Owner decision of 2026-09-22 (issues #14 and #15; the plan in
-``docs/plans/2026-09-22-feat-per-machine-opt-in-and-pilot-metrics-plan.md``): the pilot's
+Owner decision of 2026-09-22 (issues #14 and #15): the pilot's
 verdict needs to know whether Loom is consulted at all before it can ask whether what
 was found was useful. The read route keeps its frozen contract; the only new input is
 one request header, ``X-Loom-Source``, whose two values name the two readers there are —

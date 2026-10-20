@@ -1,13 +1,13 @@
-"""Loading of ``~/.loom/config.json`` and derivation of the client's paths (PLAN.md §T5).
+"""Loading of ``~/.loom/config.json`` and derivation of the client's paths (DESIGN.md §4.1).
 
-Everything the processor (T4) and the CLI (T6) need from local disk is resolved
+Everything the processor and the CLI need from local disk is resolved
 here out of ``LOOM_HOME``:
 
 - ``LOOM_HOME`` = environment variable; defaults to ``~/.loom``. **Every** path
   (``queue/``, ``quarantine/``, ``failed/``, ``log/``, ``lock``, ``state.json``,
   ``projects_cache.json``, ``config.json``, ``prompts/summarizer_<version>.md``) derives
   from it.
-- ``config.json`` (PLAN §T5; phase-2 keys are additive and optional):
+- ``config.json`` (DESIGN §4.1; phase-2 keys are additive and optional):
   ``{"server_url", "token", "cache_ttl_s": 3600,
      "summarizer": {"model": "sonnet", "timeout_s": 300, "prompt_version": "v2"},
      "sweep": {"enabled": true, "settle_s": 1800, "transcripts_root": "~/.claude/projects"},

@@ -1,4 +1,4 @@
-"""Tests for `loom register` (PLAN.md §T6).
+"""Tests for `loom register` (DESIGN.md §3, §7).
 
 Central server = pytest-httpserver (mock). Real git repo with a real remote via the
 ``env`` fixture. The real ``~/.loom`` is NEVER touched (LOOM_HOME points at ``env``'s tmp).

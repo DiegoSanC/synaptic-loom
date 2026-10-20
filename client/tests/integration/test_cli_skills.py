@@ -1,4 +1,4 @@
-"""Tests for the thin skills and their installation (PLAN.md §T6, P2).
+"""Tests for the thin skills and their installation (DESIGN.md §7, P2).
 
 The skills are logic-free wrappers that invoke ``~/.loom/venv/bin/loom``. Here we check
 their frontmatter and that ``install.sh`` copies them to ``~/.claude/skills/`` (HOME under

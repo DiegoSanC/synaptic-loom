@@ -1,4 +1,4 @@
-"""Integration fixtures for the processor (PLAN.md §T4).
+"""Integration fixtures for the processor (DESIGN.md §4.2).
 
 Every test runs with:
 - a temporary ``LOOM_HOME`` (never the real one);

@@ -2,7 +2,7 @@
 
 Verified empirically against `contract/fixtures/real_session.jsonl` with
 Claude Code **2.1.218** (see `VERSION`). Everything written here comes from a real run,
-not from documentation. This document is the source for implementing `transcript_adapter.py` (T3).
+not from documentation. This document is the source for implementing `transcript_adapter.py`.
 
 The fixture and `sessionend_payload.json` were anonymized for publication (2026-10-06):
 paths, the recording machine's skill/agent listings, hook commands and MCP server names
@@ -38,7 +38,7 @@ were replaced; record count, order, types and every conversational message are u
 > `file-history-snapshot`, `ai-title`, `system`). Treat parsing as an **allowlist**:
 > process only `user`/`assistant` with a valid `message`; **everything else is skipped
 > silently** and does NOT count as an "unclassifiable line". See discrepancy **D-4** in
-> `FLAGS.md`: the ">50% unclassifiable → AdapterError" rule from PLAN §T3 would produce a
+> `FLAGS.md`: the ">50% unclassifiable → AdapterError" rule of the phase-1 adapter would produce a
 > false positive, because in a short session most lines are legitimate metadata
 > (in the interactive fixture, only 2 of 21 lines are conversational).
 
@@ -99,7 +99,7 @@ Observed blocks and where their text lives:
 
 `assistant` also carries `message.model` (e.g. `"claude-fable-5"`); `user` does not.
 
-## 5. Minimum extractor contract (for `read_delta`, T3)
+## 5. Minimum extractor contract (for `read_delta`)
 
 For every new line (index > `last_line`):
 1. `obj = json.loads(line)`. If parsing fails → counts as a hard error.
@@ -115,7 +115,7 @@ For every new line (index > `last_line`):
 `user`/`assistant` line lacks `uuid`/`message`, or **no** conversational message shows up
 where content was expected. **Never** because of an abundance of noise lines.
 
-## 6. Field-name summary (direct answer to the T0 ACs)
+## 6. Field-name summary (direct answer to the preflight's questions)
 
 | Concept | Real field |
 |----------|-----------|

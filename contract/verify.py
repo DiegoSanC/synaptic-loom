@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""verify.py — Synaptic Loom contract test (PLAN.md §4, assertions 1–5).
+"""verify.py — Synaptic Loom contract test (DESIGN.md §9, assertions 1–5).
 
 Standalone, stdlib only. Re-runs the checks against the artifacts in
 `contract/` and the live `claude` CLI. Exits with code != 0 if anything fails.
 
-Flags corrected with respect to the PLAN per the T0 findings (see FLAGS.md):
+Flags corrected per the phase-1 preflight findings (see FLAGS.md):
   - `--bare`  -> `--safe-mode`  (D-1: --bare breaks OAuth auth on this machine)
   - `--allowedTools ""` -> `--tools ""`  (D-2: an empty allowlist does NOT block tools)
 
@@ -44,7 +44,7 @@ def warn(msg: str) -> None:
     warnings.append(msg)
 
 
-# --- Reference extractor (SCHEMA.md contract; minimal mirror of T3) --------------
+# --- Reference extractor (SCHEMA.md contract; minimal mirror of transcript_adapter) --------------
 
 CONVERSATIONAL = {"user", "assistant"}
 

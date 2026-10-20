@@ -2,11 +2,11 @@
 
 Status: **DRAFT v1 — not approved for build.** This document consolidates the phase 2/3
 scope that was previously scattered across `DESIGN.md` (§4.1, §5.1, §6.3, §10, §11),
-`docs/RUNBOOK.md` (§9) and `PLAN.md` (P1, P3), so it can be gap-analyzed as a whole
+`docs/RUNBOOK.md` (§9) and the phase-1 plan decisions P1 and P3 (now in `DESIGN.md` §1), so it can be gap-analyzed as a whole
 (document review + flow analysis) before any build planning starts.
 
 Baseline: phase 1 is deployed and operating (see `docs/RUNBOOK.md`). Pilot gate runs
-until ~**2026-08-14** (PLAN §5); its outcome CONDITIONS phase 3 (see §6).
+until ~**2026-08-14** (`docs/RUNBOOK.md` §7); its outcome CONDITIONS phase 3 (see §6).
 
 ---
 
@@ -43,13 +43,13 @@ explicitly:
 |---|---|
 | Project identity = normalized git remote URL | DESIGN §3 |
 | Marker/queue format + hook behavior (mark + kick, always exit 0) | DESIGN §4.1 |
-| Processor error matrix + pointer semantics (advance only after confirmed push) | PLAN §T4 |
-| API endpoints, bodies and error codes | PLAN §3 |
+| Processor error matrix + pointer semantics (advance only after confirmed push) | DESIGN §4.2 |
+| API endpoints, bodies and error codes | DESIGN §6.2 |
 | DB schema: `users`, `projects`, `project_paths`, `entries` (append-only, unique `content_hash`) | DESIGN §6.1 |
 | Entries are self-contained OKF concepts (frontmatter built by the processor, D7) | DESIGN §5.1 |
 | Summarizer invocation: `claude -p --safe-mode --tools ""`, delta via stdin | contract/FLAGS.md |
 | Security invariants I1–I6 | DESIGN §1 |
-| `~/.loom` layout + `config.json` keys | PLAN §T5 |
+| `~/.loom` layout + `config.json` keys | DESIGN §4.1 |
 
 ---
 

@@ -1,4 +1,4 @@
-"""Deterministic secret scanning — the phase-1 regex set (PLAN.md §P3).
+"""Deterministic secret scanning — the phase-1 regex set (DESIGN.md §1, P3).
 
 Home-grown regex set, no external dependencies. Since phase 2 it is never called on its
 own by production code: :mod:`loom.scan_engine` runs it UNIONED with gitleaks, which D16

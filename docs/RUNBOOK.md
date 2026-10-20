@@ -12,7 +12,7 @@ that describe it are labelled as the retired topology and are kept for rollback 
 only: **two live servers on two independent SQLite files split the logbook silently**, so
 do not follow them to bring a second server up.
 
-Originally deployed on **2026-07-24** (T7). Complements `PLAN.md §T7/§5`, `DESIGN.md §8` and
+Originally deployed on **2026-07-24** . Complements `DESIGN.md §8` and
 `server/README.md`. To uninstall the client: `client/UNINSTALL.md`.
 
 ---
@@ -46,7 +46,7 @@ other, stale clone of the tool.
 
 ---
 
-## 1. Environment findings (WSL2, verified in T7)
+## 1. Environment findings (WSL2, verified at the first deployment)
 
 - **systemd (system):** `systemctl is-system-running` → `degraded` (it boots, with some
   non-critical unit failing), but functional.
@@ -71,7 +71,7 @@ other, stale clone of the tool.
   included. Nothing in this repo can fix it, and Loom does not need it fixed — on such a
   host the trigger is cron.
 - **cron:** `cron.service` **active**. The daily backup runs via cron (see §3).
-- **Tools present:** `claude` 2.1.218 (matched `contract/VERSION` in T7; when the host's CLI
+- **Tools present:** `claude` 2.1.218 (matched `contract/VERSION` at the first deployment; when the host's CLI
   moves on, `loom doctor` warns about the drift — see §6 "After updating Claude Code"),
   `jq`, `uv` 0.9.26, `python3.12`, `sqlite3` (supports `.backup`), `git`.
 - **SessionEnd kick launcher:** `setsid` (util-linux) is present, so the hook's kick uses
@@ -1556,7 +1556,7 @@ LOOM_SKIP_LIVE=1 .venv/bin/python contract/verify.py               # -> 0 failur
 
 ---
 
-## 7. Pilot gate (PLAN §5)
+## 7. Pilot gate
 
 **Window:** starting at the deployment. Gate review at 2–3 weeks.
 

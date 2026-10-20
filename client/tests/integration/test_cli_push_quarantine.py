@@ -1,4 +1,4 @@
-"""Tests for `loom push-quarantine` (PLAN.md §T6, quarantine row of the §T4 matrix).
+"""Tests for `loom push-quarantine` (DESIGN.md §7, quarantine row of the §4.2 error matrix).
 
 Rescans the payload (possibly hand-edited): if it is still dirty it refuses (I4) unless
 --force; clean/--force → POST and delete the file (201 or 409).

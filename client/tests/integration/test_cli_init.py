@@ -1,4 +1,4 @@
-"""Tests for `loom init` (PLAN.md §T6/§T5).
+"""Tests for `loom init` (DESIGN.md §7, §4.1).
 
 Non-interactive mode (flags): validates against the mock's /api/health, writes config.json
 with 0600 permissions and creates the LOOM_HOME tree. Server down → aborts unless --force.

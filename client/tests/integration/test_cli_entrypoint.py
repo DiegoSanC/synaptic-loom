@@ -1,4 +1,4 @@
-"""Test of the installed entry point (``loom``) — PLAN.md §T6 AC.
+"""Test of the installed entry point (``loom``) (DESIGN.md §7, P2).
 
 Runs the real console script from the venv (sibling of the pytest interpreter) to prove
 that ``loom --help`` lists the subcommands and that an unknown command exits ≠ 0.

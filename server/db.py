@@ -4,7 +4,7 @@
   variable app.py and admin.py use.
 - WAL + foreign_keys ON + busy_timeout on every connection (safe concurrent writes).
 - The schema is applied only if it does not exist yet (schema.sql uses CREATE TABLE
-  without IF NOT EXISTS; we honour that and do not rewrite it — PLAN.md §T2).
+  without IF NOT EXISTS; we honour that and do not rewrite it — DESIGN.md §6.1).
 - Block T extends the schema ADDITIVELY, without touching schema.sql: `init_db` calls
   the per-module idempotent DDL (`search.ensure_search_schema`,
   `links.ensure_links_schema`, `items.ensure_items_schema`, `auth.ensure_auth_schema`,

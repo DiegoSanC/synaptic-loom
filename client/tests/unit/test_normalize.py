@@ -1,6 +1,6 @@
-"""Tests for normalize() — normative table from DESIGN.md §3 / PLAN.md §T3.
+"""Tests for normalize() — normative table from DESIGN.md §3.
 
-The server shares this very table (PLAN.md §T2): if it changes here, it changes there.
+The server shares this very table (DESIGN.md §3): if it changes here, it changes there.
 """
 import pytest
 
@@ -8,7 +8,7 @@ from loom.normalize import normalize
 
 # (raw input, expected canonical output)
 CASES = [
-    # Minimal normative table (PLAN.md §T3).
+    # Minimal normative table (DESIGN.md §3).
     ("git@github.com:Org/Repo.git", "github.com/org/repo"),
     ("https://github.com/Org/Repo.git", "github.com/org/repo"),
     ("https://user:pass@gitlab.com/a/b/", "gitlab.com/a/b"),

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# install.sh — installer for the loom client (PLAN.md §T5, phase-2 R2.2.2 + R2.4.1).
+# install.sh — installer for the loom client (DESIGN.md §4.1, phase-2 R2.2.2 + R2.4.1).
 #
 # Idempotent. It does, in order:
 #   1. Creates the $LOOM_HOME/{queue,quarantine,failed,log,prompts,hooks} tree.
@@ -1109,9 +1109,9 @@ loom installed in $LOOM_HOME.
 
 Next steps:
   1. Enrol this machine (needs an invitation code from the operator):
-                                        $LOOM_HOME/venv/bin/loom enroll    (#20)
+                                        $LOOM_HOME/venv/bin/loom enroll
      (break-glass with a permanent token: loom init)
-  2. Check the environment:             $LOOM_HOME/venv/bin/loom doctor    (T6)
+  2. Check the environment:             $LOOM_HOME/venv/bin/loom doctor
   3. Register a project (in its repo):  cd <repo> && $LOOM_HOME/venv/bin/loom register
      (or use the /loom-register skill from Claude Code)
 

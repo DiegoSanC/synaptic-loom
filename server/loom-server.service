@@ -1,4 +1,4 @@
-# systemd USER unit for the pilot's loom server (PLAN §T7.1).
+# systemd USER unit for the pilot's loom server (retired at the Fly.io cutover; RUNBOOK §1).
 # Install it with:
 #   mkdir -p ~/.config/systemd/user
 #   cp server/loom-server.service ~/.config/systemd/user/

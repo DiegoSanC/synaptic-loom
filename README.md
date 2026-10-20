@@ -110,8 +110,8 @@ LOOM_SKIP_LIVE=1 make contract  # static contract assertions
 Read [`AGENTS.md`](AGENTS.md) first: it is the working doctrine for humans and agents
 (test-first, real-boundary tests, frozen goal waves, shared contracts are read-only) and
 lists the environment the suite needs. [`DESIGN.md`](DESIGN.md) is the specification, with
-every decision recorded as `D<n>`; [`PLAN.md`](PLAN.md) is the original implementation
-plan. CI runs `make test` and the static contract on every push and pull request.
+every decision recorded as `D<n>`. CI runs `make test` and the static contract on every
+push and pull request.
 
 Issue, PR and commit references in older docs and code comments (`#N`, or a commit hash)
 may refer to the original development repository and not resolve here.

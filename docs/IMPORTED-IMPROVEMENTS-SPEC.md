@@ -32,7 +32,7 @@ within these is raised, not improvised:
   during T0-style preflight; if absent, RT.1 blocks loudly).
 - **The server never runs an LLM.** Anything needing `claude` runs client-side on a dev
   machine (the curation pass is a `loom` subcommand, not a server job).
-- The pilot-gate rule (PLAN §5) still governs: Block T should be routed **after** the
+- The pilot-gate rule (`docs/RUNBOOK.md` §7) still governs: Block T should be routed **after** the
   2026-08-14 gate verdict, since RT.3/RT.4 implement spec-R3.4 whose scope the gate
   conditions (PHASE-2-3-SPEC §6).
 
@@ -73,7 +73,7 @@ we decide about auth?" has no way to cut through 200 entries.
     endpoint (unit test with hostile queries).
   - [ ] Backfill migration is idempotent (rerun → same row count) and covered by a test
     against a copy of a real DB fixture.
-  - [ ] WAL concurrency test from PLAN-T2 extended to cover concurrent insert + search.
+  - [ ] WAL concurrency test (`server/tests/test_concurrency.py`) extended to cover concurrent insert + search.
 
 ### RT.2 — Typed logbook items with priority
 **[Origin: TencentDB-Agent-Memory — L1 atom taxonomy for its `code` mode

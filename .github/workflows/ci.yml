@@ -55,7 +55,7 @@ jobs:
         # The scan-engine oracles pin gitleaks 8.30.1 and wave h pins zero skips when
         # gitleaks/jq/uv are present; the scheduler oracles (test/waves/b, install/doctor)
         # pin the CRONTAB branch of the periodic trigger — the documented pilot host
-        # condition (WSL2: no usable `systemctl --user`, PLAN P1). CI runners have a live
+        # condition (WSL2: no usable `systemctl --user`, DESIGN P1). CI runners have a live
         # systemd user manager, which would flip those oracles' environments onto the
         # systemd branch they never shim. A silent unusable `systemctl` stub restores
         # exactly that documented boundary. Tests that own the systemd branch bring their

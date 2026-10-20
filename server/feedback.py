@@ -1,7 +1,7 @@
 """Feedback per item, and the pilot's team totals (issues #14/#15).
 
-Slice F of ``docs/plans/2026-09-23-fix-label-grammar-fidelity-plan.md``, which amends
-branch D of the 2026-09-22 plan: feedback is born ITEM-grained (D13). A row names one
+Slice F of the label-grammar plan of 2026-09-23, which amends branch D of the
+2026-09-22 plan: feedback is born ITEM-grained (D13). A row names one
 ``<entry>.<ordinal>`` — the id ``loom log`` prints — because the pilot's question is
 "was THIS decision useful", and a row about a whole entry could never be re-assigned to
 the item it meant. Un-itemized entries (the maintainer's pre-v2 captures) cannot

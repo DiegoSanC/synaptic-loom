@@ -1,4 +1,4 @@
-"""Tests for config.Config — path derivation and config.json loading (PLAN.md §T5)."""
+"""Tests for config.Config — path derivation and config.json loading (DESIGN.md §4.1)."""
 import json
 
 from loom.config import Config, get_loom_home

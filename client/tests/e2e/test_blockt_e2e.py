@@ -130,8 +130,8 @@ DIGEST_PROMPT = REPO_ROOT / "prompts" / "digest_v1.md"
 # future edit touches: they are hand-authored against a GitHub issue's acceptance criteria
 # (`m` = issue #2, Fly.io packaging; `n` = issue #4, attribution after worktree deletion),
 # no epic manifest references them, and tooling that assumes letter <-> epic parity will be
-# wrong for exactly these letters. `o` onwards belong to the plan of 2026-09-23
-# (`docs/plans/2026-09-23-fix-label-grammar-fidelity-plan.md`): `o` = D11, summarizer v3;
+# wrong for exactly these letters. `o` onwards belong to the label-grammar plan of
+# 2026-09-23 (in the repository's history): `o` = D11, summarizer v3;
 # `p` = D13, addressable items (slice C; later slices extend it). `r` = D17, the Docker
 # Compose + Caddy topology and the client address it resolves (owner decision of
 # 2026-10-16); like `m`, its boundary is Docker. `s` = D18, that topology's backups and

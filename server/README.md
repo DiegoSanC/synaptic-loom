@@ -1,7 +1,7 @@
 # Synaptic Loom — central server
 
 HTTP API (FastAPI) + SQLite (stdlib `sqlite3`, no ORM) + per-developer Bearer auth.
-Normative contracts in `PLAN.md §3`; schema in `DESIGN.md §6.1` / `server/schema.sql`.
+Normative contracts in `DESIGN.md §6.2`; schema in `DESIGN.md §6.1` / `server/schema.sql`.
 
 ## Components
 
@@ -102,7 +102,7 @@ Errors: always JSON `{"error": "<code>", "detail": "..."}`.
 
 `created_at` and `user_id` are ALWAYS server-side (any client value is ignored).
 
-## Smoke curls (PLAN.md §3)
+## Smoke curls (DESIGN.md §6.2)
 
 ```bash
 T="<device token>"              # what `loom enroll` minted; it lives in ~/.loom/config.json

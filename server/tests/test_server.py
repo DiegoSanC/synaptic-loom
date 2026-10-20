@@ -1,4 +1,4 @@
-"""API tests (normative contracts, PLAN.md §3)."""
+"""API tests (normative contracts, DESIGN.md §6.2)."""
 import asyncio
 import re
 

@@ -5,7 +5,7 @@ across machines and devs: lowercase ``host/org/repo``, with no protocol, no
 credentials, no port, no ``.git`` suffix and no trailing slashes.
 
 It is the project identity authority (D1). The server copies this very same
-test table (PLAN.md §T2): client and server must agree character for
+test table (DESIGN.md §3): client and server must agree character for
 character.
 """
 from __future__ import annotations

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# start.sh — PORTABLE start of the loom server WITHOUT systemd (PLAN §T7.1 fallback).
+# start.sh — PORTABLE start of the loom server WITHOUT systemd (fallback).
 #
 # On this pilot machine the server runs under systemd --user (unit loom-server.service);
 # to manage it use `systemctl --user {start,stop,status} loom-server`. This script is the

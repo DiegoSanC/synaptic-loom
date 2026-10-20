@@ -26,12 +26,25 @@ behind them, extracted automatically from the author's Claude Code sessions.
 | D11 | Summarizer **v3** (`prompts/summarizer_v3.md`) records the **final state** of a session: a reversed choice is one item whose rationale names the discarded option, no per-item `Status:`, **all** pending work is `[task]` (`## Open questions` only for undecided questions), `[decision]` only for a choice among alternatives (else `[fact]`), headings/labels/`NO_ENTRY` in literal English. A fresh `loom enroll` writes `v3`; `Config()`'s default stays `v2` (2026-09-23) | Keeping v2, whose in-session status, `## Open items` and "if unsure, `[decision]`" rule make a dropped decision look current, leave pending work untyped and file everything else as a decision | Capture is permanent (D7), reading is not: the grammar has to be right before the pilot's entries exist. Same four labels, same section, same fallback, so every reader and the frozen label grammar keep working. Measured by `test/prompt_eval/`, frozen by goal wave `o` |
 | D12 | The **served** status of an entry (derived from `entry_links`, `current\|superseded\|duplicate`) is authoritative; the OKF frontmatter's `status: current` is the literal stored at capture and is never rewritten (D7). A reader that prints an entry whole overlays it — `status: superseded (by #N)` — rather than trusting the stored line (2026-09-23; applied by `loom log` in slice D of the 2026-09-23 plan) | Rewriting `content_md` when a link lands; dropping the field | Entries are immutable, and the status is a statement about the entry made later by someone else. Nothing reads the frontmatter field today, so the rule costs nothing now and keeps a future reader from trusting a stale literal |
 | D13 | **Addressable items.** An item is one top-level `## Decisions` bullet (with its continuation lines, verbatim) of an entry captured under a labelled prompt version; its public id is `<entry_id>.<ordinal>` (`17.2`). The **client** splits (`processor.split_items`, the grammar's owner) and posts `items` with the entry; the server stores them in the entry's transaction after checking each `text_md` is a **substring of `content_md`**, never parsing markdown. Reading stays entry-first; `GET /api/projects/{id}/items` serves a page's items. Item links (actor, revocation) and item-grained feedback build on it (2026-09-23) | Per-entry labels, links and feedback only, deferring #9/#12 until pilot evidence | Item rows can be re-derived later from an entry's immutable text; per-entry feedback and curation links cannot be re-assigned to an item without ambiguity. The deadline is therefore the first feedback row and the first curation link, and the hosted corpus had 6 entries, 0 links and 0 feedback. Additive only: `entries`, `entry_item_types`, `entry_links` and `/entries` are untouched. Frozen by goal wave `p` |
-| D14 | **A read-only web UI** served by the API process under `/ui`, **entered with `loom ui`**: the CLI trades its bearer for a single-use, 120 s login code (`POST /api/ui-login`) and opens `/ui/login#code=…`; the page exchanges the code for a **server-side browser session** (`ui_sessions`, 7 days renewed as it is used — amended 2026-10-20 (owner), it was 12 h — never outliving the device token that asked for it, dead on the user's `deactivate` or the device's `revokedevice`) carried by an `HttpOnly; Secure; SameSite=Strict; Path=/ui` cookie. The cookie is honoured only on `GET` under `/ui`, and `/api/*` stays bearer-only. Pages show the **served** status (D12), never write a `recall_events` row, and **name the person behind each item-level feedback row**; aggregate views stay person-free. Owner decision of 2026-09-29: the UI is pilot work, not post-verdict work (plan `docs/plans/2026-09-29-feat-read-only-web-ui-plan.md`). **Amended 2026-10-19 (D20):** the session `loom ui` opens also writes, within its user's role, through the POST-only routes §6.4 lists and no other, so the cookie is honoured on `GET` under `/ui` and on `POST` to those routes only; what the UI issues (setup codes, invitations) has its revocation rebuilt (the issuer cascade, §6.4), not inherited | Paste-token login (the Q-3.3 candidate); GitHub OAuth; an identity proxy in front of Fly; one shared basic-auth password; the OKF static viewer as the read frontend (§6.3) | The device token never leaves its machine (#20), so the invitation list is already the enrolment list and revocation is inherited, not rebuilt; the secret that reaches the browser is short-lived and single-use, the rule of #20. Cookie-on-GET-only makes read-only structural and keeps the browser off the API's write routes (D20: structural outside the listed POST routes, which the gate alone lets through, and those add an `Origin` check and a CSRF token to `SameSite=Strict`). The OKF viewer would render the frontmatter's `status: current`, which D12 says is never rewritten. Named feedback lets the curator tell which developer's agent consumed stale knowledge; recall counts measure agents and the CLI, not people browsing |
+| D14 | **A read-only web UI** served by the API process under `/ui`, **entered with `loom ui`**: the CLI trades its bearer for a single-use, 120 s login code (`POST /api/ui-login`) and opens `/ui/login#code=…`; the page exchanges the code for a **server-side browser session** (`ui_sessions`, 7 days renewed as it is used — amended 2026-10-20 (owner), it was 12 h — never outliving the device token that asked for it, dead on the user's `deactivate` or the device's `revokedevice`) carried by an `HttpOnly; Secure; SameSite=Strict; Path=/ui` cookie. The cookie is honoured only on `GET` under `/ui`, and `/api/*` stays bearer-only. Pages show the **served** status (D12), never write a `recall_events` row, and **name the person behind each item-level feedback row**; aggregate views stay person-free. Owner decision of 2026-09-29: the UI is pilot work, not post-verdict work. **Amended 2026-10-19 (D20):** the session `loom ui` opens also writes, within its user's role, through the POST-only routes §6.4 lists and no other, so the cookie is honoured on `GET` under `/ui` and on `POST` to those routes only; what the UI issues (setup codes, invitations) has its revocation rebuilt (the issuer cascade, §6.4), not inherited | Paste-token login (the Q-3.3 candidate); GitHub OAuth; an identity proxy in front of Fly; one shared basic-auth password; the OKF static viewer as the read frontend (§6.3) | The device token never leaves its machine (#20), so the invitation list is already the enrolment list and revocation is inherited, not rebuilt; the secret that reaches the browser is short-lived and single-use, the rule of #20. Cookie-on-GET-only makes read-only structural and keeps the browser off the API's write routes (D20: structural outside the listed POST routes, which the gate alone lets through, and those add an `Origin` check and a CSRF token to `SameSite=Strict`). The OKF viewer would render the frontmatter's `status: current`, which D12 says is never rewritten. Named feedback lets the curator tell which developer's agent consumed stale knowledge; recall counts measure agents and the CLI, not people browsing |
 | D15 | Summarizer **v4** (`prompts/summarizer_v4.md`) is v3 (D11) with every word of the entry in **English**, whatever the session's language: prose, rationale and evidence, a quote from a non-English session translated and kept in quotation marks; file names, commits, identifiers, ticket ids and code stay as written. Only rules 4 and 9 differ from v3 (`client/tests/unit/test_prompt_v4.py` pins the diff). A fresh `loom enroll` writes `v4` (owner decision of 2026-10-01) | v3's rule 9, prose in the session's language, so that nothing is lost in a translation | The logbook is read by keyword (`/loom --grep`, FTS5): an entry in the language of its session is invisible to a teammate who searches in another, and the team's working language is English. Measured on 2026-10-01: v3 even wrote Spanish prose for an all-English session in 3 of 15 runs; v4 passed all 30 (`test/prompt_eval/RESULTS.md`). The cost — a quote is no longer verbatim — is accepted; the transcript keeps the original. Entries captured before stay as they are (D7); a project's can be re-summarized under v4 and the new entries **supersede** the old ones (D12) |
 | D16 | **gitleaks is mandatory for capture, and the extract is redacted before the summarizer reads it** (owner decision of 2026-10-15). (1) Every production scan — pre-summary redaction (§4.2 step 5b), step 8, `push-quarantine`, `curate`'s rationales and digest — is gitleaks ∪ the regex set; there is no fallback to the regex set alone. `scanner.engine` defaults to `gitleaks`; `auto` is read as a legacy alias of it; `regex` is no longer accepted. gitleaks is resolved at `$LOOM_HOME/bin/gitleaks` first, then on `PATH`. (2) A `loom process` pass that cannot resolve gitleaks, cannot run `gitleaks version`, or finds an engine value capture does not accept, **pauses**: it touches no marker (no attempt counted, nothing summarized or posted), logs one `paused_no_scanner`, exits non-zero; `loom status` says capture is paused and why, `loom doctor`'s scanner row is a ✗. A version other than the pin stays a ⚠. `push-quarantine` and `curate` refuse. (3) Step 5b replaces every occurrence of every detected value in the extract by `[REDACTED:<kind>]`, longest first, then re-scans; anything left, or a scan error, means the summarizer is not run (bounded attempts, then `failed/`). `content_hash` is still computed over the RAW extract. (4) `install.sh` downloads gitleaks 8.30.1 from the official release, verifies it against sha256 values pinned in the script (no env var or flag skips that), and installs it to `$LOOM_HOME/bin` without sudo; `init`/`enroll`/`install.sh` write `scanner = gitleaks / 8.30.1` | Keeping `auto` with its silent regex fallback, and relying on prompt rule 5 plus the exact-pattern step-8 scan to keep secrets out of the summary | An audit found that with the default `auto` and no gitleaks binary — which the installer did not install — the scan silently ran the eight regex families, which miss `DB_PASSWORD=…`, `sk_live_`, `xoxb-`, `github_pat_`, `AIza…` and `API_KEY=…`; and that the extract reached the summarizer LLM unredacted, so a credential's absence from the summary depended on the model obeying a prompt rule. Entries are permanent (D7): a missing scanner must stop capture, not weaken it, and pausing (rather than quarantining marker by marker) loses nothing — the markers wait. Redacting before the model reads the text makes the invariant *the summarizer never receives text in which the scanner finds a secret* structural; step 8 stays as defense in depth. Hashing the raw extract keeps I6 dedupe unchanged for ranges captured before D16 and independent of the gitleaks version. Known gap: gitleaks 8.30.1's default rules catch a bearer token only inside a `curl` command, not a bare `Authorization: Bearer …` line |
 | D17 | **The client address comes from `LOOM_CLIENT_IP_SOURCE`, and a valid credential is never rate-limited.** The address that keys both in-process limiters and the audit line (§6.2) is read from one setting at startup: `peer` (default: the TCP peer as uvicorn leaves it — behind a reverse proxy that is the real client only with uvicorn's `FORWARDED_ALLOW_IPS` set to the proxy's address, never `*`), `fly-client-ip` (the Fly proxy's header; `fly.toml [env]` sets it) or `header:<name>` (one single-valued header a trusted proxy sets, e.g. `header:cf-connecting-ip`; `x-forwarded-for` and `forwarded` are refused). Any other value refuses to start; one startup line names the mode, and a WARN flags `FLY_APP_NAME` and the mode disagreeing. Every value is validated with `ipaddress`; missing, invalid or carrying an IPv6 scope id is `unavailable`, and an IPv4-mapped address keys as its IPv4 form. The credential is validated **before** the auth-failure window is consulted: a valid bearer, `/ui` session, enrolment code or UI-login code passes when its address's window is full, and only failed attempts are counted and answered `429` + `Retry-After`. **Docker Compose + Caddy** (`deploy/compose/`) is a supported topology next to Fly. Owner decision of 2026-10-16 | Keep `Fly-Client-IP` as the only source; parse `X-Forwarded-For` in the app, or an `xff:<n>` hop-count mode; keep the full-window check ahead of validation; a shared limiter store | Off Fly the header is either absent — every client in one `unavailable` bucket, so one caller failing ten times a minute locked out every user (the full-window check ran before the bearer was validated) and the shared health bucket could `429` liveness probes — or client-controlled: spoofable, the limit bypassed, the audit log poisoned. Choosing a hop out of a forwarding chain is uvicorn's job, and its trust list is already the right knob, so the app reads one address and never a chain; `xff:<n>` is not needed for the Compose topology and is left out. Every secret (device tokens, enrolment and login codes, UI sessions) is `secrets.token_urlsafe(32)`, so the limiter is **anti-abuse, not protection against guessing**: refusing a valid credential bought no security and turned the limiter into a lockout. Trade-off: each request of a flood now costs one hashed-token lookup before it is refused — a read, also on the two redemption routes, which look a code up before taking SQLite's write lock — acceptable at pilot scale. The Compose topology is IPv4-only (no `AAAA` record). Off-Fly backups were left to a later owner decision: D18 (2026-10-17). Frozen by goal wave `r` |
 | D18 | **Backups for the Docker Compose topology = `server/backup.sh` in a `backup` service, plus an off-host copy that another machine pulls** (owner decision of 2026-10-17), meeting D8. The service is the server's image run as `app`, with `network_mode: none` and no port; it runs `backup.sh --every ${LOOM_BACKUP_INTERVAL:-6h}`: one backup when it starts and one per interval, by SQLite's online backup API from a read-only connection, into a hidden temporary file in its own volume `loom_backups`, switched to `journal_mode=DELETE` (one self-contained file), kept only if `PRAGMA integrity_check` is `ok`, fsynced and renamed to `loom-<UTC time>.db` (0600; the directory 0700). A failed copy is deleted, purges nothing and ends the service non-zero, so the restart policy retries it and `docker compose ps` shows it; retention keeps the newest `LOOM_BACKUP_KEEP` (56, i.e. 14 days at the default interval — owner decision of 2026-10-19) files the script named. The off-host copy is **pulled** over SSH: `backup.sh --export` opens the backups under the lock the backups take and streams them as a tar after releasing it, so a pull never races a write or the retention and a stalled pull never holds up a backup. Provider disk snapshots are an acceptable complement, not a substitute. `deploy/compose/restore.sh <file>` restores into a **new** volume (integrity-checked there before the server is touched), records it as `LOOM_DATA_VOLUME` in `.env`, recreates `loom` and `backup` on it and leaves the volume it replaced as it was. Frozen by goal wave `s` | Litestream (continuous WAL replication to object storage); the provider's disk snapshots alone; a cron job on the host running `backup.sh` | Entries are written a few times a day and every transcript stays on its developer's machine, so an RPO of hours is acceptable. Litestream would shrink it to seconds at the price of a second process and an object-storage credential living on the server; it can be added later without undoing this. Snapshots alone are crash-consistent images of the live disk, never integrity-checked and tied to one provider's account. A host cron job lives outside the repo, needs a Python and the right user on the host, and is neither started nor tested by `docker compose up`; the service is both. Pulling rather than pushing keeps every credential off the server: whoever takes the server cannot reach the off-host machine, and a pull that never replaces a file it already has (`docs/SERVER-GUIDE.md` Part 2 §8a) leaves it no way to damage the copies there. Given up: the backups volume shares the database's disk, so against the loss of the host the RPO is the interval plus the pull schedule; and the host keeps `KEEP × interval` of history (14 days at the defaults) — longer history is the off-host copy's job |
-| D20 | **Accounts v2, phase 2a: global roles and a writable `/ui` reached through `loom ui`, no passwords** (owner decision of 2026-10-19; plan `docs/plans/2026-10-19-feat-invite-links-and-accounts-v2-plan.md`, contract §6.4). `users.role` is `admin` or `member` (default `member`); `admin.py promote/demote --email` bootstraps the first admin, and the last active admin can be neither demoted nor deactivated. The session `loom ui` opens may write, within its user's role, through the POST-only routes §6.4 lists and no other: an `Origin` check against the server's public URL (`Sec-Fetch-Site: same-origin` as the fallback; a request with neither header is refused), a CSRF token `HMAC(cookie, "csrf")` that is never stored, and `SameSite=Strict` as before; `/api/*` stays bearer-only. Members manage their own machines: "Add a machine" issues a single-use, 10-minute **setup code** that the existing `loom enroll` redeems, and "Revoke" revokes a chain. Admins also invite, deactivate, change roles and revoke any machine. Revoking a chain also revokes, transitively and in the same transaction, every chain minted from a setup code one of its sessions issued (the **issuer cascade**); "Retire" revokes a machine without it, for a machine that is replaced rather than lost (amended 2026-10-19 after the adversarial review, with `Referrer-Policy: same-origin` on `/ui` and the in-transaction re-check, §6.4). State changes are recorded in `auth_events`, and a user reads the ones about them through `GET /api/me` (`loom status`, `loom doctor`). **Amends D14** (writes on the listed routes; what the UI issues has its revocation rebuilt, not inherited) and §6.3's out-of-scope list and "no logout" | Passwords now (phase 2b of the plan, only if web access without an enrolled machine is needed); a long-lived API key created in the web and pasted into the CLI (reopens #20: a leaked copy lives as long as the key); per-project permissions (Q-3.4 in full) | It reuses the credential every user already holds: no password store, no reset flow, no KDF on a 256 MB VM. Two costs, accepted: nobody reaches the web without an enrolled machine, and an admin's laptop token becomes a web-admin credential, bounded by machine revocation and the issuer cascade. Role and `active` are read on every request, so a demotion or a deactivation takes effect on the next click. Frozen by goal wave `t` |
+| D20 | **Accounts v2, phase 2a: global roles and a writable `/ui` reached through `loom ui`, no passwords** (owner decision of 2026-10-19; contract §6.4). `users.role` is `admin` or `member` (default `member`); `admin.py promote/demote --email` bootstraps the first admin, and the last active admin can be neither demoted nor deactivated. The session `loom ui` opens may write, within its user's role, through the POST-only routes §6.4 lists and no other: an `Origin` check against the server's public URL (`Sec-Fetch-Site: same-origin` as the fallback; a request with neither header is refused), a CSRF token `HMAC(cookie, "csrf")` that is never stored, and `SameSite=Strict` as before; `/api/*` stays bearer-only. Members manage their own machines: "Add a machine" issues a single-use, 10-minute **setup code** that the existing `loom enroll` redeems, and "Revoke" revokes a chain. Admins also invite, deactivate, change roles and revoke any machine. Revoking a chain also revokes, transitively and in the same transaction, every chain minted from a setup code one of its sessions issued (the **issuer cascade**); "Retire" revokes a machine without it, for a machine that is replaced rather than lost (amended 2026-10-19 after the adversarial review, with `Referrer-Policy: same-origin` on `/ui` and the in-transaction re-check, §6.4). State changes are recorded in `auth_events`, and a user reads the ones about them through `GET /api/me` (`loom status`, `loom doctor`). **Amends D14** (writes on the listed routes; what the UI issues has its revocation rebuilt, not inherited) and §6.3's out-of-scope list and "no logout" | Passwords now (phase 2b of the plan, only if web access without an enrolled machine is needed); a long-lived API key created in the web and pasted into the CLI (reopens #20: a leaked copy lives as long as the key); per-project permissions (Q-3.4 in full) | It reuses the credential every user already holds: no password store, no reset flow, no KDF on a 256 MB VM. Two costs, accepted: nobody reaches the web without an enrolled machine, and an admin's laptop token becomes a web-admin credential, bounded by machine revocation and the issuer cascade. Role and `active` are read on every request, so a demotion or a deactivation takes effect on the next click. Frozen by goal wave `t` |
+
+### Implementation decisions (P1–P6)
+
+Taken when phase 1 was implemented, in addition to the D-decisions above.
+
+| # | Decision | Rationale |
+|---|----------|--------|
+| P1 | **Processor trigger in the pilot = a "kick" from the hook** (decoupled process via `setsid`, after writing the marker) + a manual `loom process` command. The periodic timer (systemd/cron) moves to phase 2 | On WSL2, systemd/cron may not be enabled and only run while the VM is up. The kick processes seconds after the close without depending on anything; the persistent marker still guarantees retries |
+| P2 | **All the logic lives in a `loom` CLI** (Python, subcommands); the skills only invoke it and present its output | The logic ends up tested in code, not in prompts; the skills are trivial |
+| P3 | Secret scan v1 = **our own regex set** (AWS, `sk-`, `ghp_`, JWT, PEM, `password=`, connection strings, emails). gitleaks integration = phase 2 | Good enough for the pilot; no external dependency |
+| P4 | Retries: a marker accumulates `attempts`; from 3 summarizer failures on it is parked in `~/.loom/failed/` (visible in `loom status`). Network failures do **not** consume attempts (cheap infinite retry) | Distinguish "the server is down" (wait) from "this cannot be processed" (intervention) |
+| P5 | Adapter errors (unrecognized JSONL schema) **keep** the marker and flag it `adapter_error` | Retrying does not help until the adapter is fixed, but dropping would lose data. Fail loud (I4) |
+| P6 | Server stack: **Python 3.12 + FastAPI + sqlite3 stdlib** (no ORM), uvicorn. Client: Python 3.12, stdlib + `requests` | Minimal dependencies; a Python team |
 
 ### Invariants (non-negotiable in the implementation)
 
@@ -217,6 +230,47 @@ For each marker (oldest first):
    pointer (to the EOF as of the extraction), clear the marker. Network error/5xx →
    leave the marker (backoff, next cron run).
 
+#### Implementation details
+
+The processor implements the steps above with: a lockfile (`flock` on `~/.loom/lock`, if it is
+already held exit silently), atomic state (write `state.json.tmp` + `rename`), registry
+cache (`~/.loom/projects_cache.json`, TTL 1h, refresh via `GET /api/projects`),
+`content_hash = sha256(covered_from + covered_to + prompt_version + model + sha256(delta_text))`,
+quarantine and `failed/` per P4/P5 (§1).
+
+#### Error matrix (normative)
+
+| Condition | Action | Visibility |
+|---|---|---|
+| `transcript_path` does not exist | drop the marker | log WARN |
+| `cwd` deleted / no git / no remote and path not registered | drop the marker (gate) | log INFO |
+| remote not registered | drop the marker | log INFO |
+| server unreachable and cache expired | keep the marker, do not touch attempts | `loom status`: "server unreachable" |
+| `AdapterError` | keep the marker, flag `adapter_error` | `loom status` in red |
+| summarizer timeout / exit≠0 | keep the marker, `attempts+1`; ≥3 → move to `failed/` | `loom status` |
+| output == `NO_ENTRY` | advance the pointer, clear the marker, **no** POST | log INFO |
+| secret detected | entry → `quarantine/`, advance the pointer, no POST | `loom status` + `loom push-quarantine` |
+| POST 201 or 409 | advance the pointer, clear the marker | — |
+| POST 5xx / network | keep the marker (no attempts) | `loom status` |
+| POST 404 (project deleted on the server) | keep the marker, `registry_error` | `loom status` |
+| marker file is not a JSON object (durable corruption) | move it to `failed/` unread | `loom status` |
+| `_process_marker` raised (bug or environment) | keep the marker, `attempts+1`, flag `pipeline_error`; ≥3 → move to `failed/` | `loom status` |
+| a second concurrent processor | flock → exit 0 | — |
+| (D16) no usable gitleaks at the start of the pass (missing, `gitleaks version` fails, engine `regex`/unknown) | the pass touches **no** marker (no attempts), logs `paused_no_scanner`, exits 1 | `loom status`: "✗ CAPTURE PAUSED"; `loom doctor` scanner row ✗ |
+| (D16) pre-summary redaction (step 5b) leaves a finding, or its scan fails | summarizer NOT run; keep the marker, `attempts+1`, flag `pipeline_error` (kinds/counts only); ≥3 → move to `failed/` | `loom status` |
+
+The two D16 rows were added on 2026-10-15 (DESIGN.md D16). The two rows before them were
+added on 2026-09-19 (issues #22, #23). They close the matrix's only
+gap: before them, an exception escaping `_process_marker` was the one failure class with no
+attempts counter and no parking rule, retried unchanged forever, and a file whose top-level
+JSON is not an object aborted the whole pass before any marker was processed. Both now join
+P4's discipline — one counter, one bound, one parking rule.
+
+The hook writes markers atomically (tmp+mv), so a non-object marker is durable corruption
+rather than a torn write: it can never become processable, which is why it is parked on
+sight instead of consuming three attempts. A marker that merely vanished or could not be
+read (`OSError`) is **not** parked — that is transient, and the next pass retries it.
+
 ### 4.3 Why pass the extract on stdin instead of the JSONL path
 
 Two valid options; **A is recommended**:
@@ -244,7 +298,7 @@ LOOM_SUMMARIZER=1 claude -p --safe-mode --tools "" --model sonnet \
 
 `--safe-mode`: disables hooks, plugins, MCP, CLAUDE.md and skills **while keeping OAuth
 auth** → cheaper, faster, and its own transcript is not even marked (it suppresses
-SessionEnd; verified in T0). Corrections from T0 (CLI 2.1.218, `contract/FLAGS.md`):
+SessionEnd; verified by the phase-1 preflight). Its corrections (CLI 2.1.218, `contract/FLAGS.md`):
 `--bare` does NOT work with OAuth auth (it breaks the login; it only works with
 ANTHROPIC_API_KEY) and `--allowedTools ""` does NOT block tools (an empty allowlist =
 no restriction) — the flag that does disable everything is `--tools ""`.
@@ -376,7 +430,7 @@ the 2026-09-23 plan, below).
 | POST | `/api/item-links` | `{from: "<e>.<n>", to: "<e>.<n>", kind, rationale?}` → `201 {id}` · `404 item_not_found` · `422` (another project, the same entry, `from` not in a newer entry) · `409 duplicate_link` / `contradictory_link` among active links — slice E, below |
 | POST | `/api/item-links/{id}/revoke` | `{reason}` (one line) → `200` · `409 already_revoked` · `404 link_not_found` — slice E, below |
 | GET | `/api/stats?since=<ISO>` | Team totals: recalls by source, feedback by verdict, the ten items the most people found useful. No per-person field — slice F, below |
-| POST | `/api/paths` | Associate a local path with a project (fallback / discovery) — **phase 3**; in phase 1 the path fallback goes through `POST /api/projects` (PLAN §3) |
+| POST | `/api/paths` | Associate a local path with a project (fallback / discovery) — **phase 3**; in phase 1 the path fallback goes through `POST /api/projects` (request and response shapes below) |
 | GET | `/api/health` | Basic monitoring |
 | POST | `/api/enroll` | **Anonymous.** Redeem a single-use enrolment code for this machine's device token. `401 invalid_code` for unknown, expired, redeemed or deactivated-user codes alike. Optional header `Authorization: Bearer <old>` (D19 B2): the token the machine is replacing; never a body field |
 | POST | `/api/device-tokens/renew` | Mint the calling device token's successor (`403 not_a_device_token` for a legacy token) |
@@ -597,8 +651,7 @@ options this section previously named assumed self-hosted infrastructure the pil
 not have. The pilot API is hosted on **Fly.io**: one Machine in `cdg`, TLS terminated by
 the platform on `*.fly.dev`, SQLite on a persistent volume — and the data stays
 **synthetic or otherwise approved non-customer data only**, never customer data. Raised and decided rather than chosen locally (`AGENTS.md`
-§7); see issue #2 and
-`docs/plans/2026-09-13-feat-fly-io-packaging-and-deployment-plan.md`.
+§7); see issue #2.
 
 *Status:* the packaging (`Dockerfile`, `docker-entrypoint.sh`, `fly.toml`) is in the repo
 and proven against a real Docker boundary by `test/waves/m/`. **Nothing is provisioned
@@ -620,11 +673,90 @@ in `docs/SERVER-GUIDE.md` Part 2. **Backups — D18 (owner decision of 2026-10-1
 `deploy/compose/restore.sh` restores one into a new volume. Proven by goal wave `s`;
 procedure in `docs/SERVER-GUIDE.md` Part 2 §8.
 
+#### Request and response shapes (normative)
+
+Auth: every route except `/api/health` and `/api/enroll` requires `Authorization: Bearer
+<token>` — a permanent `adduser` token or an expiring device token (DESIGN §6.2). The
+read-only web UI under `/ui` uses its own session cookie instead (D14, DESIGN §6.3).
+Errors: always JSON `{"error": "<code>", "detail": "..."}`.
+
+**POST `/api/enroll`** (anonymous; shares the failed-auth rate limit; audited)
+```json
+// req
+{"code": "<single-use enrolment code>", "device_name": "dev-laptop"}
+// 201 — the device token exists only on this machine from here on
+{"token": "…", "issued_at": "2026-09-22T10:00:00Z", "expires_at": "2026-12-21T10:00:00Z",
+ "user": {"id": 1, "name": "dev1"}}
+// 401 {"error": "invalid_code"} — unknown, expired, already redeemed or deactivated user
+```
+
+**POST `/api/device-tokens/renew`** (bearer = a device token) → `201` with the same body
+as enrol for the successor; the old token keeps its own `expires_at`. A legacy token gets
+`403 {"error": "not_a_device_token"}`.
+
+**POST `/api/ui-login`** (bearer; D14) → `201 {"code": "<single-use, 120 s>", "expires_at":
+"…"}`. The client opens `<server_url>/ui/login#code=<code>` — the fragment, never a query.
+
+**POST `/ui/session`** (anonymous; shares the failed-auth rate limit; audited; D14)
+```json
+// req
+{"code": "<the login code>"}
+// 204 + Set-Cookie: loom_ui=…; HttpOnly; Secure; SameSite=Strict; Path=/ui; Max-Age=≤43200
+// 401 {"error": "invalid_code"} — unknown, expired, redeemed, deactivated user or revoked device
+```
+
+**POST `/api/projects`**
+```json
+// req (one of the two keys)
+{"remote_url": "git@github.com:Org/B.git", "name": "project-b"}   // name optional
+{"path": "/home/dev/x", "hostname": "wsl-dev2", "name": "x"}      // fallback without remote
+// 201
+{"id": 3, "canonical_remote": "github.com/org/b", "name": "project-b"}
+// 409
+{"error": "already_registered",
+ "project": {"id": 3, "canonical_remote": "github.com/org/b", "name": "project-b"},
+ "registered_by": "dev2", "registered_at": "2026-07-25T09:00:00Z"}
+```
+
+**GET `/api/projects?remote=<norm>`** → 200 `{"project": {...}}` | 404
+**GET `/api/projects`** → 200 `{"projects": [{...}]}`  (gate cache)
+
+**POST `/api/entries`**
+```json
+// req
+{"project_remote": "github.com/org/b", "session_id": "uuid",
+ "covered_from": "msg-uuid-a", "covered_to": "msg-uuid-b",
+ "content_md": "## Context…", "content_hash": "sha256-hex",
+ "model": "sonnet", "prompt_version": "v1"}
+// 201 {"id": 42}   // 409 duplicate_entry   // 404 project_not_found   // 422 validation
+```
+
+**GET `/api/projects/{id}/entries?since=<ISO>&limit=30`**
+```json
+{"entries": [{"id": 42, "author": "dev2", "session_id": "…",
+              "created_at": "…", "covered_from": "…", "covered_to": "…",
+              "content_md": "…"}],
+ "has_more": false}          // created_at DESC order
+```
+Optional request header `X-Loom-Source: skill|cli` (decision of 2026-09-22, DESIGN
+§6.2): the server records one `recall_events` row for the read; without it nothing is
+recorded. The response is identical either way. `loom log` sends `cli` unless told
+`--source skill`, which the `/loom` skill does.
+
+**GET `/api/health`** → `{"status": "ok", "version": "0.1.0"}`
+
+Smoke curls (to document in the server README):
+```bash
+curl -sf https://HOST/api/health
+curl -sf -H "Authorization: Bearer $T" https://HOST/api/projects
+curl -sf -H "Authorization: Bearer $T" -X POST https://HOST/api/projects \
+     -d '{"remote_url":"git@github.com:org/b.git"}' -H 'Content-Type: application/json'
+```
+
 ### 6.3 Web UI — read-only (D14, 2026-09-29)
 
 Served by the API process under `/ui` (server-rendered Jinja2, one stylesheet, one script
-used only by the login page; no SPA, no second deployment). Plan and acceptance criteria:
-`docs/plans/2026-09-29-feat-read-only-web-ui-plan.md`.
+used only by the login page; no SPA, no second deployment).
 
 **Sign-in.** `loom ui [project]` posts the machine's bearer to `/api/ui-login`, receives a
 single-use code (120 s, stored as `sha256`) and opens `/ui/login#code=…[&next=…]`. The code
@@ -819,6 +951,28 @@ of `-r`, the `claude -p` flags (`--safe-mode`, `--tools`). Mitigation:
 - Contract test in the tool repo: generates a trivial session with `claude -p`, processes
   its transcript and asserts the shape. Run after every CLI update.
 - Recommended: pin the Claude Code version across the team and bump it deliberately.
+
+#### The contract test (`make contract`)
+
+Script `client/tests/contract/test_contract.py`; requires the real CLI installed. Assertions:
+
+1. `claude --version` runs and its output is compared against `contract/VERSION`
+   (mismatch → WARN, not fail; the failing comes from the assertions below).
+2. Synthetic session: `claude -p --safe-mode --tools "" "Say exactly: LOOM_CONTRACT_OK"`
+   → exit 0, stdout contains `LOOM_CONTRACT_OK`.
+3. Stdin: `echo "test-token-XYZ" | claude -p --safe-mode --tools "" "Repeat your input data"`
+   → stdout contains `XYZ`.
+4. Over `contract/fixtures/real_session.jsonl`:
+   - every non-empty line parses as JSON;
+   - `read_delta(path, 0)` does not raise `AdapterError`, returns ≥1 user message and ≥1
+     assistant message, `new_last_line == wc -l`, `new_last_uuid` non-empty;
+   - `read_delta(path, new_last_line)` returns an empty delta.
+5. The SessionEnd payload saved by the preflight: the keys `session_id`/`transcript_path`/`cwd` are present.
+
+**Operating rule:** after every Claude Code update on any machine, `loom doctor` warns
+about the version change and `make contract` is run before trusting that machine's
+captures. If it fails: fix `transcript_adapter` (or the flags), update `contract/VERSION`
+and the fixtures.
 
 ---
 

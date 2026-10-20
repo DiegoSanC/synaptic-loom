@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ~/.loom/hooks/sessionend.sh — Synaptic Loom SessionEnd hook (DESIGN.md §4.1, PLAN.md §T5).
+# ~/.loom/hooks/sessionend.sh — Synaptic Loom SessionEnd hook (DESIGN.md §4.1).
 #
 # It does ONE thing: marks the transcript of the session that just closed as "pending
 # review" (atomic JSON marker in $LOOM_HOME/queue/<session_id>.json) and, right after,
@@ -220,10 +220,10 @@ fi
 #        (it would have to run the stub to find out, which is what triggers the prompt) —
 #        see docs/RUNBOOK.md §5.
 #
-#        NOTE: the PLAN §T5 snippet writes `loom process --quiet`; that CLI subcommand
-#        arrives in T6. Here we use `python -m loom.processor --quiet`, which exists ALREADY
-#        (T4) and is equivalent (one processor pass). Migrating to `loom process` once T6
-#        lands is optional — both run the same run_once().
+#        NOTE: the original phase-1 snippet wrote `loom process --quiet`; that CLI subcommand
+#        arrived later. Here we use `python -m loom.processor --quiet`, which existed
+#        first and is equivalent (one processor pass). Migrating to `loom process` is
+#        optional — both run the same run_once().
 
 # Tier-2 detacher. argv[1:] is the command to run, handed to execv UNCHANGED.
 LOOM_DETACH_PY='import os, sys

@@ -22,7 +22,7 @@ $ claude -p --bare "Say exactly LOOM_CONTRACT_OK" --output-format text
 Not logged in · Please run /login          # exit 1
 ```
 Since there is no `ANTHROPIC_API_KEY`, `--bare` **does not authenticate**. The summarizer
-invocation from DESIGN §5 and PLAN §T4 **fails** as written. See discrepancy **D-1** and the
+invocation from DESIGN §5 **fails** as written. See discrepancy **D-1** and the
 replacement below.
 
 ### `--safe-mode` — ACCEPTED, **replacement for `--bare`**
@@ -113,11 +113,11 @@ trigger). Keys present:
 | `reason` | `prompt_input_exit` | **the reason field is called `reason`, NOT `source`** |
 
 **Observed `reason` values:** `prompt_input_exit` (interactive `/exit`) · `other`
-(headless `-p`). Used only for logging (PLAN §6.4); no phase-1 logic depends on it.
+(headless `-p`). Used only for logging; no phase-1 logic depends on it.
 
 ---
 
-## Corrected summarizer invocation (replaces DESIGN §5 and PLAN §T4)
+## Corrected summarizer invocation (replaces DESIGN §5)
 
 ```bash
 LOOM_SUMMARIZER=1 claude -p --safe-mode --tools "" \
@@ -145,31 +145,31 @@ pricing, so this route is consistent with the design; it is documented as an opt
 
 ---
 
-## Discrepancies with DESIGN/PLAN
+## Discrepancies with DESIGN and the phase-1 plan
 
 > None of them changes the architecture. Only invocation flags and one adapter rule are
-> adjusted, exactly as PLAN §6 risk 1 anticipated.
+> adjusted, exactly as the phase-1 plan anticipated.
 
 - **D-1 (CRITICAL) — `--bare` is incompatible with OAuth auth.** `claude -p --bare` fails with
   "Not logged in" on this machine (subscription, no API key). The summarizer from DESIGN §5 /
-  PLAN §T4 never starts. **Fix:** use `--safe-mode` (or provide `ANTHROPIC_API_KEY`).
+  DESIGN §4.2 never starts. **Fix:** use `--safe-mode` (or provide `ANTHROPIC_API_KEY`).
 - **D-2 (CRITICAL) — `--allowedTools ""` does not block tools.** An empty allowlist = no
   restriction; the model read a planted secret. This would break I3 (the central security
   control). **Fix:** use `--tools ""` (verified to actually disable everything). Affects
-  DESIGN §5, PLAN §T4 and assertions 2–3 of the contract test (PLAN §4), which also use
+  DESIGN §5 and assertions 2–3 of the contract test (DESIGN §9), which also use
   `--bare`+`--allowedTools ""`.
 - **D-3 (HIGH) — `-p` DOES fire SessionEnd.** The design relied on `--bare` avoiding the
   auto-marking (hooks). With `--bare` unusable, non-recursion comes from `--safe-mode`
   (which suppresses hooks) + the `LOOM_SUMMARIZER` guard + the cwd gate. The contract test
   must use the corrected flags (which is what `verify.py` does).
 - **D-4 (HIGH, adapter) — the rule ">50% of new lines unclassifiable → AdapterError"
-  (PLAN §T3) would produce a false positive.** In a short session most lines are legitimate
+  (phase-1 adapter) would produce a false positive.** In a short session most lines are legitimate
   metadata (`attachment`, `system`, `mode`, `permission-mode`, `file-history-snapshot`,
   `ai-title`, `last-prompt`, `queue-operation`): in the interactive fixture only 2 of 21
   lines are conversational. **Fix:** an allowlist of known noise types that are skipped
   silently; `AdapterError` only for lines that do not parse as JSON or for `user`/`assistant`
   lines missing `uuid`/`message`. Details in `SCHEMA.md` §2 and §5.
-- **D-5 (MEDIUM) — the reason field is called `reason`, not `source`** (confirms PLAN §6.4).
+- **D-5 (MEDIUM) — the reason field is called `reason`, not `source`** (as the phase-1 plan expected).
   Values: `prompt_input_exit` (/exit), `other` (-p). Logging only.
 - **D-6 (MEDIUM) — `message.content` is sometimes a string and sometimes a list.** Text
   `user` messages carry `content` as a string; `user` messages with a tool result carry

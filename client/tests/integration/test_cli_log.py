@@ -1,4 +1,4 @@
-"""Tests for `loom log` (PLAN.md §T6, DESIGN §7 / I5).
+"""Tests for `loom log` (DESIGN §7 / I5).
 
 Checks: the "unverified data" framing ALWAYS precedes the entries; resolution by cwd and
 by name (exact and ambiguous); ``--limit`` pass-through.

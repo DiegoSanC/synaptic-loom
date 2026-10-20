@@ -20,7 +20,7 @@ dev = ["pytest", "pytest-httpserver", "httpx"]
 loom = "loom.cli:main"
 
 # Monorepo with a single installable package: `loom` (client, in client/loom) and `server`
-# (server, in server/). See PLAN.md §T1 / DESIGN.md §10.
+# (server, in server/). See DESIGN.md §10.
 [tool.setuptools]
 packages = ["loom", "server"]
 
