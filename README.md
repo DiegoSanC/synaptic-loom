@@ -96,7 +96,7 @@ contract/          # verified facts about the Claude Code CLI and transcript for
 deploy/compose/    # Docker Compose + Caddy deployment, backups and restore.sh
 fly.toml           # Fly.io deployment
 test/waves/        # frozen goal tests that drive the real boundary (Docker, real image)
-docs/              # user, server and operations guides; plans
+docs/              # user, server and operations guides; the README diagram
 ```
 
 ## Development
