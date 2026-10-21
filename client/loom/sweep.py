@@ -1,4 +1,4 @@
-"""Orphan-transcript sweep (PHASE-2-3-SPEC R2.1) — FROZEN INTERFACE (Loom phase 2).
+"""Orphan-transcript sweep (DESIGN.md §12 R2.1) — FROZEN INTERFACE (Loom phase 2).
 
 Sessions that die without a clean SessionEnd (crash, SIGKILL, WSL shutdown) never get
 a marker. The sweep walks the transcripts on disk, compares them against the pointer

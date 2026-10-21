@@ -1,7 +1,7 @@
 """E13 — FTS5 search substrate + typed queryability (T.F1 / T.F2 / T.F4).
 
 Derived from the acceptance criteria of RT.1/RT.2.3 in
-``docs/IMPORTED-IMPROVEMENTS-SPEC.md``:
+``DESIGN.md`` §12.3:
 
 - a seeded corpus ranks the on-topic entry first and an empty result is a clean
   ``([], False)`` — never an error;

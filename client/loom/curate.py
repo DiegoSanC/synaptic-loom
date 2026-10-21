@@ -12,7 +12,7 @@ atomic writes) under an exclusive flock on ``~/.loom/curate.lock`` (its OWN lock
 a curate pass must not block capture passes). NOT state.json, which belongs to the
 capture passes.
 
-Frozen interfaces (t-curation-watermark, t-digest-entry): see ``docs/IMPORTED-IMPROVEMENTS-SPEC.md``
+Frozen interfaces (t-curation-watermark, t-digest-entry): see ``DESIGN.md`` §12.3,
 RT.3.2/RT.3.3 and RT.4.1.
 
 The shape of the pass, and why it is shaped that way

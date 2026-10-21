@@ -1,7 +1,7 @@
 """E15 — entry_links schema + POST /api/links + derived status (T.F5 / t-entry-links).
 
 Derived from the acceptance criteria of RT.3.1 in
-``docs/IMPORTED-IMPROVEMENTS-SPEC.md``, and pinning the things the
+``DESIGN.md`` §12.3, and pinning the things the
 frozen goal deliberately does not reach:
 
 - the DDL is idempotent, applies to a pre-Block-T database, and the CHECK/UNIQUE/FK

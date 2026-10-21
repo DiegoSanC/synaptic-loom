@@ -6,7 +6,7 @@ is idempotent DDL called from ``db.init_db``. ``entries`` rows are NEVER mutated
 an entry's ``status`` is DERIVED at read time (t-entry-links, the Q-3.5
 resolution) — never a stored column.
 
-Frozen interface (t-entry-links): see ``docs/IMPORTED-IMPROVEMENTS-SPEC.md`` RT.3.1.
+Frozen interface (t-entry-links): see ``DESIGN.md`` §12.3, RT.3.1.
 
 Reader contract (IMPORTANT, and the one thing a consumer can get wrong):
 :func:`links_for_entries` is a SPARSE map — it returns a row only for an entry that

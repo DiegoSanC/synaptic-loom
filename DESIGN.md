@@ -1014,3 +1014,231 @@ loom/
 - Path merging as the primary mechanism (it stays a remote-less fallback).
 - Summaries of sessions that were not closed cleanly (crash/kill) — partially covered by
   the orphan sweep in phase 2.
+
+---
+
+## 12. Requirements after phase 1: robustness (R2.x) and the logbook improvements (RT.x)
+
+The requirements that took the pilot past phase 1. Their ids are cited across the code and
+the frozen goal waves; each is now built, except where marked. Phase 3's team-scale needs
+were met by later decisions instead: hosting by D17 and the Fly.io deployment, the web UI
+by D14, token management by D20.
+
+### 12.1 Frozen phase-1 contracts (read-only for everything below)
+
+Any change that would mutate one of these is flagged and re-decided explicitly:
+
+| Contract | Where defined |
+|---|---|
+| Project identity = normalized git remote URL | §3 |
+| Marker/queue format + hook behavior (mark + kick, always exit 0) | §4.1 |
+| Processor error matrix + pointer semantics (advance only after confirmed push) | §4.2 |
+| API endpoints, bodies and error codes | §6.2 |
+| DB schema: `users`, `projects`, `project_paths`, `entries` (append-only, unique `content_hash`) | §6.1 |
+| Entries are self-contained OKF concepts (frontmatter built by the processor, D7) | §5.1 |
+| Summarizer invocation: `claude -p --safe-mode --tools ""`, delta via stdin | `contract/FLAGS.md` |
+| Security invariants I1–I6 | §1 |
+| `~/.loom` layout + `config.json` keys | §4.1 |
+
+Constraints on every requirement here:
+
+- **I1–I6 stand.** In particular I3 (any new LLM pass is a tool-less, network-less
+  `claude -p --safe-mode --tools ""` fed via stdin, output secret-scanned fail-closed)
+  and I5 (any new consumption surface carries the untrusted-data framing). New automated
+  `claude -p` consumers get the summarizer's guards: `LOOM_SUMMARIZER=1`, neutral cwd,
+  `--safe-mode`, `--tools ""`, fail-closed scan before anything leaves the machine.
+- **`entries.content_md` is immutable** (D7). Curation never rewrites history; current
+  state is expressed through *new* rows (links, digests), never mutation of old ones.
+- **No embeddings / no semantic search** (§11). RT.1 is lexical BM25 — that is the
+  point, not a compromise.
+- **Stack stays P6:** Python 3.12, FastAPI, `sqlite3` stdlib (FTS5 is compiled into the
+  stdlib build; if it is absent, RT.1 blocks loudly).
+- **The server never runs an LLM.** Anything needing `claude` runs client-side on a dev
+  machine (the curation pass is a `loom` subcommand, not a server job).
+- Every change lands with the same test discipline: unit + integration + contract, and
+  error-matrix rows for new failure modes.
+
+### 12.2 Phase 2 — robustness
+
+#### R2.1 Orphan-transcript sweep
+
+Sessions that die without a clean SessionEnd (crash, SIGKILL, WSL shutdown) never get a
+marker and were lost in phase 1 (§4.1).
+
+- **R2.1.1** A sweep component compares transcripts on disk (`~/.claude/projects/**/*.jsonl`)
+  against `state.json` pointers and the queue, and enqueues a synthetic marker for any
+  transcript with unprocessed content older than a settle threshold (default: mtime > 30 min).
+- **R2.1.2** The sweep derives the session `cwd` from the transcript content (JSONL lines
+  carry `cwd`), NOT from the encoded directory name. Transcripts whose cwd no longer
+  exists or has no registered remote follow the normal gate (dropped).
+- **R2.1.3** The sweep is idempotent and respects the existing lock; it never races the
+  kick path. Synthetic markers are distinguishable (`"origin": "sweep"`) for logging.
+- **AC:** kill a session mid-work (no SessionEnd) → after the sweep runs, its entry
+  reaches the server with the same quality as a hook-captured one; re-running the sweep
+  produces no duplicates (pointer + content_hash).
+
+**Q-2.2 — the settle threshold (resolved).** The threshold is a **heuristic**, not a
+liveness check — an active session appends to its transcript constantly, so "no writes in
+30 min" ≈ "no session behind it". Known false positive: a session left open but idle past
+the threshold gets its partial content summarized early; this is harmless by design (the
+pointer captures the remainder at the real close; `NO_ENTRY` suppresses decision-less
+partials; worst case is one conversation split across two entries, never duplicates or
+loss). Stronger liveness signals (`lsof` on the transcript, a SessionStart sentinel cleared
+by SessionEnd) were considered and deliberately rejected: platform coupling to eliminate a
+failure mode that is already cheap.
+
+#### R2.2 Periodic trigger (timer)
+
+Phase 1 relied on hook kicks + manual `loom process` (P1), so retries of kept markers
+waited for the next session close.
+
+- **R2.2.1** A periodic trigger runs `loom process` (which also runs the R2.1 sweep):
+  systemd **user** timer where available, cron fallback, both documented; WSL2 caveats
+  (VM lifetime) documented in the RUNBOOK.
+- **R2.2.2** Default cadence: 15 min. Timer installation is part of `install.sh`
+  (idempotent, `--yes` respected) and checked by `loom doctor`.
+- **AC:** with the server down, close a session → marker kept; restore the server → the
+  entry lands within one timer period with no human action.
+
+#### R2.3 Full secret scanning (gitleaks)
+
+- **R2.3.1** gitleaks is the scanner over the final wrapped `content_md`. *As amended by
+  D16 (2026-10-15): there is no regex fallback — gitleaks is mandatory, installed by
+  `install.sh`, and capture pauses without it.*
+- **R2.3.2** Fail-closed semantics preserved exactly (I4): scanner error == positive.
+  Findings map to the existing quarantine flow unchanged.
+- **R2.3.3** gitleaks version pinned in config; a contract-test-style check that the
+  binary answers as expected after machine updates.
+- **AC:** a planted high-entropy token that a regex set misses is quarantined;
+  `push-quarantine` re-scans with the same engine.
+
+#### R2.4 Installer and doctor
+
+- **R2.4.1** `install.sh` installs the timer (R2.2.2) and has an `--update` path (git pull
+  + re-copy hook/prompt/skills + doctor), so client updates are one command.
+- **R2.4.2** `loom doctor` reports: timer present/active, sweep last-run age, scanner
+  engine + version.
+- **AC:** fresh-machine install and update-in-place both leave doctor fully green.
+
+### 12.3 Block T — the logbook improvements (RT.1–RT.4)
+
+Adapted from the retrieval and consolidation design of
+[TencentDB-Agent-Memory](https://github.com/TencentCloud/TencentDB-Agent-Memory); each
+requirement names the mechanism it adapts. **RT.3 and RT.4 implement the curation digest
+phase 3 asked for, and resolve Q-3.5 (the supersession mechanism) with a link table.**
+
+#### RT.1 — Lexical search over the logbook (BM25 / FTS5)
+
+*Adapts: BM25-first retrieval on SQLite FTS5, embeddings off.* A reviewer asking "what did
+we decide about auth?" must be able to cut through hundreds of entries.
+
+- **RT.1.1** FTS5 external-content table over `entries.content_md` (`content='entries'`),
+  populated by insert trigger (entries are append-only, so no update/delete sync is
+  needed). One-shot backfill migration for existing rows.
+- **RT.1.2** `GET /api/projects/{id}/entries?q=<terms>` returns BM25-ranked entries with an
+  FTS5 `snippet()` per hit; same auth, same response envelope plus `snippet`/`rank`
+  fields. Malformed FTS5 query syntax → 422, never 500.
+- **RT.1.3** `loom log <project> --grep "<terms>"` and the `/loom` skill accept an optional
+  query; output keeps the I5 framing.
+- **AC:** on a seeded corpus the on-topic entry ranks above off-topic ones and an empty
+  result is a clean 200; FTS5-reserved characters (`"`, `*`, `NEAR`) cannot crash the
+  endpoint; the backfill migration is idempotent; the WAL concurrency test
+  (`server/tests/test_concurrency.py`) covers concurrent insert + search.
+
+#### RT.2 — Typed logbook items
+
+*Adapts: an atom taxonomy for code work (facts, tasks, methods).* Reviewers also need the
+project's *methods* (SOPs, taboos) and *tasks* (owner, deadline) told apart from one-off
+facts.
+
+- **RT.2.1** Summarizer prompt **v2**: each `## Decisions` bullet gains a leading
+  constrained label — `[decision]`, `[method]`, `[task]`, `[fact]` — chosen by the
+  summarizer from that closed vocabulary. `prompt_version` bumps to `v2`; `content_hash`
+  already covers it, so there is no dedup collision with v1 entries.
+- **RT.2.2** The **processor** (not the LLM — D7 discipline) parses the labels with a
+  strict regex; an unknown or missing label → `[decision]` fallback, counted and visible
+  in `loom status`. The OKF frontmatter gains `item_types: [...]` (aggregated, deduped).
+- **RT.2.3** `loom log --type method` filters server-side, over the aggregate stored
+  queryably.
+- **AC:** a fixture transcript containing an explicit SOP yields at least one `[method]`
+  item under prompt v2; a garbage label round-trips to the `[decision]` fallback without
+  failing the entry, and `loom status` reports the count; v1 entries keep rendering
+  untouched.
+- **Not adopted:** a numeric 0–100 priority per item. Loom's summaries are per-session and
+  short; a priority with no consumer is dead weight.
+
+#### RT.3 — Supersession and duplicate links (resolves Q-3.5)
+
+*Adapts: batch conflict detection against a pool of similar candidates.* Append-only Loom
+cannot update or merge in place, so the verdicts map to link rows. The exact
+`content_hash` dedup does not catch the real problem: the same decision reversed or
+restated across sessions.
+
+- **RT.3.1** Schema: `entry_links(id, from_entry REFERENCES entries(id), to_entry
+  REFERENCES entries(id), kind TEXT CHECK(kind IN ('supersedes','duplicates')),
+  rationale TEXT, created_at)` + `POST /api/links` (authenticated, 409 on an exact
+  duplicate link) + links included in entry GET responses. **`status` is derived** (an
+  entry with an incoming `supersedes`/`duplicates` link is superseded/duplicate), never a
+  mutable column.
+- **RT.3.2** `loom curate <project>` fetches entries newer than the last curation
+  watermark (stored in `~/.loom/state.json`, the same I2 advance-only discipline as the
+  transcript pointer), builds the candidate pool for each with RT.1 (top-K lexical
+  neighbours among *current* entries), and runs **one batched tool-less
+  summarizer-profile LLM pass** (I3) whose output is a strict verdict list:
+  `keep | supersedes:<id>[,<id>…] | duplicates:<id>`. Unparseable output → fail closed,
+  the watermark stays, visible in `loom status` (P4-style attempts).
+- **RT.3.3** The deterministic script (never the LLM) posts the links. Re-running
+  `curate` is idempotent (409-tolerant, watermark-guarded).
+- **RT.3.4** Consumers distinguish state: `loom log` renders superseded entries
+  annotated ("superseded by #42 on <date>") and skips duplicates by default (`--all`
+  shows everything).
+- **AC:** after a session reverses an earlier decision, `curate` links old → new and
+  `loom log` surfaces the distinction without reading the full history; the curation
+  pass receives entry text only via stdin, has no tools, and its verdicts are validated
+  before any POST (an id outside the candidate pool is rejected and nothing is posted);
+  curation never mutates `entries` rows; two concurrent `curate` runs cannot double-link
+  (flock, as the processor).
+
+#### RT.4 — Per-project digest ("current state of decisions")
+
+*Adapts: periodic consolidation into a stable, budgeted per-scope summary.*
+
+- **RT.4.1** `loom curate` (after RT.3 linking): if there are ≥ N new *current* entries
+  since the last digest (N configurable, default 15), generate a digest through the same
+  I3-safe LLM profile: input = current (non-superseded) entries only; output = a "state
+  of the project's decisions" Markdown. Stored as a normal entry with frontmatter
+  `type: digest` (secret-scanned like everything else, D7 frontmatter built by the
+  script).
+- **RT.4.2** `loom log` and `/loom` print the latest digest first, then the most recent
+  non-digest entries, under an explicit **character budget** (default ~8k chars) so the
+  logbook never eats the context. `--no-digest` and `--limit` keep the old behaviour
+  reachable.
+- **RT.4.3** The digest doubles as the `index.md` of an OKF export, if one is built.
+- **AC:** below the threshold no digest is regenerated; the digest references only
+  current entries; `/loom` output on a 200-entry project fits the budget and still
+  carries the I5 framing.
+
+**Not adopted from the same sources:** an LLM proxy intercepting `ANTHROPIC_BASE_URL`
+(violates I3/D5), a multi-service topology, the numeric priority (RT.2), per-prompt
+recall hooks, a vector/embedding stack (§11).
+
+### 12.4 Block M — ambient recall (on hold, not built)
+
+Considered and **held by the owner**: RM.1, a `SessionStart` hook (opt-in, fail-open,
+sub-second, recency-ordered, budgeted, I5-framed) that prints the latest RT.4 digest and
+recent entries when a session starts in a registered repo; RM.2, delta-composition
+instrumentation (how much of each delta is tool noise); RM.3, a retrieval-quality
+benchmark. Open before any build: whether ambient injection carries more implied
+authority than the advisory logbook D6 allows, whether it helps or distracts the
+project's own author, and whether it changes what the pilot's "did reviewers consult
+`/loom`?" signal means. `curate.latest_digest` stays importable as the seam RM.1 would use.
+
+### 12.5 Design questions resolved along the way
+
+| # | Question | Resolution |
+|---|---|---|
+| Q-2.2 | The sweep's settle threshold | A heuristic, kept at 30 min (R2.1, above) |
+| Q-3.2 | JWT as the machine credential? | **Rejected.** A signed JWT stays valid until it expires, so instant revocation needs a server-side denylist (the state JWT exists to avoid); the API's main client is the unattended processor, which expiring tokens would break without refresh machinery; and stateless validation solves a scale problem a small SQLite service does not have. Opaque bearer tokens, hashed server-side; since #20, one device token per machine that renews itself |
+| Q-3.3 | How a person signs in to the web UI | D14: `loom ui` trades the machine's bearer for a single-use login code; the browser holds a server-side session that dies with the device |
+| Q-3.4 | Who administers users and machines | D20: global roles, `admin` and `member`. Per-project permissions remain open |
+| Q-3.5 | How a superseded decision is marked in an append-only logbook | RT.3: a link table; `status` is derived, never a mutable column |

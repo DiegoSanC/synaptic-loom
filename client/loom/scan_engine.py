@@ -1,4 +1,4 @@
-"""Scanner engine dispatch (PHASE-2-3-SPEC R2.3, D16) — FROZEN INTERFACE, additive since.
+"""Scanner engine dispatch (DESIGN.md §12 R2.3, D16) — FROZEN INTERFACE, additive since.
 
 Facade in front of the secret scanners. Phase 1 shipped a single engine (the curated
 regex set in :mod:`loom.secret_scan`); phase 2 added gitleaks. Since **D16**

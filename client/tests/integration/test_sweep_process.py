@@ -1,4 +1,4 @@
-"""Integration tests for the sweep → process chain (PHASE-2-3-SPEC R2.1, epic E1).
+"""Integration tests for the sweep → process chain (DESIGN.md §12 R2.1, epic E1).
 
 The sweep is never a standalone actor: ``processor.run_once`` calls it inside the
 ``flock`` it already holds (AC-2.1d) and the synthetic marker it leaves behind is

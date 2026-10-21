@@ -74,7 +74,7 @@ DEFAULT_CLAUDE_BIN = "claude"
 _PROMPT_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
 
 # Phase 2 (R2.1): orphan-transcript sweep. The settle threshold is a liveness
-# heuristic, not a guarantee (PHASE-2-3-SPEC Q-2.2); transcripts_root is
+# heuristic, not a guarantee (DESIGN.md §12, Q-2.2); transcripts_root is
 # overridable so tests never touch the real ~/.claude tree.
 DEFAULT_SWEEP_ENABLED = True
 DEFAULT_SWEEP_SETTLE_S = 1800

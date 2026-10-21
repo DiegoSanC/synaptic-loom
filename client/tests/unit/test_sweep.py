@@ -1,4 +1,4 @@
-"""Unit tests for the orphan-transcript sweep (PHASE-2-3-SPEC R2.1, epic E1).
+"""Unit tests for the orphan-transcript sweep (DESIGN.md §12 R2.1, epic E1).
 
 Scope: ``sweep.read_cwd`` and ``sweep.run_sweep`` in isolation — real temporary
 filesystem, no server, no git, no lock (``run_sweep`` is *always* called by

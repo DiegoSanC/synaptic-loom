@@ -6,7 +6,7 @@ one-shot, rerunnable backfill) called from ``db.init_db`` — ``schema.sql`` sta
 untouched. FTS5 must be compiled into the stdlib sqlite3 build; if it is not,
 ``ensure_search_schema`` raises loudly (spec §1: RT.1 blocks, never degrades).
 
-Frozen interface (t-entries-fts / t-entry-item-types): see ``docs/IMPORTED-IMPROVEMENTS-SPEC.md`` RT.1 and
+Frozen interface (t-entries-fts / t-entry-item-types): see ``DESIGN.md`` §12.3, RT.1 and
 RT.2.3.
 
 Security note (the one rule this module exists to keep): a user's search terms
