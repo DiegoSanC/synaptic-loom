@@ -20,8 +20,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from server import (auth, auth_events, client_ip, db, feedback, items, links, public_url, recall,
-                    search, ui_auth, ui_pages)
+from server import (auth, auth_events, client_ip, db, feedback, items, links, plugins, public_url,
+                    recall, search, ui_auth, ui_pages)
 # Imported for their side effect: both register their routes on `ui_pages.router` (and
 # their writes in `ui_pages.WRITE_ROUTES`), so they must be imported before
 # `app.include_router(ui_pages.router)` below.
@@ -41,6 +41,9 @@ ORPHAN_LOG = logging.getLogger("uvicorn.error.loom.orphans")
 ORPHAN_LOG.setLevel(logging.INFO)
 # Its own logger too, for the same reason (D20).
 PUBLIC_URL_LOG = logging.getLogger("uvicorn.error.loom.public_url")
+# And for the same reason (D21).
+PLUGINS_LOG = logging.getLogger("uvicorn.error.loom.plugins")
+PLUGINS_LOG.setLevel(logging.INFO)
 AUTH_FAILURE_LIMIT = 10
 HEALTH_REQUEST_LIMIT = 120
 RATE_LIMIT_WINDOW_SECONDS = 60
@@ -93,6 +96,7 @@ async def lifespan(app: FastAPI):
     if public_url.resolve() is None:
         PUBLIC_URL_LOG.warning("public_url_unset: no LOOM_PUBLIC_URL (or FLY_APP_NAME), so "
                             "every /ui write is refused (D20)")
+    PLUGINS_LOG.info("server_plugins names=%s", ",".join(PLUGINS) or "none")
     AUTH_FAILURES.clear()
     HEALTH_REQUESTS.clear()
     yield
@@ -1274,3 +1278,7 @@ def list_entries(
         return {"entries": entries, "has_more": has_more}
     finally:
         conn.close()
+
+
+# Last, after every core route (D21): a plugin route that redeclares one stops the start.
+PLUGINS = plugins.load(app)
