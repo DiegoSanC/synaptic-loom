@@ -1235,14 +1235,26 @@ def list_entries(
             # a 422 — the client's mistake, not a server fault. The body names the code
             # only: FTS5's own message quotes the query back and would turn this into a
             # reflection channel.
+            any_term = False
             try:
                 rows, has_more = search.search_entries(
                     conn, project_id, q, item_type=item_type, since=since, limit=limit
                 )
+                if not rows and search.any_term_expression(q) is not None:
+                    # RT.1.4: no entry holds every word, so ask for any of them. When
+                    # that finds nothing too, the answer is the query's own empty one.
+                    loose, loose_more = search.search_entries(
+                        conn, project_id, q, item_type=item_type, since=since,
+                        limit=limit, any_term=True)
+                    if loose:
+                        rows, has_more, any_term = loose, loose_more, True
             except search.InvalidQuery:
                 return _err(422, "invalid_query",
                             "The 'q' parameter is not a valid search expression.")
             entries = _with_links(conn, [_entry_dict(r, ranked=True) for r in rows])
+            if any_term:
+                for entry in entries:
+                    entry["match_mode"] = search.MATCH_ANY_TERM
         else:
             sql = (
                 "SELECT e.id, e.session_id, e.created_at, e.covered_from, e.covered_to, "

@@ -458,7 +458,9 @@ the processor reads a `409` as "stored" and drops the marker.
 labelled, text_md, match, snippet?, status, links_in, links_out}]}` — **every** item of the
 listed entries of that project, with `match` true when the item satisfies every filter
 given (`type` = its label, `q` = an `entry_items_fts` match, which adds `snippet`), so a
-reader can tell "itemized, nothing matched" from "not itemized". `status` and the link
+reader can tell "itemized, nothing matched" from "not itemized". Since RT.1.4, an entry
+none of whose items matches a word query is matched again with any of its words, and the
+items that match that way carry `match_mode: "any_term"`. `status` and the link
 lists come from `item_links` (active links only count; written by `POST
 /api/item-links`, below). Errors:
 `422 invalid_type`, `422 invalid_query`, `422 invalid_entry_ids`, `404 project_not_found`.
@@ -1153,6 +1155,20 @@ we decide about auth?" must be able to cut through hundreds of entries.
   fields. Malformed FTS5 query syntax → 422, never 500.
 - **RT.1.3** `loom log <project> --grep "<terms>"` and the `/loom` skill accept an optional
   query; output keeps the I5 framing.
+- **RT.1.4** (2026-10-24) **Any-term fallback.** A word query (no quote, `*`, parenthesis
+  or AND/OR/NOT/NEAR) of two or more words that no entry holds together is answered again
+  with the entries holding ANY of them, in BM25 order, each such hit marked `match_mode:
+  "any_term"`. `/items?q=` does the same per entry: an entry none of whose items passes
+  every filter has its items matched against any of the words, each such item marked the
+  same way. An expression or a single word never falls back, and every answer the
+  fallback did not give is exactly what it was before, without the field. `loom log`
+  opens a fallback page with one note and ends the item line of such an entry with
+  "each holding some of the words". Measured by `test/retrieval_eval/`: recall@5 for
+  terms split across items 0.00 → 1.00, an extra term 0.00 → 1.00, error strings
+  0.00 → 0.80. Its costs, accepted: a query whose answer is not in the logbook can now be
+  shown items that do not answer it (`wrong` 0.00 → 0.06 overall, from two synonym
+  queries and one error string); and a query whose words only a digest holds together
+  does not fall back, since the digest row answers it (and is shown above the entries).
 - **AC:** on a seeded corpus the on-topic entry ranks above off-topic ones and an empty
   result is a clean 200; FTS5-reserved characters (`"`, `*`, `NEAR`) cannot crash the
   endpoint; the backfill migration is idempotent; the WAL concurrency test
@@ -1163,7 +1179,8 @@ we decide about auth?" must be able to cut through hundreds of entries.
   nothing. Its categories, each checked against its definition on the corpus, are a
   control (the item's own words) and one per kind of miss: word forms, terms split
   across items, an extra term, synonyms, stale facts, still-current older facts and
-  error strings.
+  error strings. Since RT.1.4 it also reports `wrong`, the share of queries shown items
+  none of which is relevant — what a looser match costs.
   Its `RESULTS.md` is a golden the suite checks, so a change to retrieval lands with that
   file regenerated and its effect on every judged query in the diff.
 

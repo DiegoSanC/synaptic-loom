@@ -64,6 +64,12 @@ def test_reciprocal_rank_is_one_over_the_first_relevant_position():
     assert bench.first_relevant(eleven, ("miss",)) is None
 
 
+def test_wrong_is_items_shown_with_none_of_the_relevant_among_them():
+    assert bench.wrong(["a", "b"], ("z",)) is True
+    assert bench.wrong(["a", "b"], ("b",)) is False    # found, however late
+    assert bench.wrong([], ("a",)) is False            # shown nothing: empty, not wrong
+
+
 def test_shown_items_reads_the_ids_loom_log_prints_in_order():
     printed = (
         "Automatically generated reference content …\n"
