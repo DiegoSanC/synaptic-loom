@@ -179,6 +179,26 @@ def test_the_corpus_and_queries_satisfy_their_own_definitions():
     assert bench.validate(bench.load_queries(), items) == []
 
 
+def test_a_degraded_loom_log_fails_the_run_instead_of_scoring_empty(tmp_path, monkeypatch):
+    # When the items request fails, `loom log` says so on stderr, prints the entries whole
+    # (no ids) and exits 0: read naively, that is a page of empty results.
+    from server import items, search
+
+    entry = bench.Entry("e01", "2026-01-01",
+                        "## Context\nx\n## Decisions\n"
+                        "- [fact] **Schema migrations run at startup** — y. Evidence: z.")
+    with bench._server(tmp_path) as (client, auth):
+        bench._post(client, auth, entry)
+        assert "1.1  " in bench.loom_log(client, "migrations")
+
+        def broken(*args, **kwargs):
+            raise search.InvalidQuery("the items route rejects this query")
+
+        monkeypatch.setattr(items, "items_for_entries", broken)
+        with pytest.raises(bench.BenchmarkError, match="stderr"):
+            bench.loom_log(client, "migrations")
+
+
 def test_every_category_is_exercised(report):
     counts = {c: 0 for c in bench.CATEGORIES}
     for outcome in report.outcomes:

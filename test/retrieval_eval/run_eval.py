@@ -80,6 +80,7 @@ import sys
 import tempfile
 import unicodedata
 import uuid
+import warnings
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -110,7 +111,9 @@ _ANY_MARKER_RE = re.compile(r"^<!--\s*entry\b", re.M)
 # A labelled bullet; an "Open questions" bullet is not one, and is not an item.
 _LABELLED_BULLET_RE = re.compile(r"^- \[", re.M)
 _WORD_RE = re.compile(r"[^\W_]+")
-# An item as `loom log` prints it: `<entry id>.<ordinal>`, two spaces, its text.
+# An item as `loom log` prints it: `<entry id>.<ordinal>`, two spaces, its text. A digest
+# is printed whole and could hold such a line, so `loom_log` refuses any output with one;
+# the corpus has none.
 _SHOWN_ITEM_RE = re.compile(r"^(\d+)\.(\d+)  ", re.M)
 
 
@@ -439,26 +442,52 @@ def _post(client, auth, entry: Entry) -> int:
     return resp.json()["id"]
 
 
+class _InProcessSession:
+    """The TestClient as the client's HTTP session. ``ApiClient`` only ever calls
+    ``request``; the ``timeout`` it passes is a socket's, which an in-process call does not
+    have (and which Starlette warns about)."""
+
+    def __init__(self, client) -> None:
+        self._client = client
+
+    def request(self, method, url, **kwargs):
+        kwargs.pop("timeout", None)
+        return self._client.request(method, url, **kwargs)
+
+
 def loom_log(client, terms: str) -> str:
     """What ``loom log ledger --grep "<terms>"`` prints, run as the `/loom` skill runs it.
 
     The one thing replaced is the client's HTTP session, which goes to the in-process
     server instead of the network; argument parsing, the config, the requests, the
     rendering and the budget are the client's own.
+
+    Anything on stderr fails the run. ``loom log`` degrades out loud there and still
+    exits 0 — "item ids unavailable … entries are shown whole" when the items request
+    fails — and that rendering has no ids, so it would be scored as a page of empty
+    results. Python warnings are kept off stderr so that it holds only the client's words.
     """
     from loom import cli
     from loom.api_client import ApiClient
 
+    session = _InProcessSession(client)
+
     def in_process(server_url, token, **kwargs):
-        return ApiClient(server_url, token, session=client, **kwargs)
+        return ApiClient(server_url, token, session=session, **kwargs)
 
     out, err = io.StringIO(), io.StringIO()
-    with mock.patch.object(cli, "ApiClient", in_process), redirect_stdout(out), \
-            redirect_stderr(err):
+    with warnings.catch_warnings(record=True), \
+            mock.patch.object(cli, "ApiClient", in_process), \
+            redirect_stdout(out), redirect_stderr(err):
         code = cli.main(["log", PROJECT, "--grep", terms, *SKILL_FLAGS])
-    if code != 0:
-        raise BenchmarkError(f"loom log --grep {terms!r} exited {code}: {err.getvalue()}")
-    return out.getvalue()
+    if code != 0 or err.getvalue():
+        raise BenchmarkError(f"loom log --grep {terms!r} exited {code}, stderr: "
+                             f"{err.getvalue()!r}")
+    printed = out.getvalue()
+    if cli.DIGEST_HEADING in printed:
+        raise BenchmarkError(f"loom log --grep {terms!r} printed a digest; the benchmark "
+                             "reads item ids from the output and does not model digests")
+    return printed
 
 
 def shown_items(printed: str, item_key: dict[tuple[int, int], str]) -> list[str]:

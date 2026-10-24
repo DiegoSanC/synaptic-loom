@@ -1146,8 +1146,9 @@ we decide about auth?" must be able to cut through hundreds of entries.
   (`server/tests/test_concurrency.py`) covers concurrent insert + search.
 - **Measured by** `test/retrieval_eval/` (2026-10-23): a synthetic logbook in summarizer-v4
   form and judged queries, each run through the real `loom log --grep` against the real
-  routes, in process, and scored by recall@5, MRR and the share of queries shown nothing. Its
-  categories, each checked against its definition on the corpus, are a control (the
+  routes, in process, and scored by recall@5, MRR and the share of queries shown
+  nothing. Its categories, each checked against its definition on the corpus, are a
+  control (the
   item's own words) and one per kind of miss: word forms, terms split across items, an
   extra term, synonyms, stale facts, still-current older facts and error strings.
   Its `RESULTS.md` is a golden the suite checks, so a change to retrieval lands with that
