@@ -5,31 +5,40 @@ How well does ``loom log --grep "<terms>"`` put the item a reader needs in front
 A fixed synthetic logbook (``corpus.md``: one made-up project, entries written in
 summarizer-v4 form) and a fixed set of judged queries (``queries.json``: the terms an
 agent would pass, the need behind them, and the items that answer it — judged by hand
-from the corpus, never from a search run) are scored through the REAL server routes:
+from the corpus, never from a search run) are scored end to end, in process:
 
-1. every entry is posted through ``POST /api/entries`` the way the processor posts it —
-   OKF frontmatter from ``okf.wrap_entry``, items from ``processor.split_items``, uuids
-   for the session and the covered range — with the server's clock set to the entry's
-   date, so ``created_at`` is the corpus date;
-2. every query makes the two requests ``loom log --grep`` makes:
-   ``GET /api/projects/{id}/entries?q=…&limit=30`` (the ranked entries), then
-   ``GET /api/projects/{id}/items?entry_ids=…&q=…`` (which items of them match);
-3. the ranked list is what the reader is shown: each ranked entry's matching items, in
-   ordinal order. An entry that matched only outside its items contributes nothing, as
-   in ``loom log``, which skips it and counts it in a closing note.
+1. every entry is posted through the real ``POST /api/entries`` the way the processor
+   posts it — OKF frontmatter from ``okf.wrap_entry``, items from
+   ``processor.split_items``, uuids for the session and the covered range — with the
+   server's clock set to the entry's date, so ``created_at`` is the corpus date;
+2. every query runs the real ``loom log`` command with the ``/loom`` skill's flags
+   (``loom log ledger --grep "<terms>" --source skill --limit 30``) against that server,
+   with a ``config.json`` holding only the server and the token, so every other setting
+   is the client's default — the character budget (8000) among them;
+3. what the command prints is what the reader is shown: the item ids it prints, in the
+   order it prints them, are the ranked list. Fetching, digests, links, the budget and
+   the hiding of entries that matched only outside their items are therefore the
+   client's own, never a copy that could drift from it.
 
 Each category isolates one kind of miss, and :func:`validate` checks every query against
-its category's definition on the corpus text (words compared after lowercasing and
-dropping accents; "a form of" = the same first four letters):
+its category's definition on the corpus text. Words are compared after lowercasing and
+dropping accents; "a form of" is a crude test, the same first four letters, so it also
+accepts truncations (`postgres` / "PostgreSQL") and the odd unrelated pair
+(`timeout` / "timestamp") — a `morphology` query is additionally judged by hand to
+differ only by inflection, and a false alarm is answered by rewording the query, never
+by loosening the check. "The entry" is everything the search indexes for it:
+frontmatter, Context and items — so `to`, `from` and `status` are in every entry, via
+`covered_to`, `covered_from` and `status: current`.
 
 - ``exact``      every term is in each relevant item — the control;
 - ``morphology`` a term is missing from the relevant item, and each missing one is a
                  form of a word in it (``migration`` / "migrations");
-- ``split``      every term is in the relevant entry, but no single item of it holds
+- ``split``      every term is in the relevant entry's items, but no single item holds
                  them all — the entry matches and ``loom log`` hides it;
 - ``extra``      a term appears nowhere in the relevant entry (nor any form of it), and
                  every other term is in the relevant item;
-- ``synonym``    no term, nor any form of one, is in the relevant item (``TTL`` / "expire");
+- ``synonym``    no term, nor any form of one, is anywhere in the relevant entry
+                 (``TTL`` / "expire");
 - ``stale``      ``distractors`` are OLDER items saying the same thing with a value since
                  replaced; every term is in both, so ranking alone decides;
 - ``durable``    ``distractors`` are NEWER items that mention the same words in passing
@@ -40,17 +49,16 @@ dropping accents; "a form of" = the same first four letters):
 Only the current item counts as relevant: an item another one has replaced never does.
 
 Scores, per category and over all queries: ``recall@5`` (the share of a query's relevant
-items among the first five shown), ``MRR@10`` (the mean of 1 / the position of the first
-relevant item, 0 when it is not among the first ten — standing in for ``loom log``'s
-character budget, which this does not apply), ``empty`` (the share of queries shown
-nothing) and ``hidden`` (the share where entries matched but none of their items did, so
-nothing was shown — a subset of ``empty``). Out of scope: the digest and supersession
-links; the corpus has none, and :func:`retrieve` fails loudly if a link ever appears.
+items among the first five shown), ``MRR`` (the mean of 1 / the position of the first
+relevant item shown, 0 when none is — what the budget cut off was not shown),
+``empty`` (the share of queries shown no item) and ``hidden`` (the share where entries
+matched but none of their items did, so ``loom log`` printed its "no item … answers this
+search" note instead — a subset of ``empty``).
 
 Unlike ``test/prompt_eval/`` it spends no model calls and is deterministic, so the suite
 runs it: ``server/tests/test_retrieval_eval.py`` checks that ``RESULTS.md`` is what the
-current search produces. A change to retrieval therefore shows its effect as a diff of
-``RESULTS.md``; regenerate it with
+current search produces. A change to retrieval, server or client side, therefore shows
+its effect as a diff of ``RESULTS.md``; regenerate it with
 
     .venv/bin/python test/retrieval_eval/run_eval.py --out test/retrieval_eval/RESULTS.md
 
@@ -63,6 +71,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import os
 import re
@@ -71,7 +80,7 @@ import sys
 import tempfile
 import unicodedata
 import uuid
-from contextlib import contextmanager
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
 from unittest import mock
@@ -84,22 +93,25 @@ RESULTS = HERE / "RESULTS.md"
 # The closed set a query may name, in the order RESULTS.md reports them.
 CATEGORIES = ("exact", "morphology", "split", "extra", "synonym", "stale", "durable", "error")
 K = 5
-RR_CUTOFF = 10
-# "A form of": two words sharing their first STEM_PREFIX letters. Crude on purpose — it
-# only has to tell `retries` / "retry" apart from `throttling` / "limiting".
+# "A form of": two words sharing their first STEM_PREFIX letters (see the docstring).
 STEM_PREFIX = 4
-# What the `/loom` skill asks for (`loom log … --limit 30`).
-ENTRY_LIMIT = 30
+# The `/loom` skill's command, minus the project and the terms.
+SKILL_FLAGS = ("--source", "skill", "--limit", "30")
 PROMPT_VERSION = "v4"
 MODEL = "sonnet"
+PROJECT = "ledger"
 REMOTE = "git@github.com:example-org/ledger.git"
 CANONICAL = "github.com/example-org/ledger"
+SERVER_URL = "http://testserver"
 _UUID_NAMESPACE = uuid.uuid5(uuid.NAMESPACE_URL, "https://github.com/example-org/ledger")
 
 _ENTRY_RE = re.compile(r"^<!-- entry (?P<key>e\d{2}) (?P<date>\d{4}-\d{2}-\d{2}) -->$", re.M)
 _ANY_MARKER_RE = re.compile(r"^<!--\s*entry\b", re.M)
-_BULLET_RE = re.compile(r"^- ", re.M)
+# A labelled bullet; an "Open questions" bullet is not one, and is not an item.
+_LABELLED_BULLET_RE = re.compile(r"^- \[", re.M)
 _WORD_RE = re.compile(r"[^\W_]+")
+# An item as `loom log` prints it: `<entry id>.<ordinal>`, two spaces, its text.
+_SHOWN_ITEM_RE = re.compile(r"^(\d+)\.(\d+)  ", re.M)
 
 
 @dataclass(frozen=True)
@@ -111,9 +123,10 @@ class Entry:
 
 @dataclass(frozen=True)
 class CorpusItem:
-    entry: str      # the key of its entry
+    entry: str          # the key of its entry
     date: str
     text: str
+    entry_text: str = ""  # everything the search indexes for the entry; "" = its items
 
 
 @dataclass(frozen=True)
@@ -144,7 +157,7 @@ class Report:
 
 
 class BenchmarkError(Exception):
-    """The benchmark's own inputs are wrong, or the server answered unexpectedly."""
+    """The benchmark's own inputs are wrong, or the server or client answered unexpectedly."""
 
 
 # --------------------------------------------------------------------------- #
@@ -178,13 +191,46 @@ def _is_form_of(word: str, vocabulary: set[str]) -> bool:
     return any(other[:STEM_PREFIX] == word[:STEM_PREFIX] for other in vocabulary)
 
 
+def _uuid(entry: Entry, role: str) -> str:
+    # The processor posts uuids, which index as hex fragments; any readable stand-in
+    # ("first", "last", the entry key) would be a word every entry matches.
+    return str(uuid.uuid5(_UUID_NAMESPACE, f"{entry.key}/{role}"))
+
+
+def _payload(entry: Entry) -> dict:
+    """The body of ``POST /api/entries`` for ``entry``, built as the processor builds it."""
+    from loom import okf, processor
+
+    session, first, last = (_uuid(entry, role) for role in ("session", "first", "last"))
+    items = processor.split_items(entry.summary, PROMPT_VERSION)
+    item_types = sorted({item.item_type for item in items})
+    content_md = okf.wrap_entry(
+        entry.summary, canonical_remote=CANONICAL, session_id=session,
+        covered_from=first, covered_to=last, model=MODEL, prompt_version=PROMPT_VERSION,
+        item_types=item_types, timestamp=f"{entry.date}T10:00:00Z",
+    )
+    payload = {
+        "project_remote": CANONICAL, "session_id": session,
+        "covered_from": first, "covered_to": last, "content_md": content_md,
+        "content_hash": hashlib.sha256(content_md.encode("utf-8")).hexdigest(),
+        "model": MODEL, "prompt_version": PROMPT_VERSION, "item_types": item_types,
+    }
+    posted = processor.postable_items(items)
+    if posted is not None:
+        payload["items"] = posted
+    return payload
+
+
 def corpus_items(entries: list[Entry]) -> dict[str, CorpusItem]:
     """``{"e07.2": item}``: every entry's items, cut by the processor's own splitter."""
     from loom import processor
 
-    return {f"{entry.key}.{n}": CorpusItem(entry.key, entry.date, item.text_md)
-            for entry in entries
-            for n, item in enumerate(processor.split_items(entry.summary, PROMPT_VERSION), 1)}
+    found = {}
+    for entry in entries:
+        indexed = _payload(entry)["content_md"]
+        for n, item in enumerate(processor.split_items(entry.summary, PROMPT_VERSION), 1):
+            found[f"{entry.key}.{n}"] = CorpusItem(entry.key, entry.date, item.text_md, indexed)
+    return found
 
 
 def check_corpus(text: str) -> list[str]:
@@ -205,9 +251,11 @@ def check_corpus(text: str) -> list[str]:
         if n and entry.date < entries[n - 1].date:
             problems.append(f"{entry.key}: date {entry.date} is before the previous entry's")
         items = processor.split_items(entry.summary, PROMPT_VERSION)
-        bullets = len(_BULLET_RE.findall(entry.summary))
-        if len(items) != bullets:
-            problems.append(f"{entry.key}: bullets {bullets}, items {len(items)} "
+        bullets = len(_LABELLED_BULLET_RE.findall(entry.summary))
+        if not items:
+            problems.append(f"{entry.key}: no item (loom log would print it whole)")
+        elif len(items) != bullets:
+            problems.append(f"{entry.key}: labelled bullets {bullets}, items {len(items)} "
                             "(a heading the splitter does not read?)")
         if any(not item.labelled for item in items):
             problems.append(f"{entry.key}: an item without a v4 label")
@@ -248,8 +296,12 @@ def _category_problems(q: Query, items: dict[str, CorpusItem]) -> list[str]:
     def entry_keys(key: str) -> list[str]:
         return [k for k, item in items.items() if item.entry == items[key].entry]
 
-    def entry_vocab(key: str) -> set[str]:
+    def items_vocab(key: str) -> set[str]:
         return set().union(*(vocab(k) for k in entry_keys(key)))
+
+    def entry_vocab(key: str) -> set[str]:
+        indexed = items[key].entry_text
+        return words(indexed) if indexed else items_vocab(key)
 
     problems = []
     if q.category in ("stale", "durable"):
@@ -260,10 +312,9 @@ def _category_problems(q: Query, items: dict[str, CorpusItem]) -> list[str]:
                 problems.append(f"{term!r} is not in {key}, so matching decides, not ranking")
         for rel in q.relevant:
             for dis in q.distractors:
-                older = items[dis].date < items[rel].date
-                if q.category == "stale" and not older:
+                if q.category == "stale" and not items[dis].date < items[rel].date:
                     problems.append(f"distractor {dis} is not older than {rel}")
-                if q.category == "durable" and items[dis].date <= items[rel].date:
+                if q.category == "durable" and not items[dis].date > items[rel].date:
                     problems.append(f"distractor {dis} is not newer than {rel}")
         return problems
     if q.distractors:
@@ -278,8 +329,8 @@ def _category_problems(q: Query, items: dict[str, CorpusItem]) -> list[str]:
             problems += [f"{t!r} is not a form of a word in {key}"
                          for t in sorted(missing) if not _is_form_of(t, vocab(key))]
         elif q.category == "split":
-            whole = entry_vocab(key)
-            problems += [f"{t!r} is not in {key}'s entry" for t in sorted(terms - whole)]
+            problems += [f"{t!r} is not in an item of {key}'s entry"
+                         for t in sorted(terms - items_vocab(key))]
             problems += [f"{k} holds every term" for k in entry_keys(key) if terms <= vocab(k)]
         elif q.category == "extra":
             whole = entry_vocab(key)
@@ -291,13 +342,14 @@ def _category_problems(q: Query, items: dict[str, CorpusItem]) -> list[str]:
             problems += [f"{t!r} is in {key}'s entry but not in {key}"
                          for t in sorted((terms - absent) - vocab(key))]
         elif q.category == "synonym":
-            problems += [f"{t!r} (or a form of it) is in {key}"
-                         for t in sorted(terms) if _is_form_of(t, vocab(key))]
+            whole = entry_vocab(key)
+            problems += [f"{t!r} (or a form of it) is in {key}'s entry"
+                         for t in sorted(terms) if _is_form_of(t, whole)]
         elif q.category == "error":
             if not missing:
                 problems.append(f"every term is in {key}: that is an exact query")
     if q.category == "split" and len({items[k].entry for k in q.relevant}) != 1:
-        problems.append("a split query's relevant items share one entry")
+        problems.append("a split query's relevant items must share one entry")
     return problems
 
 
@@ -319,30 +371,31 @@ def first_relevant(ranked: list[str] | tuple[str, ...], relevant: tuple[str, ...
     return None
 
 
-def reciprocal_rank(ranked: list[str] | tuple[str, ...], relevant: tuple[str, ...],
-                    cutoff: int = RR_CUTOFF) -> float:
-    """1 / the position of the first relevant item, or 0 when it is not in the first
-    ``cutoff`` shown."""
+def reciprocal_rank(ranked: list[str] | tuple[str, ...], relevant: tuple[str, ...]) -> float:
+    """1 / the position of the first relevant item shown; 0 when none is."""
     position = first_relevant(ranked, relevant)
-    return 1 / position if position is not None and position <= cutoff else 0.0
+    return 1 / position if position is not None else 0.0
 
 
 # --------------------------------------------------------------------------- #
-# The real server, in process                                                  #
+# The real server and the real client, in process                              #
 # --------------------------------------------------------------------------- #
 @contextmanager
 def _server(workdir: Path):
-    """The API on a fresh database file in ``workdir``, with a user and the project."""
+    """The API on a fresh database in ``workdir``, a user, the project, and a LOOM_HOME
+    whose config points the client at it. Yields ``(test client, auth header)``."""
     from fastapi.testclient import TestClient
 
     from server import db
     from server.app import app
 
-    keys = ("LOOM_DB", "LOOM_CLIENT_IP_SOURCE")
+    keys = ("LOOM_DB", "LOOM_CLIENT_IP_SOURCE", "LOOM_HOME")
     saved = {key: os.environ.get(key) for key in keys}
     db_path = workdir / "loom.db"
+    loom_home = workdir / "loom-home"
     os.environ["LOOM_DB"] = str(db_path)
     os.environ["LOOM_CLIENT_IP_SOURCE"] = "peer"
+    os.environ["LOOM_HOME"] = str(loom_home)
     try:
         db.init_db(str(db_path)).close()
         token = secrets.token_urlsafe(32)
@@ -356,12 +409,16 @@ def _server(workdir: Path):
             conn.commit()
         finally:
             conn.close()
+        loom_home.mkdir()
+        (loom_home / "config.json").write_text(
+            json.dumps({"server_url": SERVER_URL, "token": token}), encoding="utf-8")
         auth = {"Authorization": f"Bearer {token}"}
-        with TestClient(app) as client:
-            resp = client.post("/api/projects", json={"remote_url": REMOTE}, headers=auth)
+        with TestClient(app, base_url=SERVER_URL) as client:
+            resp = client.post("/api/projects", json={"remote_url": REMOTE, "name": PROJECT},
+                               headers=auth)
             if resp.status_code != 201 or resp.json()["canonical_remote"] != CANONICAL:
                 raise BenchmarkError(f"registering the project: {resp.status_code} {resp.text}")
-            yield client, auth, resp.json()["id"]
+            yield client, auth
     finally:
         for key, value in saved.items():
             if value is None:
@@ -370,73 +427,49 @@ def _server(workdir: Path):
                 os.environ[key] = value
 
 
-def _uuid(entry: Entry, role: str) -> str:
-    # The processor posts uuids, which index as hex fragments; any readable stand-in
-    # ("first", "last", the entry key) would be a word every entry matches.
-    return str(uuid.uuid5(_UUID_NAMESPACE, f"{entry.key}/{role}"))
-
-
 def _post(client, auth, entry: Entry) -> int:
     """Post one entry as the processor would; returns its id."""
-    from loom import okf, processor
     from server import db
 
-    stamp = f"{entry.date}T10:00:00Z"
-    session, first, last = (_uuid(entry, role) for role in ("session", "first", "last"))
-    items = processor.split_items(entry.summary, PROMPT_VERSION)
-    item_types = sorted({item.item_type for item in items})
-    content_md = okf.wrap_entry(
-        entry.summary, canonical_remote=CANONICAL, session_id=session,
-        covered_from=first, covered_to=last, model=MODEL, prompt_version=PROMPT_VERSION,
-        item_types=item_types, timestamp=stamp,
-    )
-    payload = {
-        "project_remote": CANONICAL, "session_id": session,
-        "covered_from": first, "covered_to": last, "content_md": content_md,
-        "content_hash": hashlib.sha256(content_md.encode("utf-8")).hexdigest(),
-        "model": MODEL, "prompt_version": PROMPT_VERSION, "item_types": item_types,
-    }
-    posted = processor.postable_items(items)
-    if posted is not None:
-        payload["items"] = posted
     # The server stamps `created_at` itself; its clock is the one thing set here.
-    with mock.patch.object(db, "iso_now", return_value=stamp):
-        resp = client.post("/api/entries", json=payload, headers=auth)
+    with mock.patch.object(db, "iso_now", return_value=f"{entry.date}T10:00:00Z"):
+        resp = client.post("/api/entries", json=_payload(entry), headers=auth)
     if resp.status_code != 201:
         raise BenchmarkError(f"posting {entry.key}: {resp.status_code} {resp.text}")
     return resp.json()["id"]
 
 
-def retrieve(client, auth, project_id: int, terms: str,
-             item_key: dict[tuple[int, int], str]) -> tuple[list[str], int]:
-    """``(the items loom log --grep shows, in its order; how many entries matched)``."""
-    resp = client.get(f"/api/projects/{project_id}/entries",
-                      params={"q": terms, "limit": ENTRY_LIMIT}, headers=auth)
-    if resp.status_code != 200:
-        raise BenchmarkError(f"searching {terms!r}: {resp.status_code} {resp.text}")
-    entries = resp.json()["entries"]
-    if not entries:
-        return [], 0
-    resp = client.get(f"/api/projects/{project_id}/items",
-                      params={"entry_ids": ",".join(str(e["id"]) for e in entries),
-                              "q": terms},
-                      headers=auth)
-    if resp.status_code != 200:
-        raise BenchmarkError(f"items for {terms!r}: {resp.status_code} {resp.text}")
-    items = resp.json()["items"]
-    # `loom log` collapses what a link replaced; this ranking does not model that, so a
-    # link in the corpus must stop the run rather than be scored as if it were current.
-    for row in [*entries, *items]:
-        if row.get("status") != "current" or row.get("links_in"):
-            raise BenchmarkError(f"searching {terms!r}: a linked or non-current row; "
-                                 "the benchmark does not model curation")
-    matching: dict[int, list[int]] = {}
-    for item in items:
-        if item["match"]:
-            matching.setdefault(item["entry_id"], []).append(item["ordinal"])
-    ranked = [item_key[(e["id"], ordinal)]
-              for e in entries for ordinal in sorted(matching.get(e["id"], []))]
-    return ranked, len(entries)
+def loom_log(client, terms: str) -> str:
+    """What ``loom log ledger --grep "<terms>"`` prints, run as the `/loom` skill runs it.
+
+    The one thing replaced is the client's HTTP session, which goes to the in-process
+    server instead of the network; argument parsing, the config, the requests, the
+    rendering and the budget are the client's own.
+    """
+    from loom import cli
+    from loom.api_client import ApiClient
+
+    def in_process(server_url, token, **kwargs):
+        return ApiClient(server_url, token, session=client, **kwargs)
+
+    out, err = io.StringIO(), io.StringIO()
+    with mock.patch.object(cli, "ApiClient", in_process), redirect_stdout(out), \
+            redirect_stderr(err):
+        code = cli.main(["log", PROJECT, "--grep", terms, *SKILL_FLAGS])
+    if code != 0:
+        raise BenchmarkError(f"loom log --grep {terms!r} exited {code}: {err.getvalue()}")
+    return out.getvalue()
+
+
+def shown_items(printed: str, item_key: dict[tuple[int, int], str]) -> list[str]:
+    """The corpus keys of the items ``loom log`` printed, in the order it printed them."""
+    shown = []
+    for match in _SHOWN_ITEM_RE.finditer(printed):
+        ref = (int(match[1]), int(match[2]))
+        if ref not in item_key:
+            raise BenchmarkError(f"loom log printed an item the corpus does not have: {ref}")
+        shown.append(item_key[ref])
+    return shown
 
 
 # --------------------------------------------------------------------------- #
@@ -444,6 +477,8 @@ def retrieve(client, auth, project_id: int, terms: str,
 # --------------------------------------------------------------------------- #
 def evaluate(workdir: Path, corpus_text: str | None = None,
              queries: list[Query] | None = None) -> Report:
+    from loom import cli
+
     corpus_text = CORPUS.read_text(encoding="utf-8") if corpus_text is None else corpus_text
     queries = load_queries() if queries is None else queries
     entries = load_corpus(corpus_text)
@@ -452,7 +487,7 @@ def evaluate(workdir: Path, corpus_text: str | None = None,
     if problems:
         raise BenchmarkError("the benchmark's inputs are not usable:\n  "
                              + "\n  ".join(problems))
-    with _server(workdir) as (client, auth, project_id):
+    with _server(workdir) as (client, auth):
         item_key: dict[tuple[int, int], str] = {}
         for entry in entries:
             entry_id = _post(client, auth, entry)
@@ -461,12 +496,12 @@ def evaluate(workdir: Path, corpus_text: str | None = None,
                     item_key[(entry_id, int(key.rsplit(".", 1)[1]))] = key
         outcomes = []
         for query in queries:
-            ranked, matched = retrieve(client, auth, project_id, query.terms, item_key)
-            ranked = tuple(ranked)
+            printed = loom_log(client, query.terms)
+            ranked = tuple(shown_items(printed, item_key))
             outcomes.append(Outcome(
                 query, ranked, first_relevant(ranked, query.relevant),
                 recall_at_k(ranked, query.relevant), reciprocal_rank(ranked, query.relevant),
-                hidden=bool(matched) and not ranked,
+                hidden=not ranked and cli.NO_ITEM_MATCH_NOTE in printed,
             ))
     return Report(len(entries), len(items), tuple(outcomes))
 
@@ -501,17 +536,18 @@ def render(report: Report) -> str:
         "     do not edit by hand. server/tests/test_retrieval_eval.py checks it is current. -->",
         "",
         f"{report.entries} entries and {report.items} items of one made-up project; "
-        f"{len(report.outcomes)} judged queries, each run the way `loom log --grep` runs it "
-        f"(`--limit {ENTRY_LIMIT}`). **recall@{K}**: the share of a query's relevant items "
-        f"among the first {K} shown. **MRR@{RR_CUTOFF}**: the mean of 1 / the position of "
-        f"the first relevant item (0 when it is not among the first {RR_CUTOFF}). "
-        "**empty**: the share of queries shown nothing. **hidden**: the share where "
-        "entries matched but none of their items did, so nothing was shown (counted in "
-        "empty too). The categories are defined in `run_eval.py`; each isolates one kind "
-        "of miss, so the `all` row (an average over queries, not over categories) depends "
-        "on the mix: it compares two runs, it does not estimate real-world quality.",
+        f"{len(report.outcomes)} judged queries, each run through the real "
+        f"`loom log {PROJECT} --grep \"<terms>\" {' '.join(SKILL_FLAGS)}` (the `/loom` "
+        f"skill's command, default character budget). **recall@{K}**: the share of a "
+        f"query's relevant items among the first {K} shown. **MRR**: the mean of 1 / the "
+        "position of the first relevant item shown (0 when none is). **empty**: the share "
+        "of queries shown no item. **hidden**: the share where entries matched but none of "
+        "their items did, so `loom log` printed its \"no item\" note (counted in empty too). "
+        "The categories are defined in `run_eval.py`; each isolates one kind of miss, so "
+        "the `all` row (an average over queries, not over categories) depends on the mix: "
+        "it compares two runs, it does not estimate real-world quality.",
         "",
-        f"| category | queries | recall@{K} | MRR@{RR_CUTOFF} | empty | hidden |",
+        f"| category | queries | recall@{K} | MRR | empty | hidden |",
         "|---|---|---|---|---|---|",
     ]
     for category in CATEGORIES:

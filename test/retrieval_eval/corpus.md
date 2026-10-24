@@ -9,14 +9,14 @@ becomes the entry's `created_at` and its frontmatter timestamp. Some later entri
 an earlier fact with a new value and no supersession link between them, which is what the
 `stale` queries measure. They come in the two shapes a logbook produces: the change gets
 an entry of its own (e15, e18, e24, e26), or it is made in passing inside a longer session
-about something else (e27, e28, e29) while the original had a short entry to itself.
+about something else (e27, e28, e29, e30) while the original had a short entry to itself.
 BM25's length normalization favours the short entry, so the two shapes pull ranking in
-opposite directions. The opposite case is there too: e29 also MENTIONS older facts that
-still hold (e01.1, e05.3, e14.2) without changing them, which is what the `durable`
-queries measure — the cost of any boost for newer entries.
+opposite directions. The opposite case is there too: e29 and e30 also MENTION older facts
+that still hold (e01.1, e05.3, e14.2, e16.2, e13.2) without changing them, which is what
+the `durable` queries measure — the cost of any boost for newer entries.
 
-Every bullet is an item (no entry has an "Open questions" section), and the harness
-checks that the processor's splitter finds exactly as many items as there are bullets.
+The harness checks that the processor's splitter finds exactly as many items as there are
+labelled bullets, and at least one per entry.
 Add entries at the end, so existing keys keep their meaning.
 -->
 
@@ -232,3 +232,12 @@ Preparation for the platform upgrade: what moves, what stays, and what must be c
 - [task] **Check that the new log shipper never forwards card numbers unmasked** — before the switch. Evidence: "test it before the switch".
 - [fact] **The upgrade keeps FastAPI pinned until the async handlers are retested** — (rationale not stated). Evidence: `pyproject.toml`.
 - [decision] **The health check path is now `/livez`; `/healthz` stays as an alias for one month** — the new platform's probes expect `/livez`. Evidence: `fly.toml`.
+
+<!-- entry e30 2026-10-22 -->
+## Context
+Quarterly review of the build and billing pipelines ahead of the accounting-tool migration.
+## Decisions
+- [decision] **The CI cache is now keyed on `uv.lock` and the Python version** — a Python upgrade reused a cache built for the old interpreter. Evidence: `.github/workflows/ci.yml`.
+- [decision] **The month-end billing run is now one job per batch of 50 customers** — one job per customer flooded the queue with tens of thousands of jobs. Evidence: `app/billing.py`.
+- [task] **Send each correction's credit note to the new accounting tool** — owner: finance. Evidence: "the accountant wants them in the new tool".
+- [fact] **The accounting export reads tax rates from the same versioned YAML file as the invoices** — (rationale not stated). Evidence: `app/export.py`.

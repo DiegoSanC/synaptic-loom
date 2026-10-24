@@ -52,7 +52,7 @@ def test_recall_at_5_counts_relevant_items_among_the_first_five():
     assert bench.recall_at_k([], ("a",), 5) == 0.0
 
 
-def test_reciprocal_rank_is_one_over_the_first_relevant_position_up_to_the_cutoff():
+def test_reciprocal_rank_is_one_over_the_first_relevant_position():
     ranked = ["a", "b", "c"]
     assert bench.reciprocal_rank(ranked, ("c",)) == pytest.approx(1 / 3)
     assert bench.reciprocal_rank(ranked, ("c", "b")) == 0.5
@@ -60,8 +60,26 @@ def test_reciprocal_rank_is_one_over_the_first_relevant_position_up_to_the_cutof
     assert bench.reciprocal_rank([], ("a",)) == 0.0
     eleven = [f"x{n}" for n in range(10)] + ["hit"]
     assert bench.first_relevant(eleven, ("hit",)) == 11
-    assert bench.reciprocal_rank(eleven, ("hit",), cutoff=10) == 0.0
-    assert bench.reciprocal_rank(eleven, ("hit",), cutoff=11) == pytest.approx(1 / 11)
+    assert bench.reciprocal_rank(eleven, ("hit",)) == pytest.approx(1 / 11)
+    assert bench.first_relevant(eleven, ("miss",)) is None
+
+
+def test_shown_items_reads_the_ids_loom_log_prints_in_order():
+    printed = (
+        "Automatically generated reference content …\n"
+        "────\n"
+        '"Refunds are new negative invoices"  ·  1 of 2 items\n'
+        "\n"
+        "match: …**refund**…\n"
+        "16.1  - [decision] **Refunds are new negative invoices** — …\n"
+        "────\n"
+        "3.2  - [fact] **API tokens expire after 30 days** — …\n"
+        "  12.4  not at the start of a line, so not an item\n"
+    )
+    keys = {(16, 1): "e16.1", (3, 2): "e03.2"}
+    assert bench.shown_items(printed, keys) == ["e16.1", "e03.2"]
+    with pytest.raises(bench.BenchmarkError):
+        bench.shown_items("99.9  - [fact] **x**\n", keys)
 
 
 def test_words_are_lowercased_without_accents_and_split_on_punctuation():
@@ -79,6 +97,9 @@ ITEMS = {
     "c.1": bench.CorpusItem("c", "2026-03-01", "PDF rendering crashed in the Docker image"),
     "d.1": bench.CorpusItem("d", "2026-03-02", "Device tokens expire after 90 days"),
     "e.1": bench.CorpusItem("e", "2026-03-03", "PostgreSQL connection limit exhausted"),
+    # An entry whose indexed text (frontmatter, Context) holds a word its item does not.
+    "f.1": bench.CorpusItem("f", "2026-03-04", "Deploys run nightly",
+                            entry_text="---\ntitle: schedule\n---\nDeploys run nightly"),
 }
 
 
@@ -101,6 +122,8 @@ def _q(category, terms, relevant, distractors=()):
     (_q("extra", "postgres connection limit", ["e.1"]), False),     # postgres: a form
     (_q("synonym", "boot sequence", ["a.1"]), True),
     (_q("synonym", "token TTL", ["d.1"]), False),                   # token: a form
+    (_q("synonym", "boot schedule", ["f.1"]), False),               # in f's frontmatter
+    (_q("extra", "deploy schedule", ["f.1"]), False),               # likewise
     (_q("stale", "schema migrations run", ["b.1"], ["a.1"]), True),
     (_q("stale", "schema migrations run", ["a.1"], ["b.1"]), False),  # distractor newer
     (_q("stale", "schema startup", ["b.1"], ["a.1"]), False),         # startup: not in b.1
@@ -141,10 +164,11 @@ def test_check_corpus_catches_what_would_silently_skew_the_run():
     bad = (good
            + "<!-- entry e01 2026-01-01 -->\n## Context\nx\n## Decision\n"
              "- [fact] **a** — b. Evidence: c.\n## Tasks\n- [task] **d** — e. Evidence: f.\n"
-           + "<!--entry e03 2026-01-03 -->\n## Context\nx\n")
+           + "<!--entry e03 2026-01-03 -->\n## Context\nx\n"
+           + "<!-- entry e04 2026-01-04 -->\n## Context\nNothing decided.\n")
     problems = bench.check_corpus(bad)
-    for fragment in ("duplicate entry key", "before the previous", "bullets 2, items 1",
-                     "3 entry markers but 2"):
+    for fragment in ("duplicate entry key", "before the previous",
+                     "labelled bullets 2, items 1", "4 entry markers but 3", "e04: no item"):
         assert any(fragment in p for p in problems), (fragment, problems)
 
 
