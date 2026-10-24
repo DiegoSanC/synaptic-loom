@@ -9,9 +9,15 @@ becomes the entry's `created_at` and its frontmatter timestamp. Some later entri
 an earlier fact with a new value and no supersession link between them, which is what the
 `stale` queries measure. They come in the two shapes a logbook produces: the change gets
 an entry of its own (e15, e18, e24, e26), or it is made in passing inside a longer session
-about something else (e27, e28) while the original had a short entry to itself. BM25's
-length normalization favours the short entry, so the two shapes pull ranking in opposite
-directions. Add entries at the end, so existing keys keep their meaning.
+about something else (e27, e28, e29) while the original had a short entry to itself.
+BM25's length normalization favours the short entry, so the two shapes pull ranking in
+opposite directions. The opposite case is there too: e29 also MENTIONS older facts that
+still hold (e01.1, e05.3, e14.2) without changing them, which is what the `durable`
+queries measure — the cost of any boost for newer entries.
+
+Every bullet is an item (no entry has an "Open questions" section), and the harness
+checks that the processor's splitter finds exactly as many items as there are bullets.
+Add entries at the end, so existing keys keep their meaning.
 -->
 
 <!-- entry e01 2025-11-04 -->
@@ -217,3 +223,12 @@ Compliance review before the first enterprise contract: retention, access and au
 - [method] **Production database access goes through the bastion host with personal accounts only** — shared credentials were removed. Evidence: "no more shared accounts on the bastion".
 - [fact] **The audit log records every invoice view by support staff** — the contract asks who saw a customer's invoices. Evidence: `app/audit.py`.
 - [task] **Ask the auditors whether anonymised invoices still count as personal data** — no owner stated. Evidence: "open question for the auditors".
+
+<!-- entry e29 2026-10-20 -->
+## Context
+Preparation for the platform upgrade: what moves, what stays, and what must be checked first.
+## Decisions
+- [task] **Move the integration tests to the new Docker base image** — no owner stated. Evidence: `tests/Dockerfile`.
+- [task] **Check that the new log shipper never forwards card numbers unmasked** — before the switch. Evidence: "test it before the switch".
+- [fact] **The upgrade keeps FastAPI pinned until the async handlers are retested** — (rationale not stated). Evidence: `pyproject.toml`.
+- [decision] **The health check path is now `/livez`; `/healthz` stays as an alias for one month** — the new platform's probes expect `/livez`. Evidence: `fly.toml`.

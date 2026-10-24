@@ -1145,9 +1145,11 @@ we decide about auth?" must be able to cut through hundreds of entries.
   endpoint; the backfill migration is idempotent; the WAL concurrency test
   (`server/tests/test_concurrency.py`) covers concurrent insert + search.
 - **Measured by** `test/retrieval_eval/` (2026-10-23): a synthetic logbook in summarizer-v4
-  form and judged queries, one category per kind of miss (exact words, word forms, partial
-  overlap, synonyms, stale facts, error strings), run through the real routes the way
-  `loom log --grep` runs them and scored by recall@5, MRR and the share of empty results.
+  form and judged queries, run through the real routes the way `loom log --grep` runs
+  them and scored by recall@5, MRR@10 and the share of queries shown nothing. Its
+  categories, each checked against its definition on the corpus, are a control (the
+  item's own words) and one per kind of miss: word forms, terms split across items, an
+  extra term, synonyms, stale facts, still-current older facts and error strings.
   Its `RESULTS.md` is a golden the suite checks, so a change to retrieval lands with that
   file regenerated and its effect on every judged query in the diff.
 
@@ -1234,8 +1236,7 @@ Considered and **held by the owner**: RM.1, a `SessionStart` hook (opt-in, fail-
 sub-second, recency-ordered, budgeted, I5-framed) that prints the latest RT.4 digest and
 recent entries when a session starts in a registered repo; RM.2, delta-composition
 instrumentation (how much of each delta is tool noise); RM.3, a retrieval-quality
-benchmark — since built on its own as RT.1's measure (`test/retrieval_eval/`, above),
-because it injects nothing and serves the search that exists. Open before any build: whether ambient injection carries more implied
+benchmark. Open before any build: whether ambient injection carries more implied
 authority than the advisory logbook D6 allows, whether it helps or distracts the
 project's own author, and whether it changes what the pilot's "did reviewers consult
 `/loom`?" signal means. `curate.latest_digest` stays importable as the seam RM.1 would use.

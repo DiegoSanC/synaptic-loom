@@ -1,9 +1,11 @@
 """The retrieval benchmark (`test/retrieval_eval/`, RT.1's measure — DESIGN §12.3).
 
-Three things are asserted here, each against something other than the search itself:
+What is asserted here, each against something other than the search itself:
 
-- the two metrics, on worked examples whose values are computed by hand;
-- the benchmark's own inputs: closed categories, judged items that exist in the corpus;
+- the metrics and the word comparison, on worked examples computed by hand;
+- the benchmark's inputs: the corpus is well formed, and every query satisfies the
+  definition of its category (each rule has a passing and a failing literal case);
+- the control category stays at full recall, whatever the search becomes;
 - `RESULTS.md` as a GOLDEN of the current search (AGENTS.md rule 11). A change to
   retrieval must regenerate it, so its effect on every judged query is in the diff.
 
@@ -40,7 +42,7 @@ def report(tmp_path_factory):
 
 
 # --------------------------------------------------------------------------- #
-# Metrics: worked examples                                                     #
+# Metrics and words: worked examples                                           #
 # --------------------------------------------------------------------------- #
 def test_recall_at_5_counts_relevant_items_among_the_first_five():
     ranked = ["a", "b", "c", "d", "e", "f"]
@@ -50,32 +52,107 @@ def test_recall_at_5_counts_relevant_items_among_the_first_five():
     assert bench.recall_at_k([], ("a",), 5) == 0.0
 
 
-def test_reciprocal_rank_is_one_over_the_first_relevant_position():
+def test_reciprocal_rank_is_one_over_the_first_relevant_position_up_to_the_cutoff():
     ranked = ["a", "b", "c"]
     assert bench.reciprocal_rank(ranked, ("c",)) == pytest.approx(1 / 3)
     assert bench.reciprocal_rank(ranked, ("c", "b")) == 0.5
     assert bench.reciprocal_rank(ranked, ("z",)) == 0.0
     assert bench.reciprocal_rank([], ("a",)) == 0.0
+    eleven = [f"x{n}" for n in range(10)] + ["hit"]
+    assert bench.first_relevant(eleven, ("hit",)) == 11
+    assert bench.reciprocal_rank(eleven, ("hit",), cutoff=10) == 0.0
+    assert bench.reciprocal_rank(eleven, ("hit",), cutoff=11) == pytest.approx(1 / 11)
+
+
+def test_words_are_lowercased_without_accents_and_split_on_punctuation():
+    assert bench.words("Fly.io's `pg_dump` 1.0-0 Migración") == {
+        "fly", "io", "s", "pg", "dump", "1", "0", "migracion"}
 
 
 # --------------------------------------------------------------------------- #
 # The benchmark's inputs                                                       #
 # --------------------------------------------------------------------------- #
-def test_validate_names_every_problem_with_a_query():
-    known = {"e01.1", "e01.2"}
+ITEMS = {
+    "a.1": bench.CorpusItem("a", "2026-01-01", "Schema migrations run at startup"),
+    "a.2": bench.CorpusItem("a", "2026-01-01", "Workers hold one pool each"),
+    "b.1": bench.CorpusItem("b", "2026-02-01", "Schema migrations run on deploy"),
+    "c.1": bench.CorpusItem("c", "2026-03-01", "PDF rendering crashed in the Docker image"),
+    "d.1": bench.CorpusItem("d", "2026-03-02", "Device tokens expire after 90 days"),
+    "e.1": bench.CorpusItem("e", "2026-03-03", "PostgreSQL connection limit exhausted"),
+}
+
+
+def _q(category, terms, relevant, distractors=()):
+    return bench.Query("q", category, "need", terms, tuple(relevant), tuple(distractors))
+
+
+@pytest.mark.parametrize("query, ok", [
+    (_q("exact", "migrations startup", ["a.1"]), True),
+    (_q("exact", "migration startup", ["a.1"]), False),
+    (_q("morphology", "migration startup", ["a.1"]), True),
+    (_q("morphology", "migrations startup", ["a.1"]), False),       # nothing differs
+    (_q("morphology", "pool startup", ["a.1"]), False),             # pool: not a form
+    (_q("split", "startup pool", ["a.1", "a.2"]), True),
+    (_q("split", "migrations startup", ["a.1"]), False),            # a.1 holds both
+    (_q("split", "startup deploy", ["a.1"]), False),                # deploy: not in a
+    (_q("extra", "startup latency", ["a.1"]), True),
+    (_q("extra", "startup workers", ["a.1"]), False),               # workers: in a.2
+    (_q("extra", "pdf docker crash", ["c.1"]), False),              # crash: a form
+    (_q("extra", "postgres connection limit", ["e.1"]), False),     # postgres: a form
+    (_q("synonym", "boot sequence", ["a.1"]), True),
+    (_q("synonym", "token TTL", ["d.1"]), False),                   # token: a form
+    (_q("stale", "schema migrations run", ["b.1"], ["a.1"]), True),
+    (_q("stale", "schema migrations run", ["a.1"], ["b.1"]), False),  # distractor newer
+    (_q("stale", "schema startup", ["b.1"], ["a.1"]), False),         # startup: not in b.1
+    (_q("stale", "schema migrations", ["b.1"]), False),               # no distractor
+    (_q("durable", "schema migrations run", ["a.1"], ["b.1"]), True),
+    (_q("durable", "schema migrations run", ["b.1"], ["a.1"]), False),  # distractor older
+    (_q("error", "migrations failed: exit 1", ["a.1"]), True),
+    (_q("error", "schema migrations", ["a.1"]), False),             # that is exact
+    (_q("exact", "migrations", ["a.1"], ["b.1"]), False),           # distractors: no
+])
+def test_each_category_rule_on_worked_examples(query, ok):
+    problems = bench.validate([query], ITEMS)
+    assert (problems == []) is ok, problems
+
+
+def test_validate_names_every_generic_problem():
     queries = [
-        bench.Query("q1", "exact", "need", "terms", ("e01.1",)),
-        bench.Query("q1", "exact", "need", "terms", ("e01.2",)),     # duplicate id
-        bench.Query("q2", "vibes", "need", "terms", ("e01.1",)),     # unknown category
-        bench.Query("q3", "exact", "need", "terms", ("e09.9",)),     # no such item
-        bench.Query("q4", "exact", "need", "terms", ()),             # nothing judged
-        bench.Query("q5", "exact", "need", "  ", ("e01.1",)),        # no terms
+        bench.Query("q1", "exact", "need", "migrations", ("a.1",)),
+        bench.Query("q1", "exact", "need", "migrations", ("a.1",)),   # duplicate id
+        bench.Query("q2", "vibes", "need", "migrations", ("a.1",)),   # unknown category
+        bench.Query("q3", "exact", "need", "migrations", ("e09.9",)),  # no such item
+        bench.Query("q4", "exact", "need", "migrations", ()),         # nothing judged
+        bench.Query("q5", "exact", "need", " - ", ("a.1",)),          # no words
+        bench.Query("q6", "exact", "need", "migrations", ("a.1", "a.1")),  # named twice
     ]
-    problems = bench.validate(queries, known)
-    assert len(problems) == 5, problems
-    for fragment in ("duplicate", "vibes", "e09.9", "q4", "q5"):
+    problems = bench.validate(queries, ITEMS)
+    for fragment in ("q1: duplicate", "vibes", "e09.9", "q4:", "q5:", "q6:"):
         assert any(fragment in p for p in problems), (fragment, problems)
-    assert bench.validate(queries[:1], known) == []
+    assert bench.validate(queries[:1], ITEMS) == []
+
+
+def test_check_corpus_catches_what_would_silently_skew_the_run():
+    good = ("<!-- entry e01 2026-01-02 -->\n## Context\nx\n## Decisions\n"
+            "- [fact] **a** — b. Evidence: c.\n")
+    assert bench.check_corpus(good) == []
+    # A mistyped "## Decisions": the splitter's fallback reads only the first section
+    # with labelled bullets, so the second section's bullet silently stops being an item.
+    bad = (good
+           + "<!-- entry e01 2026-01-01 -->\n## Context\nx\n## Decision\n"
+             "- [fact] **a** — b. Evidence: c.\n## Tasks\n- [task] **d** — e. Evidence: f.\n"
+           + "<!--entry e03 2026-01-03 -->\n## Context\nx\n")
+    problems = bench.check_corpus(bad)
+    for fragment in ("duplicate entry key", "before the previous", "bullets 2, items 1",
+                     "3 entry markers but 2"):
+        assert any(fragment in p for p in problems), (fragment, problems)
+
+
+def test_the_corpus_and_queries_satisfy_their_own_definitions():
+    text = bench.CORPUS.read_text(encoding="utf-8")
+    assert bench.check_corpus(text) == []
+    items = bench.corpus_items(bench.load_corpus(text))
+    assert bench.validate(bench.load_queries(), items) == []
 
 
 def test_every_category_is_exercised(report):
@@ -83,13 +160,6 @@ def test_every_category_is_exercised(report):
     for outcome in report.outcomes:
         counts[outcome.query.category] += 1
     assert all(n >= 3 for n in counts.values()), counts
-
-
-def test_every_corpus_bullet_is_a_labelled_item(report):
-    # The corpus is written in summarizer-v4 form: an unlabelled bullet would be typed by
-    # the processor's fallback and stand for an output v4 does not produce.
-    assert report.items > report.entries > 0
-    assert report.unlabelled == 0
 
 
 # --------------------------------------------------------------------------- #
