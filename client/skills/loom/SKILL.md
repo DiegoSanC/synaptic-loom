@@ -34,7 +34,9 @@ digest-free rendering.
 
 If the request carries a topic to look for (a file, a component, a decision), add
 `--grep "<terms>"` — the server ranks the entries by relevance and each hit opens with a
-`match:` snippet line. To narrow by item kind, add `--type decision|method|task|fact`.
+`match:` snippet line. Search with whole words: the search already finds other forms of a
+word (`migration` finds "migrations"), and a truncated prefix such as `authenticat*` can
+find nothing. To narrow by item kind, add `--type decision|method|task|fact`.
 Both flags can be combined. Either one narrows an entry that has items to the items that
 match — a `"<title>"  ·  1 of 3 items` line, then each matching item with its id (and its
 own `match:` line under `--grep`); `--whole-entries` prints every entry whole instead. If

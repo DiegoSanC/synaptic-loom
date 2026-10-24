@@ -55,10 +55,11 @@ _ITEMS_DDL = (
     "UNIQUE (entry_id, ordinal))"
 )
 # External content over `entry_items.text_md`, synchronised by an AFTER INSERT trigger
-# on `entry_items` — never on `entries`. Items are append-only like their entries.
+# on `entry_items` — never on `entries`. Items are append-only like their entries. Same
+# tokenizer as the entries index (`search.TOKENIZER`): one query must mean one thing.
 _FTS_DDL = (
     "CREATE VIRTUAL TABLE IF NOT EXISTS entry_items_fts USING fts5("
-    "text_md, content='entry_items', content_rowid='id')"
+    f"text_md, content='entry_items', content_rowid='id', tokenize='{search.TOKENIZER}')"
 )
 _TRIGGER_DDL = (
     "CREATE TRIGGER IF NOT EXISTS entry_items_ai_fts AFTER INSERT ON entry_items BEGIN "
@@ -114,6 +115,7 @@ def ensure_items_schema(conn: sqlite3.Connection) -> None:
     if outermost:
         conn.execute("BEGIN IMMEDIATE")
     try:
+        search.drop_outdated_fts(conn, "entry_items_fts")
         for ddl in (_ITEMS_DDL, _FTS_DDL, _TRIGGER_DDL, _LINKS_DDL, _LINKS_ACTIVE_DDL,
                     _LINKS_TO_DDL):
             conn.execute(ddl)
@@ -129,7 +131,8 @@ def ensure_items_schema(conn: sqlite3.Connection) -> None:
 
 def _schema_is_complete(conn: sqlite3.Connection) -> bool:
     present = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
-    return set(_OBJECT_NAMES) <= present and not _needs_backfill(conn)
+    return (set(_OBJECT_NAMES) <= present and search.fts_is_current(conn, "entry_items_fts")
+            and not _needs_backfill(conn))
 
 
 def _needs_backfill(conn: sqlite3.Connection) -> bool:
