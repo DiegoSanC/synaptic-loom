@@ -314,6 +314,7 @@ def items_for_entries(
     *,
     item_type: str | None = None,
     q: str | None = None,
+    any_term: bool = False,
 ) -> list[dict]:
     """Every item of ``entry_ids`` that belongs to ``project_id``, with ``match``.
 
@@ -321,6 +322,11 @@ def items_for_entries(
     satisfies every filter given (``item_type`` = its label, ``q`` = an FTS match, which
     also yields a ``snippet``). That is what lets a reader tell an itemized entry with
     nothing matching apart from an entry that has no items at all.
+
+    ``any_term`` (RT.1.4, the route's ``fallback=any_term``): an entry none of whose items
+    passes every filter has its items of the requested type matched against ANY of the
+    words of ``q``, and those carry ``match_mode``. Off by default — the web UI calls
+    this over a whole project, where a loose match would be shown as an exact one.
 
     Raises :class:`search.InvalidQuery` for a malformed ``q``.
     """
@@ -330,12 +336,17 @@ def items_for_entries(
     snippets = loose = None
     if q is not None:
         # Both readings are mapped before any DB work, so a malformed q is a 422 either way.
-        expression, any_term = search._fts_expression(q), search.any_term_expression(q)
+        expression = search._fts_expression(q)
+        loose_expression = search.any_term_expression(q) if any_term else None
         snippets = _search(conn, [row["id"] for row in rows], expression)
-        if any_term is not None:
+        if loose_expression is not None:
             unanswered = _entries_without_match(rows, snippets, item_type)
+            # Only the items that could match: one of another type would gain a snippet
+            # (and the reader a reason to wonder) without ever matching.
             loose = _search(conn, [row["id"] for row in rows
-                                   if row["entry_id"] in unanswered], any_term)
+                                   if row["entry_id"] in unanswered
+                                   and (item_type is None or row["item_type"] == item_type)],
+                            loose_expression)
             snippets = {**snippets, **loose}
     by_item = _links_for_items(conn, [row["id"] for row in rows])
     out = []
@@ -353,7 +364,7 @@ def items_for_entries(
         }
         if snippets is not None and row["id"] in snippets:
             item["snippet"] = snippets[row["id"]]
-        if match and loose and row["id"] in loose:
+        if loose and row["id"] in loose:
             item["match_mode"] = search.MATCH_ANY_TERM
         item.update(by_item.get(row["id"]) or {
             "status": links.STATUS_CURRENT, "links_in": [], "links_out": []})

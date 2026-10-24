@@ -60,6 +60,10 @@ _SNIPPET_TOKENS = 12
 # of an entry) held every word of the query, so these hold at least one of them. An
 # answer to the query as written carries no `match_mode`, exactly as before RT.1.4.
 MATCH_ANY_TERM = "any_term"
+# What a request may ask for with `fallback=` (RT.1.4). Asked for, never imposed: a
+# request without it is answered exactly as before, which is what keeps the web UI, an
+# older client (which would print a loose answer as an exact one) and curation strict.
+FALLBACKS = (MATCH_ANY_TERM,)
 
 # Which sqlite result codes mean "the caller's expression was bad" rather than "this
 # server is broken". SQLITE_ERROR (1) is what FTS5 returns for EVERY malformed MATCH

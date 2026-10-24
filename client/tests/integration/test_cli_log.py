@@ -771,3 +771,35 @@ def test_the_fallback_note_rides_with_the_first_entry_and_is_never_counted_as_on
     assert out.count(cli.ANY_TERM_NOTE) == 1
     assert out.index(cli.ANY_TERM_NOTE) < out.index("Entry 3")
     assert f"{cli.TRUNCATION_MARKER} 2 of 3 fetched entrie(s) shown" in out
+
+
+@pytest.mark.parametrize("args, sent", [
+    (["--grep", "queue flusher"], "any_term"),
+    (["--type", "method"], None),
+    (["--grep", "queue", "--type", "method"], "any_term"),
+])
+def test_grep_asks_for_the_any_term_fallback_on_both_requests(
+        args, sent, env, monkeypatch, capsys):
+    """RT.1.4: the server falls back only when asked, so a reader that renders the
+    fallback's note is the one that asks. (The unfiltered latest-digest lookup is not
+    the search, and carries neither.)"""
+    _setup(env, monkeypatch, env.repo)
+    _projects_by_cwd(env, _project())
+    seen = []
+
+    def record(page_key):
+        def handler(request):
+            if "q" in request.args or "type" in request.args:
+                seen.append((page_key, request.args.get("fallback")))
+            return _json({"entries": [D_E6], "has_more": False} if page_key == "entries"
+                         else {"items": [_item(6, 1, "decision", T61)]})
+        return handler
+
+    env.httpserver.expect_request("/api/projects/5/entries",
+                                  method="GET").respond_with_handler(record("entries"))
+    env.httpserver.expect_request("/api/projects/5/items",
+                                  method="GET").respond_with_handler(record("items"))
+
+    assert cli.main(["log", *args, "--no-digest"]) == 0
+
+    assert seen == [("entries", sent), ("items", sent)]

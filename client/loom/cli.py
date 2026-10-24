@@ -163,10 +163,12 @@ NO_ITEM_MATCH_NOTE = ("(no item of the entries found answers this search; "
 # The same, when other entries did print: the hidden ones are counted, never dropped silently.
 HIDDEN_BY_ITEMS_NOTE = ("({n} more entrie(s) matched outside their items; "
                         "--whole-entries prints them whole)")
-# RT.1.4: the server answered a `--grep` whose words no entry (or no item of an entry)
-# holds together with the entries or items holding ANY of them, and marked each such hit
-# `match_mode: any_term` — duplicated from `server.search.MATCH_ANY_TERM` like the item
-# vocabulary. A looser answer read as an exact one would be trusted for the wrong reason.
+# RT.1.4: asked with `fallback=any_term` (every `--grep` asks), the server answers a search
+# whose words no entry (or no item of an entry) holds together with the entries or items
+# holding ANY of them, and marks each such hit `match_mode: any_term` — duplicated from
+# `server.search.MATCH_ANY_TERM` like the item vocabulary. A looser answer read as an
+# exact one would be trusted for the wrong reason, which is why the server never gives
+# one to a reader that did not ask (and so cannot say so).
 MATCH_ANY_TERM = "any_term"
 ANY_TERM_NOTE = ("(no entry holds every word of this search; "
                  "these hold some of them, best first)")
@@ -1333,6 +1335,8 @@ def cmd_log(args: argparse.Namespace) -> int:
     filtered = False
     if args.grep:
         params["q"] = args.grep
+        # RT.1.4: asked for, since this reader is the one that says so when it answered.
+        params["fallback"] = MATCH_ANY_TERM
         filtered = True
     if args.type:
         params["type"] = args.type
