@@ -1134,7 +1134,15 @@ we decide about auth?" must be able to cut through hundreds of entries.
 
 - **RT.1.1** FTS5 external-content table over `entries.content_md` (`content='entries'`),
   populated by insert trigger (entries are append-only, so no update/delete sync is
-  needed). One-shot backfill migration for existing rows.
+  needed). One-shot backfill migration for existing rows. **Amended 2026-10-24:** both
+  indexes (this one and D13's `entry_items_fts`) are tokenized `porter unicode61
+  remove_diacritics 2` (`search.TOKENIZER`), so a search finds other forms of its words
+  (`migration` → "migrations"); entries are English since D15, the language Porter
+  stems. An index built before the amendment is dropped and rebuilt from the stored text
+  on start, in one `BEGIN IMMEDIATE` that re-reads the tokenizer under the lock (§6.4's
+  migration rule). Measured by `test/retrieval_eval/`: word forms 0.00 → 1.00 recall@5;
+  the cost is ranking among the extra matches (stale MRR 0.89 → 0.81), which RT.1's later
+  work on recency addresses.
 - **RT.1.2** `GET /api/projects/{id}/entries?q=<terms>` returns BM25-ranked entries with an
   FTS5 `snippet()` per hit; same auth, same response envelope plus `snippet`/`rank`
   fields. Malformed FTS5 query syntax → 422, never 500.

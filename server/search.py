@@ -74,13 +74,25 @@ class InvalidQuery(ValueError):
 # --------------------------------------------------------------------------- #
 # Schema (idempotent, additive)                                                #
 # --------------------------------------------------------------------------- #
+# The tokenizer of BOTH search indexes (this one and `items.entry_items_fts`), RT.1 as
+# amended on 2026-10-24: Porter stemming over unicode61, so `migration` finds
+# "migrations" and `retries` finds "retry". Entries are English since D15, which is the
+# language Porter stems; `remove_diacritics 2` folds accents as unicode61 always did, and
+# also on letters that carry more than one. An index built before the amendment has no
+# tokenize clause and is rebuilt on start (`drop_outdated_fts`).
+TOKENIZER = "porter unicode61 remove_diacritics 2"
+_TOKENIZE_CLAUSE = f"tokenize='{TOKENIZER}'"
+# The indexes `drop_outdated_fts` may drop: a table name is SQL text, so it comes from
+# this literal set and never from a caller.
+_FTS_TABLES = frozenset({"entries_fts", "entry_items_fts"})
+
 # External content: the index stores no copy of the text, it points at
 # entries.content_md by rowid. Entries are append-only (D7 — they are never
 # updated nor deleted), so an AFTER INSERT trigger is the whole synchronisation
 # story; there is no UPDATE/DELETE drift to keep up with in v1.
 _FTS_DDL = (
     "CREATE VIRTUAL TABLE IF NOT EXISTS entries_fts USING fts5("
-    "content_md, content='entries', content_rowid='id')"
+    f"content_md, content='entries', content_rowid='id', {_TOKENIZE_CLAUSE})"
 )
 _TRIGGER_DDL = (
     "CREATE TRIGGER IF NOT EXISTS entries_ai_fts AFTER INSERT ON entries BEGIN "
@@ -164,11 +176,44 @@ def _require_fts5(conn: sqlite3.Connection) -> None:
 
 
 def _schema_is_complete(conn: sqlite3.Connection) -> bool:
-    """Are all the objects present AND the index in step with `entries`?"""
+    """Are all the objects present, the index built with the current tokenizer, AND the
+    index in step with `entries`?"""
     present = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
-    if not set(_OBJECT_NAMES) <= present:
+    if not set(_OBJECT_NAMES) <= present or not fts_is_current(conn, "entries_fts"):
         return False
     return not _needs_backfill(conn)
+
+
+def _fts_sql(conn: sqlite3.Connection, table: str) -> str | None:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+    ).fetchone()
+    return None if row is None else row[0]
+
+
+def fts_is_current(conn: sqlite3.Connection, table: str) -> bool:
+    """Was ``table`` built with :data:`TOKENIZER`? (``sqlite_master`` keeps its DDL as
+    written, and this module wrote it.) ``False`` when it does not exist."""
+    sql = _fts_sql(conn, table)
+    return sql is not None and _TOKENIZE_CLAUSE in sql
+
+
+def drop_outdated_fts(conn: sqlite3.Connection, table: str) -> None:
+    """Drop ``table`` when it exists with another tokenizer — inside the caller's write
+    transaction, whose ``CREATE … IF NOT EXISTS`` then builds the current index and whose
+    backfill re-indexes every row from the content table.
+
+    The tokenizer is re-read here, under the lock, rather than trusted from the check
+    that sent the caller here: the server and an ``admin.py`` run can start together
+    (§6.4's migration rule), and the second one must find the index already rebuilt and
+    leave it alone. An external-content index holds no text of its own, so dropping it
+    loses nothing; the insert trigger is on the content table and survives the drop.
+    """
+    if table not in _FTS_TABLES:
+        raise ValueError(f"not a search index: {table!r}")
+    sql = _fts_sql(conn, table)
+    if sql is not None and _TOKENIZE_CLAUSE not in sql:
+        conn.execute(f"DROP TABLE {table}")
 
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
@@ -179,6 +224,7 @@ def _apply_schema(conn: sqlite3.Connection) -> None:
     if outermost:
         conn.execute("BEGIN IMMEDIATE")
     try:
+        drop_outdated_fts(conn, "entries_fts")
         conn.execute(_FTS_DDL)
         conn.execute(_TRIGGER_DDL)
         conn.execute(_ITEM_TYPES_DDL)

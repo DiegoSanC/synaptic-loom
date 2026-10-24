@@ -280,6 +280,22 @@ tables), but entries it accepts in that window carry no items. An entry posted w
 items — by an old client, or from a v1/pre-OKF capture — is simply read as a whole, as
 before; there is no backfill.
 
+#### Deploying stemmed search (RT.1, amended 2026-10-24)
+
+The release that tokenizes both search indexes with Porter stemming (`migration` finds
+"migrations") rebuilds them at boot: `entries_fts` and `entry_items_fts` are dropped and
+re-created from the stored entries and items in one transaction, before the first request
+is served. They are indexes only — no entry, item or link is touched — and the rebuild
+takes a moment proportional to the logbook's size.
+
+1. Take an on-demand snapshot first (§3a), as for every release that migrates at boot.
+2. `fly deploy --ha=false`, then check `GET /api/health` and that a `?q=` search answers
+   `200` (a plural finding its singular is the visible change).
+
+No client update is needed. Rolling the image back is safe: an older server finds the
+indexes complete and keeps using them, stemming included, because the tokenizer is part of
+each index's own definition.
+
 #### Deploying feedback and stats (plan of 2026-09-23, slice F)
 
 The release that adds `POST /api/feedback` and `GET /api/stats` creates one table at boot,

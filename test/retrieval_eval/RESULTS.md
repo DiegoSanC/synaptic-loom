@@ -8,14 +8,14 @@
 | category | queries | recall@5 | MRR | empty | hidden |
 |---|---|---|---|---|---|
 | exact | 6 | 1.00 | 1.00 | 0.00 | 0.00 |
-| morphology | 7 | 0.00 | 0.00 | 1.00 | 0.14 |
+| morphology | 7 | 1.00 | 0.93 | 0.00 | 0.00 |
 | split | 5 | 0.00 | 0.00 | 1.00 | 1.00 |
 | extra | 5 | 0.00 | 0.00 | 1.00 | 0.00 |
 | synonym | 6 | 0.00 | 0.00 | 1.00 | 0.00 |
-| stale | 9 | 1.00 | 0.89 | 0.00 | 0.00 |
+| stale | 9 | 1.00 | 0.81 | 0.00 | 0.00 |
 | durable | 5 | 1.00 | 0.90 | 0.00 | 0.00 |
 | error | 5 | 0.00 | 0.00 | 1.00 | 0.00 |
-| **all** | 48 | 0.42 | 0.39 | 0.58 | 0.12 |
+| **all** | 48 | 0.56 | 0.51 | 0.44 | 0.10 |
 
 ## Queries
 
@@ -27,13 +27,13 @@
 | x4 | exact | `structlog` | e14.1 | e14.1 | 1 |
 | x5 | exact | `integer cents` | e04.2 | e04.2 | 1 |
 | x6 | exact | `Dramatiq` | e20.1 | e20.1 | 1 |
-| m1 | morphology | `migration startup` | e02.2 | — | — |
-| m2 | morphology | `webhook retries` | e09.1 | — | — |
-| m3 | morphology | `refund invoice` | e16.1 | — | — |
-| m4 | morphology | `deploying from laptop` | e10.2 | — | — |
-| m5 | morphology | `restoring backups` | e22.2 | — | — |
-| m6 | morphology | `rate limits per token` | e23.1 | — | — |
-| m7 | morphology | `invoice pdf docker crash` | e19.1 | — | — (hidden) |
+| m1 | morphology | `migration startup` | e02.2 | e02.2 | 1 |
+| m2 | morphology | `webhook retries` | e09.1 | e09.1 | 1 |
+| m3 | morphology | `refund invoice` | e16.1 | e16.1 | 1 |
+| m4 | morphology | `deploying from laptop` | e10.2 | e10.2 | 1 |
+| m5 | morphology | `restoring backups` | e22.2 | e22.1, e22.2 | 2 |
+| m6 | morphology | `rate limits per token` | e23.1 | e23.1 | 1 |
+| m7 | morphology | `invoice pdf docker crash` | e19.1 | e19.1 | 1 |
 | p1 | split | `admin login phone` | e21.2, e21.1 | — | — (hidden) |
 | p2 | split | `bearer tokens hashes` | e03.3 | — | — (hidden) |
 | p3 | split | `refunds credit note` | e16.1, e16.2 | — | — (hidden) |
@@ -52,7 +52,7 @@
 | s6 | synonym | `FX TTL` | e24.1 | — | — |
 | t1 | stale | `tokens expire` | e15.1 | e15.1, e03.2 | 1 |
 | t2 | stale | `Pro plan price` | e18.1 | e18.1, e04.1 | 1 |
-| t3 | stale | `exchange rates cached` | e24.1 | e24.1, e08.2 | 1 |
+| t3 | stale | `exchange rates cached` | e24.1 | e08.1, e08.2, e24.1 | 3 |
 | t4 | stale | `Fly region` | e26.1 | e26.1, e10.1 | 1 |
 | t5 | stale | `receiver seconds` | e27.3 | e27.3, e09.2 | 1 |
 | t6 | stale | `backups kept days` | e28.1 | e22.1, e28.1 | 2 |
