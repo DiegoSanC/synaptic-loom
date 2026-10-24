@@ -157,6 +157,24 @@ def test_a_digest_beside_an_entry_holding_every_word_changes_nothing(client, see
     assert sorted(h["id"] for h in body["entries"]) == sorted([digest, both])
 
 
+def test_a_page_of_digests_with_more_beyond_it_does_not_fall_back(client, seed):
+    """Digests fill the page, but the strict answer goes on past it: an entry holding
+    every word may be there, so the page is answered as written and a client topping up
+    its page (`loom log` does) reaches it with a larger limit."""
+    auth, project, post = seed
+    loud = DIGEST.replace("receiver deadline.", "receiver deadline. Webhook deadline.")
+    digests = [post(loud.replace('"Digest"', f'"Digest {n}"')) for n in range(3)]
+    both = post(BOTH)
+    strict = _entries(client, auth, project, q="webhook deadline", limit=10, **FALLBACK)
+    assert [h["id"] for h in strict["entries"]][-1] == both, "setup: digests rank first"
+
+    page = _entries(client, auth, project, q="webhook deadline", limit=2, **FALLBACK)
+    assert page["has_more"] is True
+    assert {h["id"] for h in page["entries"]} <= set(digests)
+    assert all("match_mode" not in h for h in page["entries"])
+    assert all("match_mode" not in h for h in strict["entries"])
+
+
 def test_the_fallback_answers_in_bm25_order(client, seed):
     auth, project, post = seed
     post(SIGNED), post(DEADLINE)

@@ -465,8 +465,8 @@ the items that match that way carry `match_mode: "any_term"`; without it, `match
 exactly what it always has. `status` and the link
 lists come from `item_links` (active links only count; written by `POST
 /api/item-links`, below). Errors:
-`422 invalid_type`, `422 invalid_query`, `422 invalid_entry_ids`, `404 project_not_found`.
-It records no recall event. An old server ignores `items` silently (`extra="ignore"`), so
+`422 invalid_type`, `422 invalid_query`, `422 invalid_entry_ids`, `422 invalid_fallback`,
+`404 project_not_found`. It records no recall event. An old server ignores `items` silently (`extra="ignore"`), so
 the server is deployed before any client sends them (RUNBOOK §2).
 
 `loom log` reads them (slice D) with one extra request per page — the page's entry ids
@@ -1159,25 +1159,31 @@ we decide about auth?" must be able to cut through hundreds of entries.
 - **RT.1.3** `loom log <project> --grep "<terms>"` and the `/loom` skill accept an optional
   query; output keeps the I5 framing.
 - **RT.1.4** (2026-10-24) **Any-term fallback, asked for.** A request carrying
-  `fallback=any_term` (another value → `422 invalid_fallback`) whose `q` is a word query
-  (no quote, `*`, parenthesis or AND/OR/NOT/NEAR) of two or more words is answered again
-  with the entries holding ANY of the words, in BM25 order, when no entry but a digest
-  holds them all (a digest is no answer: `loom log` shows only the latest one); each hit
-  of that answer carries `match_mode: "any_term"`. `/items` does the same per entry: an
-  entry none of whose items passes every filter has its items of the requested type
-  matched against any of the words, each marked the same way. An expression or a single
-  word never falls back. A request without the parameter is answered exactly as before,
-  which keeps the web UI (whose item search spans a whole project), older clients (which
-  would print a loose answer as an exact one) and curation strict. `loom log --grep` asks
-  for it, opens a fallback page with one note and ends the item line of such an entry
-  with "each holding some of the words". Measured by `test/retrieval_eval/` (a logbook
-  without digests, as every run of it is): recall@5 for terms split across items 0.00 → 1.00, an extra term 0.00 → 1.00, error strings
-  0.00 → 0.80. Its costs, accepted: a query whose answer is not in the logbook can now
-  be shown items that do not answer it (`wrong` 0.00 → 0.06 overall, from two synonym
-  queries and one error string — on keyword queries; a query in sentence form, whose
-  common words almost always trigger the fallback, will cost more); and a read answered
-  by the fallback is recorded in `recall_events` with the count of its loose hits, so
-  "searched and found nothing" no longer counts the searches only the fallback answered.
+  `fallback=any_term` (another value → `422 invalid_fallback`; without `q` it changes
+  nothing) whose `q` is a word query (no quote, `*`, parenthesis or AND/OR/NOT/NEAR) of
+  two or more words is answered again with the entries holding ANY of the words, in BM25
+  order, when no entry but a digest holds them all (a digest is no answer: `loom log`
+  shows only the latest one) and the strict answer does not go on past the page
+  (`has_more`: an entry holding every word may be there, and a client topping up its
+  page reaches it, or the end, with a larger limit). Each hit of that answer carries
+  `match_mode: "any_term"`. `/items` does the same per entry: an entry none of whose
+  items passes every filter has its items of the requested type matched against any of
+  the words, each marked the same way. An expression or a single word never falls back.
+  A request without the parameter is answered exactly as before, which keeps the web UI
+  (whose item search spans a whole project), older clients (which would print a loose
+  answer as an exact one) and curation strict. `loom log --grep` asks for it, opens a
+  fallback page with one note and ends the item line of such an entry with "each
+  holding some of the words". Measured by `test/retrieval_eval/` (a logbook without
+  digests, as every run of it is): recall@5 for terms split across items 0.00 → 1.00,
+  an extra term 0.00 → 1.00, error strings 0.00 → 0.80. Its costs, accepted: a query
+  whose answer is not in the logbook can now be shown items that do not answer it
+  (`wrong` 0.00 → 0.06 overall, from two synonym queries and one error string — on
+  keyword queries; a query in sentence form, whose common words almost always trigger
+  the fallback, will cost more); and a read answered by the fallback is recorded in
+  `recall_events` with the count of its loose hits, so "searched and found nothing" no
+  longer counts the searches only the fallback answered (and when more digests match
+  than `--limit`, the recorded read is the first, strict page, while the top-up that
+  `loom log` shows may be the loose one).
 - **AC:** on a seeded corpus the on-topic entry ranks above off-topic ones and an empty
   result is a clean 200; FTS5-reserved characters (`"`, `*`, `NEAR`) cannot crash the
   endpoint; the backfill migration is idempotent; the WAL concurrency test

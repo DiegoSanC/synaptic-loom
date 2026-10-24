@@ -1236,6 +1236,7 @@ def list_entries(
     if item_type is not None and item_type not in search.ITEM_TYPES:
         return _err(422, "invalid_type",
                     "Unknown 'type'; allowed: " + ", ".join(search.ITEM_TYPES))
+    # Validated whether or not there is a `q`; without one it changes nothing (RT.1.4).
     if fallback is not None and fallback not in search.FALLBACKS:
         return _invalid_fallback()
     conn = db.connect()
@@ -1262,6 +1263,9 @@ def list_entries(
                     # for any of them. When that finds nothing, the answer is the query's
                     # own. `has_more` means more strict hits beyond this page; a client
                     # topping up its page reaches them, or the end, with a larger limit.
+                    # A digest is what the web UI calls one (`ui_render.is_digest`); the
+                    # client's own test (`curate.is_digest`) agrees on the frontmatter
+                    # okf writes, `type: digest` unquoted.
                     loose, loose_more = search.search_entries(
                         conn, project_id, q, item_type=item_type, since=since,
                         limit=limit, any_term=True)
