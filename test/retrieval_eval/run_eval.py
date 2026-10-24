@@ -51,9 +51,11 @@ Only the current item counts as relevant: an item another one has replaced never
 Scores, per category and over all queries: ``recall@5`` (the share of a query's relevant
 items among the first five shown), ``MRR`` (the mean of 1 / the position of the first
 relevant item shown, 0 when none is — what the budget cut off was not shown),
-``empty`` (the share of queries shown no item) and ``hidden`` (the share where entries
+``empty`` (the share of queries shown no item), ``hidden`` (the share where entries
 matched but none of their items did, so ``loom log`` printed its "no item … answers this
-search" note instead — a subset of ``empty``).
+search" note instead — a subset of ``empty``) and ``wrong`` (the share shown items, none
+of them relevant: the reader is pointed at the wrong decisions, which a search that
+loosens its matching trades for fewer empty answers).
 
 Unlike ``test/prompt_eval/`` it spends no model calls and is deterministic, so the suite
 runs it: ``server/tests/test_retrieval_eval.py`` checks that ``RESULTS.md`` is what the
@@ -366,6 +368,11 @@ def recall_at_k(ranked: list[str] | tuple[str, ...], relevant: tuple[str, ...],
     return len(wanted & set(ranked[:k])) / len(wanted)
 
 
+def wrong(ranked: list[str] | tuple[str, ...], relevant: tuple[str, ...]) -> bool:
+    """Were items shown, none of them relevant? (Showing nothing is ``empty``, not this.)"""
+    return bool(ranked) and not set(ranked) & set(relevant)
+
+
 def first_relevant(ranked: list[str] | tuple[str, ...], relevant: tuple[str, ...]) -> int | None:
     """The 1-based position of the first relevant item shown, or ``None``."""
     for position, key in enumerate(ranked, 1):
@@ -538,12 +545,14 @@ def evaluate(workdir: Path, corpus_text: str | None = None,
 def _row(label: str, outcomes: list[Outcome]) -> str:
     n = len(outcomes)
     if not n:
-        return f"| {label} | 0 | — | — | — | — |"
+        return f"| {label} | 0 | — | — | — | — | — |"
     recall = sum(o.recall for o in outcomes) / n
     mrr = sum(o.rr for o in outcomes) / n
     empty = sum(not o.ranked for o in outcomes) / n
     hidden = sum(o.hidden for o in outcomes) / n
-    return f"| {label} | {n} | {recall:.2f} | {mrr:.2f} | {empty:.2f} | {hidden:.2f} |"
+    misled = sum(wrong(o.ranked, o.query.relevant) for o in outcomes) / n
+    return (f"| {label} | {n} | {recall:.2f} | {mrr:.2f} | {empty:.2f} | {hidden:.2f} | "
+            f"{misled:.2f} |")
 
 
 def _cell(text: str) -> str:
@@ -572,12 +581,13 @@ def render(report: Report) -> str:
         "position of the first relevant item shown (0 when none is). **empty**: the share "
         "of queries shown no item. **hidden**: the share where entries matched but none of "
         "their items did, so `loom log` printed its \"no item\" note (counted in empty too). "
+        "**wrong**: the share shown items, none of them relevant. "
         "The categories are defined in `run_eval.py`; each isolates one kind of miss, so "
         "the `all` row (an average over queries, not over categories) depends on the mix: "
         "it compares two runs, it does not estimate real-world quality.",
         "",
-        f"| category | queries | recall@{K} | MRR | empty | hidden |",
-        "|---|---|---|---|---|---|",
+        f"| category | queries | recall@{K} | MRR | empty | hidden | wrong |",
+        "|---|---|---|---|---|---|---|",
     ]
     for category in CATEGORIES:
         lines.append(_row(category, [o for o in report.outcomes

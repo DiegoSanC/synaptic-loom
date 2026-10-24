@@ -425,8 +425,8 @@ the 2026-09-23 plan, below).
 | GET | `/api/projects?remote=<norm>` | Duplicate check / resolution |
 | GET | `/api/projects` | Listing (gate cache on the clients) |
 | POST | `/api/entries` | Upload an entry. `409` if `content_hash` is a duplicate (idempotency). Optional `items` (D13, below) |
-| GET | `/api/projects/{id}/items?entry_ids=<csv ≤ 500>[&type=][&q=]` | The items of the listed entries of this project (D13, below) |
-| GET | `/api/projects/{id}/entries?since=&limit=` | Project logbook (consumption). With `X-Loom-Source: skill\|cli` on the request, one `recall_events` row is recorded (decision of 2026-09-22 below) |
+| GET | `/api/projects/{id}/items?entry_ids=<csv ≤ 500>[&type=][&q=][&fallback=any_term]` | The items of the listed entries of this project (D13, below; `fallback`: RT.1.4) |
+| GET | `/api/projects/{id}/entries?since=&limit=[&type=][&q=][&fallback=any_term]` | Project logbook (consumption; `q`: RT.1.2, `fallback`: RT.1.4). With `X-Loom-Source: skill\|cli` on the request, one `recall_events` row is recorded (decision of 2026-09-22 below) |
 | POST | `/api/feedback` | `{project_id, item: "<entry>.<n>", verdict, note}` → `201 {id}` · `409 duplicate_feedback` · `404 item_not_found` · `422` (item of another project, verdict outside `useful\|not_applicable\|stale`, a note that is not one line) — slice F, below |
 | POST | `/api/item-links` | `{from: "<e>.<n>", to: "<e>.<n>", kind, rationale?}` → `201 {id}` · `404 item_not_found` · `422` (another project, the same entry, `from` not in a newer entry) · `409 duplicate_link` / `contradictory_link` among active links — slice E, below |
 | POST | `/api/item-links/{id}/revoke` | `{reason}` (one line) → `200` · `409 already_revoked` · `404 link_not_found` — slice E, below |
@@ -458,11 +458,15 @@ the processor reads a `409` as "stored" and drops the marker.
 labelled, text_md, match, snippet?, status, links_in, links_out}]}` — **every** item of the
 listed entries of that project, with `match` true when the item satisfies every filter
 given (`type` = its label, `q` = an `entry_items_fts` match, which adds `snippet`), so a
-reader can tell "itemized, nothing matched" from "not itemized". `status` and the link
+reader can tell "itemized, nothing matched" from "not itemized". With
+`fallback=any_term` (RT.1.4), an entry none of whose items passes every filter under a
+word query has its items of the requested type matched again with any of its words, and
+the items that match that way carry `match_mode: "any_term"`; without it, `match` means
+exactly what it always has. `status` and the link
 lists come from `item_links` (active links only count; written by `POST
 /api/item-links`, below). Errors:
-`422 invalid_type`, `422 invalid_query`, `422 invalid_entry_ids`, `404 project_not_found`.
-It records no recall event. An old server ignores `items` silently (`extra="ignore"`), so
+`422 invalid_type`, `422 invalid_query`, `422 invalid_entry_ids`, `422 invalid_fallback`,
+`404 project_not_found`. It records no recall event. An old server ignores `items` silently (`extra="ignore"`), so
 the server is deployed before any client sends them (RUNBOOK §2).
 
 `loom log` reads them (slice D) with one extra request per page — the page's entry ids
@@ -1150,9 +1154,36 @@ we decide about auth?" must be able to cut through hundreds of entries.
   form); and the extra matches compete in ranking (stale MRR 0.89 → 0.81), an open cost.
 - **RT.1.2** `GET /api/projects/{id}/entries?q=<terms>` returns BM25-ranked entries with an
   FTS5 `snippet()` per hit; same auth, same response envelope plus `snippet`/`rank`
-  fields. Malformed FTS5 query syntax → 422, never 500.
+  fields (and `match_mode` on a hit the RT.1.4 fallback gave). Malformed FTS5 query
+  syntax → 422, never 500.
 - **RT.1.3** `loom log <project> --grep "<terms>"` and the `/loom` skill accept an optional
   query; output keeps the I5 framing.
+- **RT.1.4** (2026-10-24) **Any-term fallback, asked for.** A request carrying
+  `fallback=any_term` (another value → `422 invalid_fallback`; without `q` it changes
+  nothing) whose `q` is a word query (no quote, `*`, parenthesis or AND/OR/NOT/NEAR) of
+  two or more words is answered again with the entries holding ANY of the words, in BM25
+  order, when no entry but a digest holds them all (a digest is no answer: `loom log`
+  shows only the latest one) and the strict answer does not go on past the page
+  (`has_more`: an entry holding every word may be there, and a client topping up its
+  page reaches it, or the end, with a larger limit). Each hit of that answer carries
+  `match_mode: "any_term"`. `/items` does the same per entry: an entry none of whose
+  items passes every filter has its items of the requested type matched against any of
+  the words, each marked the same way. An expression or a single word never falls back.
+  A request without the parameter is answered exactly as before, which keeps the web UI
+  (whose item search spans a whole project), older clients (which would print a loose
+  answer as an exact one) and curation strict. `loom log --grep` asks for it, opens a
+  fallback page with one note and ends the item line of such an entry with "each
+  holding some of the words". Measured by `test/retrieval_eval/` (a logbook without
+  digests, as every run of it is): recall@5 for terms split across items 0.00 → 1.00,
+  an extra term 0.00 → 1.00, error strings 0.00 → 0.80. Its costs, accepted: a query
+  whose answer is not in the logbook can now be shown items that do not answer it
+  (`wrong` 0.00 → 0.06 overall, from two synonym queries and one error string — on
+  keyword queries; a query in sentence form, whose common words almost always trigger
+  the fallback, will cost more); and a read answered by the fallback is recorded in
+  `recall_events` with the count of its loose hits, so "searched and found nothing" no
+  longer counts the searches only the fallback answered (and when more digests match
+  than `--limit`, the recorded read is the first, strict page, while the top-up that
+  `loom log` shows may be the loose one).
 - **AC:** on a seeded corpus the on-topic entry ranks above off-topic ones and an empty
   result is a clean 200; FTS5-reserved characters (`"`, `*`, `NEAR`) cannot crash the
   endpoint; the backfill migration is idempotent; the WAL concurrency test
@@ -1163,7 +1194,8 @@ we decide about auth?" must be able to cut through hundreds of entries.
   nothing. Its categories, each checked against its definition on the corpus, are a
   control (the item's own words) and one per kind of miss: word forms, terms split
   across items, an extra term, synonyms, stale facts, still-current older facts and
-  error strings.
+  error strings. Since RT.1.4 it also reports `wrong`, the share of queries shown items
+  none of which is relevant — what a looser match costs.
   Its `RESULTS.md` is a golden the suite checks, so a change to retrieval lands with that
   file regenerated and its effect on every judged query in the diff.
 

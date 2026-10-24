@@ -21,7 +21,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
 from server import (auth, auth_events, client_ip, db, feedback, items, links, plugins, public_url,
-                    recall, search, ui_auth, ui_pages)
+                    recall, search, ui_auth, ui_pages, ui_render)
 # Imported for their side effect: both register their routes on `ui_pages.router` (and
 # their writes in `ui_pages.WRITE_ROUTES`), so they must be imported before
 # `app.include_router(ui_pages.router)` below.
@@ -1169,14 +1169,21 @@ def _parse_entry_ids(raw: str | None) -> list[int] | None:
     return list(dict.fromkeys(int(part) for part in parts))
 
 
+def _invalid_fallback() -> JSONResponse:
+    return _err(422, "invalid_fallback",
+                "Unknown 'fallback'; allowed: " + ", ".join(search.FALLBACKS))
+
+
 @app.get("/api/projects/{project_id}/items")
 def list_items(
     project_id: int,
     entry_ids: str | None = None,
     q: str | None = None,
     item_type: str | None = Query(None, alias="type"),
+    fallback: str | None = None,
 ):
-    """``GET /api/projects/{id}/items?entry_ids=…[&type=X][&q=…]`` (D13, t-entry-items).
+    """``GET /api/projects/{id}/items?entry_ids=…[&type=X][&q=…][&fallback=any_term]``
+    (D13, t-entry-items; ``fallback``: RT.1.4).
 
     Every item of the listed entries of THIS project — entry ids of another project
     answer nothing — each with ``match`` (does it answer every filter given?),
@@ -1187,6 +1194,8 @@ def list_items(
     if item_type is not None and item_type not in search.ITEM_TYPES:
         return _err(422, "invalid_type",
                     "Unknown 'type'; allowed: " + ", ".join(search.ITEM_TYPES))
+    if fallback is not None and fallback not in search.FALLBACKS:
+        return _invalid_fallback()
     ids = _parse_entry_ids(entry_ids)
     if ids is None:
         return _err(422, "invalid_entry_ids",
@@ -1197,7 +1206,9 @@ def list_items(
         if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
             return _err(404, "project_not_found", f"No project with id {project_id}")
         try:
-            found = items.items_for_entries(conn, project_id, ids, item_type=item_type, q=q)
+            found = items.items_for_entries(
+                conn, project_id, ids, item_type=item_type, q=q,
+                any_term=fallback == search.MATCH_ANY_TERM)
         except search.InvalidQuery:
             return _err(422, "invalid_query",
                         "The 'q' parameter is not a valid search expression.")
@@ -1214,6 +1225,7 @@ def list_entries(
     limit: int = search.DEFAULT_LIMIT,
     q: str | None = None,
     item_type: str | None = Query(None, alias="type"),
+    fallback: str | None = None,
 ):
     if limit < 1:
         limit = search.DEFAULT_LIMIT
@@ -1224,6 +1236,9 @@ def list_entries(
     if item_type is not None and item_type not in search.ITEM_TYPES:
         return _err(422, "invalid_type",
                     "Unknown 'type'; allowed: " + ", ".join(search.ITEM_TYPES))
+    # Validated whether or not there is a `q`; without one it changes nothing (RT.1.4).
+    if fallback is not None and fallback not in search.FALLBACKS:
+        return _invalid_fallback()
     conn = db.connect()
     try:
         if conn.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
@@ -1235,14 +1250,34 @@ def list_entries(
             # a 422 — the client's mistake, not a server fault. The body names the code
             # only: FTS5's own message quotes the query back and would turn this into a
             # reflection channel.
+            any_term = False
             try:
                 rows, has_more = search.search_entries(
                     conn, project_id, q, item_type=item_type, since=since, limit=limit
                 )
+                if (fallback == search.MATCH_ANY_TERM and not has_more
+                        and all(ui_render.is_digest(row["content_md"]) for row in rows)
+                        and search.any_term_expression(q) is not None):
+                    # RT.1.4, asked for: no entry holds every word — a digest that does is
+                    # no answer, since `loom log` only ever shows the latest one — so ask
+                    # for any of them. When that finds nothing, the answer is the query's
+                    # own. `has_more` means more strict hits beyond this page; a client
+                    # topping up its page reaches them, or the end, with a larger limit.
+                    # A digest is what the web UI calls one (`ui_render.is_digest`); the
+                    # client's own test (`curate.is_digest`) agrees on the frontmatter
+                    # okf writes, `type: digest` unquoted.
+                    loose, loose_more = search.search_entries(
+                        conn, project_id, q, item_type=item_type, since=since,
+                        limit=limit, any_term=True)
+                    if loose:
+                        rows, has_more, any_term = loose, loose_more, True
             except search.InvalidQuery:
                 return _err(422, "invalid_query",
                             "The 'q' parameter is not a valid search expression.")
             entries = _with_links(conn, [_entry_dict(r, ranked=True) for r in rows])
+            if any_term:
+                for entry in entries:
+                    entry["match_mode"] = search.MATCH_ANY_TERM
         else:
             sql = (
                 "SELECT e.id, e.session_id, e.created_at, e.covered_from, e.covered_to, "

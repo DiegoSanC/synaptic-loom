@@ -56,6 +56,15 @@ _SNIPPET_CLOSE = "**"
 _SNIPPET_ELLIPSIS = "…"
 _SNIPPET_TOKENS = 12
 
+# The `match_mode` of an answer the any-term fallback gave (RT.1.4): no entry (or no item
+# of an entry) held every word of the query, so these hold at least one of them. An
+# answer to the query as written carries no `match_mode`, exactly as before RT.1.4.
+MATCH_ANY_TERM = "any_term"
+# What a request may ask for with `fallback=` (RT.1.4). Asked for, never imposed: a
+# request without it is answered exactly as before, which is what keeps the web UI, an
+# older client (which would print a loose answer as an exact one) and curation strict.
+FALLBACKS = (MATCH_ANY_TERM,)
+
 # Which sqlite result codes mean "the caller's expression was bad" rather than "this
 # server is broken". SQLITE_ERROR (1) is what FTS5 returns for EVERY malformed MATCH
 # expression; every other code — BUSY/LOCKED (contention), FULL (no disk space, and
@@ -334,6 +343,21 @@ def _fts_expression(q: str) -> str:
     return " ".join('"' + word.replace('"', '""') + '"' for word in words)
 
 
+def any_term_expression(q: str) -> str | None:
+    """The MATCH value that finds ANY of the query's words, or ``None`` when there is no
+    such looser reading: the query is an expression (its operators already say how its
+    terms combine) or a single word (any of one word is all of it).
+
+    The words are quoted exactly as `_fts_expression` quotes them and joined by ``OR``,
+    so the any-term reading is the same words, only combined the other way.
+    """
+    expression = _fts_expression(q)    # validates; raises InvalidQuery like a search
+    if _is_expression(q.strip()):
+        return None
+    words = expression.split(" ")
+    return " OR ".join(words) if len(words) > 1 else None
+
+
 def search_entries(
     conn: sqlite3.Connection,
     project_id: int,
@@ -342,6 +366,7 @@ def search_entries(
     item_type: str | None = None,
     since: str | None = None,
     limit: int = DEFAULT_LIMIT,
+    any_term: bool = False,
 ) -> tuple[list[sqlite3.Row], bool]:
     """BM25-ranked hits with snippet/rank. Raises InvalidQuery on FTS5 syntax errors.
 
@@ -358,6 +383,11 @@ def search_entries(
         raise ValueError("item_type must be one of ITEM_TYPES")
     limit = max(1, min(int(limit), MAX_LIMIT))
     match_expression = _fts_expression(q)  # raises InvalidQuery before any DB work
+    if any_term:
+        loose = any_term_expression(q)
+        if loose is None:
+            return [], False
+        match_expression = loose
 
     sql = _SELECT
     params: list = [_SNIPPET_OPEN, _SNIPPET_CLOSE, _SNIPPET_ELLIPSIS, _SNIPPET_TOKENS,

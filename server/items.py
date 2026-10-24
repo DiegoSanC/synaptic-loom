@@ -314,6 +314,7 @@ def items_for_entries(
     *,
     item_type: str | None = None,
     q: str | None = None,
+    any_term: bool = False,
 ) -> list[dict]:
     """Every item of ``entry_ids`` that belongs to ``project_id``, with ``match``.
 
@@ -322,12 +323,31 @@ def items_for_entries(
     also yields a ``snippet``). That is what lets a reader tell an itemized entry with
     nothing matching apart from an entry that has no items at all.
 
+    ``any_term`` (RT.1.4, the route's ``fallback=any_term``): an entry none of whose items
+    passes every filter has its items of the requested type matched against ANY of the
+    words of ``q``, and those carry ``match_mode``. Off by default — the web UI calls
+    this over a whole project, where a loose match would be shown as an exact one.
+
     Raises :class:`search.InvalidQuery` for a malformed ``q``.
     """
     rows = _item_rows(conn, project_id, entry_ids)
     if not rows:
         return []
-    snippets = _search(conn, [row["id"] for row in rows], q) if q is not None else None
+    snippets = loose = None
+    if q is not None:
+        # Both readings are mapped before any DB work, so a malformed q is a 422 either way.
+        expression = search._fts_expression(q)
+        loose_expression = search.any_term_expression(q) if any_term else None
+        snippets = _search(conn, [row["id"] for row in rows], expression)
+        if loose_expression is not None:
+            unanswered = _entries_without_match(rows, snippets, item_type)
+            # Only the items that could match: one of another type would gain a snippet
+            # (and the reader a reason to wonder) without ever matching.
+            loose = _search(conn, [row["id"] for row in rows
+                                   if row["entry_id"] in unanswered
+                                   and (item_type is None or row["item_type"] == item_type)],
+                            loose_expression)
+            snippets = {**snippets, **loose}
     by_item = _links_for_items(conn, [row["id"] for row in rows])
     out = []
     for row in rows:
@@ -344,6 +364,8 @@ def items_for_entries(
         }
         if snippets is not None and row["id"] in snippets:
             item["snippet"] = snippets[row["id"]]
+        if loose and row["id"] in loose:
+            item["match_mode"] = search.MATCH_ANY_TERM
         item.update(by_item.get(row["id"]) or {
             "status": links.STATUS_CURRENT, "links_in": [], "links_out": []})
         out.append(item)
@@ -370,13 +392,22 @@ def _item_rows(conn: sqlite3.Connection, project_id: int,
     return sorted(rows, key=lambda row: (row["entry_id"], row["ordinal"]))
 
 
-def _search(conn: sqlite3.Connection, item_ids: list[int], q: str) -> dict[int, str]:
-    """``{item id: snippet}`` for the items among ``item_ids`` that match ``q``.
+def _entries_without_match(rows: list[sqlite3.Row], snippets: dict[int, str],
+                           item_type: str | None) -> set[int]:
+    """The entries among ``rows`` none of whose items passes every filter."""
+    answered = {row["entry_id"] for row in rows if row["id"] in snippets
+                and (item_type is None or row["item_type"] == item_type)}
+    return {row["entry_id"] for row in rows} - answered
 
-    ``q`` reaches SQLite only as the bound right-hand side of MATCH, mapped exactly as
-    the entries search maps it; a malformed expression is the caller's error.
+
+def _search(conn: sqlite3.Connection, item_ids: list[int],
+            expression: str) -> dict[int, str]:
+    """``{item id: snippet}`` for the items among ``item_ids`` that match ``expression``.
+
+    ``expression`` is a MATCH value the entries search's mapping produced from a user
+    query, and reaches SQLite only as the bound right-hand side of MATCH; a malformed
+    one is the caller's error.
     """
-    expression = search._fts_expression(q)   # raises InvalidQuery before any DB work
     found: dict[int, str] = {}
     cur = conn.cursor()
     try:

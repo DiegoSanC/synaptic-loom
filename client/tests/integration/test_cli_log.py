@@ -694,3 +694,112 @@ def test_a_malformed_item_status_or_link_list_renders_the_item_whole(
     assert cli.main(["log", "--no-digest"]) == 0
 
     assert "6.1  " + T61 + "\n" in capsys.readouterr().out
+
+
+# --- RT.1.4: an answer the any-term fallback gave says so ----------------------------
+def _loose(item):
+    return dict(item, match_mode="any_term")
+
+
+def test_a_page_the_fallback_answered_opens_with_its_note(env, monkeypatch, capsys):
+    _one_page(env, monkeypatch, [dict(D_E6, snippet="the **queue**", match_mode="any_term")],
+              [_loose(_item(6, 1, "decision", T61, snippet="for the **queue**")),
+               _item(6, 2, "method", T62, match=False),
+               _item(6, 3, "task", T63, match=False)])
+
+    assert cli.main(["log", "--grep", "queue flusher", "--no-digest"]) == 0
+
+    assert capsys.readouterr().out == (
+        cli.REFERENCE_FRAMING + "\n\n"
+        + "(no entry holds every word of this search; these hold some of them, best first)"
+        "\n\n"
+        + _RULE + "[2026-09-26T10:00:00Z] ana  ·  session s-6\n"
+        "\"Use SQLite with WAL for the queue\"  ·  1 of 3 items, each holding some of the "
+        "words\n\n"
+        "match: for the **queue**\n"
+        "6.1  " + T61 + "\n\n"
+    )
+
+
+def test_items_the_fallback_matched_say_so_on_their_entry(env, monkeypatch, capsys):
+    """The entry held every word, but no single item did (the words were split across
+    them): no page note, and the entry's line says its items each hold some."""
+    _one_page(env, monkeypatch, [dict(D_E6, snippet="**SQLite** … **vacuum**")],
+              [_loose(_item(6, 1, "decision", T61, snippet="**SQLite** with WAL")),
+               _loose(_item(6, 2, "method", T62, snippet="Never **vacuum**")),
+               _item(6, 3, "task", T63, match=False)])
+
+    assert cli.main(["log", "--grep", "sqlite vacuum", "--no-digest"]) == 0
+
+    assert capsys.readouterr().out == (
+        cli.REFERENCE_FRAMING + "\n\n"
+        + _RULE + "[2026-09-26T10:00:00Z] ana  ·  session s-6\n"
+        "\"Use SQLite with WAL for the queue\"  ·  2 of 3 items, each holding some of the "
+        "words\n\n"
+        "match: **SQLite** with WAL\n"
+        "6.1  " + T61 + "\n"
+        "match: Never **vacuum**\n"
+        "6.2  " + T62 + "\n\n"
+    )
+
+
+def test_the_fallback_note_is_not_printed_over_a_page_that_shows_no_entry(
+        env, monkeypatch, capsys):
+    _one_page(env, monkeypatch, [dict(D_E6, snippet="the **queue**", match_mode="any_term")],
+              [_item(6, n, t, text, match=False)
+               for n, t, text in ((1, "decision", T61), (2, "method", T62), (3, "task", T63))])
+
+    assert cli.main(["log", "--grep", "queue flusher", "--no-digest"]) == 0
+
+    out = capsys.readouterr().out
+    assert out == cli.REFERENCE_FRAMING + "\n\n" + cli.NO_ITEM_MATCH_NOTE + "\n"
+
+
+def test_the_fallback_note_rides_with_the_first_entry_and_is_never_counted_as_one(
+        env, monkeypatch, capsys):
+    """Under the budget, "k of n fetched entries shown" counts entries: the note is part
+    of the first one's block, so it is shown exactly when an entry is."""
+    big = "x" * 3000
+    pages = [_served(n, "ana", _okf(f"Entry {n}", f"## Context\n{big}\n## Decisions\n",
+                                    ["fact"])) for n in (3, 2, 1)]
+    _one_page(env, monkeypatch, [dict(e, snippet="**x**", match_mode="any_term")
+                                 for e in pages], [])
+
+    assert cli.main(["log", "--grep", "x y"]) == 0
+
+    out = capsys.readouterr().out
+    assert out.count(cli.ANY_TERM_NOTE) == 1
+    assert out.index(cli.ANY_TERM_NOTE) < out.index("Entry 3")
+    assert f"{cli.TRUNCATION_MARKER} 2 of 3 fetched entrie(s) shown" in out
+
+
+@pytest.mark.parametrize("args, sent", [
+    (["--grep", "queue flusher"], "any_term"),
+    (["--type", "method"], None),
+    (["--grep", "queue", "--type", "method"], "any_term"),
+])
+def test_grep_asks_for_the_any_term_fallback_on_both_requests(
+        args, sent, env, monkeypatch, capsys):
+    """RT.1.4: the server falls back only when asked, so a reader that renders the
+    fallback's note is the one that asks. (The unfiltered latest-digest lookup is not
+    the search, and carries neither.)"""
+    _setup(env, monkeypatch, env.repo)
+    _projects_by_cwd(env, _project())
+    seen = []
+
+    def record(page_key):
+        def handler(request):
+            if "q" in request.args or "type" in request.args:
+                seen.append((page_key, request.args.get("fallback")))
+            return _json({"entries": [D_E6], "has_more": False} if page_key == "entries"
+                         else {"items": [_item(6, 1, "decision", T61)]})
+        return handler
+
+    env.httpserver.expect_request("/api/projects/5/entries",
+                                  method="GET").respond_with_handler(record("entries"))
+    env.httpserver.expect_request("/api/projects/5/items",
+                                  method="GET").respond_with_handler(record("items"))
+
+    assert cli.main(["log", *args, "--no-digest"]) == 0
+
+    assert seen == [("entries", sent), ("items", sent)]

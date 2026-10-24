@@ -163,6 +163,16 @@ NO_ITEM_MATCH_NOTE = ("(no item of the entries found answers this search; "
 # The same, when other entries did print: the hidden ones are counted, never dropped silently.
 HIDDEN_BY_ITEMS_NOTE = ("({n} more entrie(s) matched outside their items; "
                         "--whole-entries prints them whole)")
+# RT.1.4: asked with `fallback=any_term` (every `--grep` asks), the server answers a search
+# whose words no entry (or no item of an entry) holds together with the entries or items
+# holding ANY of them, and marks each such hit `match_mode: any_term` — duplicated from
+# `server.search.MATCH_ANY_TERM` like the item vocabulary. A looser answer read as an
+# exact one would be trusted for the wrong reason, which is why the server never gives
+# one to a reader that did not ask (and so cannot say so).
+MATCH_ANY_TERM = "any_term"
+ANY_TERM_NOTE = ("(no entry holds every word of this search; "
+                 "these hold some of them, best first)")
+ANY_TERM_ITEMS = "each holding some of the words"
 
 # Timeout for the git remote command (seconds): resolving the remote must not hang the CLI.
 GIT_TIMEOUT = 10
@@ -939,9 +949,11 @@ def _entry_block(entry: dict, page: dict[int, dict], *, show_all: bool,
         matching = [item for item in items if item.get("match")]
         if not matching:
             return ""
+        loose = any(item.get("match_mode") == MATCH_ANY_TERM for item in matching)
         lines = [rule, _entry_header(entry) + "\n",
                  f"{json.dumps(_entry_title(entry.get('content_md') or ''), ensure_ascii=False)}"
-                 f"  ·  {len(matching)} of {len(items)} items\n", "\n"]
+                 f"  ·  {len(matching)} of {len(items)} items"
+                 f"{', ' + ANY_TERM_ITEMS if loose else ''}\n", "\n"]
         for item in matching:
             snippet = _snippet_line(item)
             if snippet is not None:
@@ -1069,6 +1081,10 @@ def _render_log(entries: list[dict], *, empty_note: str, show_all: bool,
                 for entry in entries]
     blocks = [block for block in rendered if block]
     hidden = rendered.count("")
+    if blocks and any(entry.get("match_mode") == MATCH_ANY_TERM for entry in page.values()):
+        # Part of the first entry's block, not a block of its own: it is shown exactly
+        # when an entry is, and the budget's "k of n entries" never counts it.
+        blocks[0] = ANY_TERM_NOTE + "\n\n" + blocks[0]
     if not blocks:
         if short_page:
             # The page came back with fewer entries than asked for while the server said
@@ -1319,6 +1335,8 @@ def cmd_log(args: argparse.Namespace) -> int:
     filtered = False
     if args.grep:
         params["q"] = args.grep
+        # RT.1.4: asked for, since this reader is the one that says so when it answered.
+        params["fallback"] = MATCH_ANY_TERM
         filtered = True
     if args.type:
         params["type"] = args.type
