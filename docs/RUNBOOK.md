@@ -286,8 +286,8 @@ The release that tokenizes both search indexes with Porter stemming (`migration`
 "migrations") rebuilds them at boot: `entries_fts` and `entry_items_fts` are dropped and
 re-created from the stored entries and items, each in its own transaction, before the
 first request is served (an interrupted rebuild leaves that index as it was, and the next
-start finishes the job). They are indexes only — no entry, item or link is touched — and the rebuild
-takes a moment proportional to the logbook's size.
+start finishes the job). They are indexes only — no entry, item or link is touched —
+and the rebuild takes a moment proportional to the logbook's size.
 
 1. Take an on-demand snapshot first (§3a), as for every release that migrates at boot.
 2. `fly deploy --ha=false`, then check `GET /api/health` and that a `?q=` search answers

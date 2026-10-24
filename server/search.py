@@ -3,10 +3,11 @@
 Additive-only schema extension per the frozen ``phase1-db-schema`` seam:
 ``ensure_search_schema(conn)`` is idempotent DDL (CREATE ... IF NOT EXISTS + a
 one-shot, rerunnable backfill) called from ``db.init_db`` — ``schema.sql`` stays
-untouched. Since the RT.1.1 amendment of 2026-10-24 it also drops and rebuilds an index
-built with an older tokenizer (:func:`drop_outdated_fts`); an external-content index holds
-no text, so that loses nothing. FTS5 must be compiled into the stdlib sqlite3 build; if it is not,
-``ensure_search_schema`` raises loudly (spec §1: RT.1 blocks, never degrades).
+untouched. Since the RT.1.1 amendment of 2026-10-24 it also drops and rebuilds an
+index built with an older tokenizer (:func:`drop_outdated_fts`); an external-content
+index holds no text, so that loses nothing. FTS5 must be compiled into the stdlib
+sqlite3 build; if it is not, ``ensure_search_schema`` raises loudly (spec §1: RT.1
+blocks, never degrades).
 
 Frozen interface (t-entries-fts / t-entry-item-types): see ``DESIGN.md`` §12.3, RT.1 and
 RT.2.3.
