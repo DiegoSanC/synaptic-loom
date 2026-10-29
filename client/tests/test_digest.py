@@ -651,10 +651,10 @@ def test_the_frontmatter_is_built_by_the_script_not_by_the_model(tmp_path, monke
 
 
 def _two_project_db(path):
-    """A REAL database with two registered projects (schema + FTS5 + links)."""
+    """A REAL database with two registered projects (schema + FTS5 + links + D22)."""
     import sqlite3
 
-    from server import db, links, search
+    from server import db, extracts, links, search
 
     conn = sqlite3.connect(str(path))
     conn.executescript(db.SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -667,6 +667,7 @@ def _two_project_db(path):
     conn.commit()
     search.ensure_search_schema(conn)
     links.ensure_links_schema(conn)
+    extracts.ensure_extracts_schema(conn)   # create_entry reads projects.store_extracts
     conn.close()
     return path
 

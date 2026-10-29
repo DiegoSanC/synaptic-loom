@@ -697,8 +697,8 @@ class _LocalApi:
 
 
 def _corpus_db(path, bodies: list[str]):
-    """A real database (schema + FTS5 + entry_links) holding one project's entries."""
-    from server import db, links, search
+    """A real database (schema + FTS5 + entry_links + D22) holding one project's entries."""
+    from server import db, extracts, links, search
 
     conn = sqlite3.connect(str(path))
     conn.executescript(db.SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -714,6 +714,7 @@ def _corpus_db(path, bodies: list[str]):
     conn.commit()
     search.ensure_search_schema(conn)
     links.ensure_links_schema(conn)
+    extracts.ensure_extracts_schema(conn)   # create_entry reads projects.store_extracts
     conn.close()
     return path
 
