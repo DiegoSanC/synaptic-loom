@@ -206,7 +206,7 @@ One request per captured session (`client/loom/processor.py`, the entry payload)
   "session_id":     "…",
   "covered_from":   "<uuid>",                // the range summarized
   "covered_to":     "<uuid>",
-  "content_md":     "## Decisions\n- …",     // THE SUMMARY — the only prose
+  "content_md":     "## Decisions\n- …",     // THE SUMMARY
   "content_hash":   "sha256:…",
   "model":          "sonnet",
   "prompt_version": "v4",
@@ -224,7 +224,9 @@ keeps its first and last 250 000. The server stores it next to the entry, compre
 Anything the conversation itself contains travels with it, file paths and command output
 included. It is sent only for projects whose listing says `store_extracts: true`, which is
 the default; a team admin turns it off per project (`python -m server.admin extracts
---remote <repo> off`, `--purge` to delete what is stored). `loom enable`, `loom register`,
+--remote <repo> off`, `--purge` to delete what is stored; copies already in the server's
+backups age out with them). Your client reads a cached listing, refreshed hourly, so for
+up to an hour after a switch-off it may still send one; the server drops it. `loom enable`, `loom register`,
 `loom status` and `loom doctor` name the projects you capture whose extracts are kept.
 
 What never leaves, under any configuration:

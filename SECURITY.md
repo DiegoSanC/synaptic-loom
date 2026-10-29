@@ -24,7 +24,7 @@ Synaptic Loom moves a team's knowledge between machines, so these matter most:
   setup codes, the web UI session, roles, and the revocation cascade (`DESIGN.md` §6).
 - **Anything that makes the client upload more than the summary and its redacted
   extract:** a raw transcript, a token, a secret that gets past the gitleaks checks, an
-  extract sent for a project switched off, or a stored extract that search can reach
+  extract stored for a project switched off, or a stored extract that search can reach
   (`docs/USER-GUIDE.md`, "What actually leaves your machine").
 - **Attribution:** a session filed under the wrong project (`contract/ATTRIBUTION.md`).
 - **The deployment guides:** a setting in `fly.toml` or `deploy/compose/` that exposes

@@ -94,3 +94,48 @@ def test_nothing_is_said_when_no_captured_project_keeps_extracts(env, monkeypatc
     cli.main(["doctor"])
 
     assert NOTICE not in capsys.readouterr().out
+
+
+def test_register_of_a_registered_project_says_so(env, monkeypatch, capsys):
+    # Before `_serve`'s listing: the mock answers with the first handler that matches.
+    env.httpserver.expect_request("/api/projects", method="GET",
+                                  query_string={"remote": REMOTE}).respond_with_json(
+        {"project": _project(REMOTE, store_extracts=True)})
+    _serve(env, monkeypatch, [])
+
+    assert cli.main(["register"]) == 0
+
+    assert NOTICE in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("flag, told", [(True, True), (False, False)], ids=["on", "off"])
+def test_register_that_loses_the_race_says_so_from_the_conflict(
+        env, monkeypatch, capsys, flag, told):
+    _serve(env, monkeypatch, [])
+    env.httpserver.expect_request("/api/projects", method="POST").respond_with_json(
+        {"error": "already_registered",
+         "project": {"id": 3, "canonical_remote": REMOTE, "name": "b", "store_extracts": flag},
+         "registered_by": "dev3", "registered_at": "2026-07-01T00:00:00Z"}, status=409)
+
+    assert cli.main(["register"]) == 0
+
+    assert (NOTICE in capsys.readouterr().out) is told
+
+
+def test_in_legacy_mode_every_registered_project_that_keeps_extracts_is_named(
+        env, monkeypatch, capsys):
+    _serve(env, monkeypatch, [_project(REMOTE, store_extracts=True),
+                              _project(OTHER, pid=4, store_extracts=False)],
+           capture_mode=None)
+    cli.main(["doctor"])        # refreshes nothing; status reads the cache below
+    doctor = capsys.readouterr().out
+    (env.home / "projects_cache.json").write_text(json.dumps({
+        "fetched_at": "2999-01-01T00:00:00Z",
+        "projects": [_project(REMOTE, store_extracts=True),
+                     _project(OTHER, pid=4, store_extracts=False)]}), encoding="utf-8")
+    cli.main(["status"])
+    status = capsys.readouterr().out
+
+    for out in (status, doctor):
+        [line] = [ln for ln in out.splitlines() if NOTICE in ln]
+        assert REMOTE in line and OTHER not in line

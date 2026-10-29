@@ -468,7 +468,8 @@ def cmd_register(args: argparse.Namespace) -> int:
             f"Already registered by {data.get('registered_by') or 'unknown'} "
             f"on {data.get('registered_at') or '?'}."
         )
-        _enable_after_register(cfg, canonical, False)
+        project = data.get("project") if isinstance(data.get("project"), dict) else {}
+        _enable_after_register(cfg, canonical, project.get("store_extracts") is True)
         return 0
     _print_http_error(resp)
     return 1
@@ -3186,9 +3187,13 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 resp = api._request("GET", "/api/projects")
                 if resp.status_code == 200:
                     checks.append(("ok", "token valid (GET /api/projects → 200)"))
-                    listed = resp.json().get("projects")
-                    kept = _extract_projects(cfg, [p for p in listed or []
-                                                   if isinstance(p, dict)])
+                    try:
+                        listed = resp.json().get("projects")
+                    except (ValueError, AttributeError):
+                        listed = None
+                    kept = _extract_projects(cfg, [
+                        p for p in (listed if isinstance(listed, list) else [])
+                        if isinstance(p, dict)])
                     if kept:
                         checks.append(("ok", f"session extracts: {EXTRACTS_NOTICE}: "
                                              f"{', '.join(kept)}"))

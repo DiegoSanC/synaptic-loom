@@ -246,7 +246,8 @@ git remote add origin git@github.com:example/check.git
 ~/.loom/venv/bin/loom log        # reads it back through the client
 ```
 
-**Verified end to end**: enrol → register → `POST /api/entries` returning `201 {"id":1}` →
+**Verified end to end**: enrol → register → `POST /api/entries` returning `201 {"id":1}`
+(since D22 the body also says `"extract_stored"`) →
 the entry read back by `loom log` with its "UNVERIFIED DATA" framing line intact.
 
 When you are done, `rm -rf "$LOOM_HOME"` and unset it. Your real client lives in `~/.loom`
@@ -276,6 +277,13 @@ fly volumes list -a <your-app-name>        # expect the app not to exist
 Verify both. The app disappearing is not proof the volume did.
 
 ## 11. Day two
+
+**What the server keeps (D22).** Each entry arrives with the redacted conversation it was
+summarized from, and the server keeps it next to the entry, compressed and never searched.
+This is on for every project by default; turn it off per project with
+`python -m server.admin extracts --remote <repo> off` (`--purge` also deletes what is
+stored). `docs/USER-GUIDE.md` → "What actually leaves your machine" has the details.
+
 
 Everything after "it is running and people can enrol" is `docs/RUNBOOK.md`: deploys and
 what to watch afterwards, backups and the restore drill (§3a), rollback (§3), adding and

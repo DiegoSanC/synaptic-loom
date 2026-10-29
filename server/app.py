@@ -151,7 +151,8 @@ def _conflict(conn: sqlite3.Connection, project_id: int) -> JSONResponse:
     return _err(
         409,
         "already_registered",
-        project={"id": row["id"], "canonical_remote": row["canonical_remote"], "name": row["name"]},
+        project={"id": row["id"], "canonical_remote": row["canonical_remote"], "name": row["name"],
+                 "store_extracts": bool(row["store_extracts"])},  # D22
         registered_by=row["created_by"],
         registered_at=row["created_at"],
     )
@@ -854,7 +855,8 @@ def create_project(payload: ProjectCreate, request: Request):
                 return _conflict(conn, existing["project_id"])
             return JSONResponse(
                 status_code=201,
-                content={"id": pid, "canonical_remote": None, "name": name},
+                content={"id": pid, "canonical_remote": None, "name": name,
+                         "store_extracts": True},  # D22, as for a remote
             )
 
         return _err(422, "validation_error", "Provide either 'remote_url' or ('path' and 'hostname')")

@@ -75,7 +75,7 @@ def test_the_extract_is_stored_compressed_in_its_own_table(client, dev, env):
     finally:
         conn.close()
     assert zlib.decompress(row["body"]).decode("utf-8") == EXTRACT
-    assert "importer" not in content     # the entry itself is unchanged
+    assert content == _entry()["content_md"]     # the entry itself is stored as posted
 
 
 def test_a_word_only_the_extract_holds_finds_nothing(client, dev):
@@ -83,10 +83,21 @@ def test_a_word_only_the_extract_holds_finds_nothing(client, dev):
     pid = client.get("/api/projects", headers=dev["auth"]).json()["projects"][0]["id"]
 
     for word in ("importer", "blank"):          # in the extract only
-        r = client.get(f"/api/projects/{pid}/entries", params={"q": word},
-                       headers=dev["auth"])
+        for params in ({"q": word}, {"q": word, "fallback": "any_term"},
+                       {"q": f"{word} skips", "fallback": "any_term"}):
+            r = client.get(f"/api/projects/{pid}/entries", params=params,
+                           headers=dev["auth"])
+            assert r.status_code == 200
+            hits = [e["content_md"] for e in r.json()["entries"]]
+            # any_term on "<word> skips" may find the entry through "skips" — never
+            # through the extract's word, which is the point: nothing indexed holds it.
+            assert all(word not in text for text in hits), (word, params)
+            if "skips" not in params["q"]:
+                assert hits == [], (word, params)
+        r = client.get(f"/api/projects/{pid}/items",
+                       params={"entry_ids": "1", "q": word}, headers=dev["auth"])
         assert r.status_code == 200
-        assert r.json()["entries"] == [], word
+        assert r.json()["items"] == [], word
     found = client.get(f"/api/projects/{pid}/entries", params={"q": "skips"},
                        headers=dev["auth"]).json()["entries"]
     assert len(found) == 1                        # in the summary: found as before
@@ -112,7 +123,8 @@ def test_the_read_needs_a_bearer(client, dev):
 
 
 def test_an_oversized_extract_is_refused_and_nothing_is_stored(client, dev):
-    too_long = "x" * (extracts.MAX_CHARS + 1)
+    # DESIGN §6.2: at most 501 000 characters (two halves of 250 000 and the cut line).
+    too_long = "x" * 501_001
 
     r = client.post("/api/entries", headers=dev["auth"], json=_entry(extract=too_long))
 
@@ -120,7 +132,7 @@ def test_an_oversized_extract_is_refused_and_nothing_is_stored(client, dev):
     pid = client.get("/api/projects", headers=dev["auth"]).json()["projects"][0]["id"]
     assert client.get(f"/api/projects/{pid}/entries",
                       headers=dev["auth"]).json()["entries"] == []
-    at_the_limit = "x" * extracts.MAX_CHARS
+    at_the_limit = "x" * 501_000
     assert client.post("/api/entries", headers=dev["auth"],
                        json=_entry(extract=at_the_limit)).status_code == 201
 
@@ -181,6 +193,9 @@ def test_purge_deletes_the_stored_extracts_of_that_project_only(client, dev, cap
     assert "1 stored extract" in capsys.readouterr().out
     assert client.get(f"/api/entries/{purged}/extract",
                       headers=dev["auth"]).status_code == 404
+    flags = {p["canonical_remote"]: p["store_extracts"]
+             for p in client.get("/api/projects", headers=dev["auth"]).json()["projects"]}
+    assert flags == {REMOTE: False, "github.com/org/c": True}
     assert client.get(f"/api/entries/{kept}/extract",
                       headers=dev["auth"]).status_code == 200
 
@@ -193,6 +208,23 @@ def test_purge_needs_off(capsys, env):
 def test_the_switch_on_an_unknown_project_fails_naming_it(env, capsys):
     assert admin.main(["extracts", "--remote", "github.com/org/ghost", "off"]) == 1
     assert "github.com/org/ghost" in capsys.readouterr().err
+    assert admin.main(["extracts", "--remote", "", "off"]) == 1
+    assert "not a git remote" in capsys.readouterr().err
+
+
+def test_every_registration_answer_carries_the_flag(client, dev, capsys):
+    again = client.post("/api/projects", headers=dev["auth"],
+                        json={"remote_url": "git@github.com:org/b.git"})
+    by_path = client.post("/api/projects", headers=dev["auth"],
+                          json={"path": "/home/dev/x", "hostname": "wsl", "name": "x"})
+    assert admin.main(["extracts", "--remote", REMOTE, "off"]) == 0
+    off = client.post("/api/projects", headers=dev["auth"],
+                      json={"remote_url": "git@github.com:org/b.git"})
+
+    assert again.status_code == 409
+    assert again.json()["project"]["store_extracts"] is True
+    assert by_path.status_code == 201 and by_path.json()["store_extracts"] is True
+    assert off.json()["project"]["store_extracts"] is False
 
 
 def test_a_project_from_before_the_column_starts_on(tmp_path):

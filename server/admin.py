@@ -223,7 +223,11 @@ def _listusers(args: argparse.Namespace) -> int:
 def _extracts(args: argparse.Namespace) -> int:
     if args.purge and args.state != "off":
         args.parser.error("--purge goes with 'off'")
-    canonical = normalize(args.remote)
+    try:
+        canonical = normalize(args.remote)
+    except ValueError:
+        print(f"error: {args.remote!r} is not a git remote", file=sys.stderr)
+        return 1
     conn = db.init_db()
     try:
         row = conn.execute("SELECT id FROM projects WHERE canonical_remote = ?",
