@@ -13,6 +13,8 @@ environment variable (default `./loom.db`) — the same one app.py uses.
     python -m server.admin promote --email dev2@example.test    # D20: the first admin
     python -m server.admin demote --email dev2@example.test
     python -m server.admin listusers
+    python -m server.admin extracts --remote github.com/org/repo off [--purge]   # D22
+    python -m server.admin extracts --remote github.com/org/repo on
 
 `invite` is the onboarding path (issue #20): it prints a single-use enrolment code that
 `loom enroll` exchanges, on the engineer's machine, for that machine's own device token.
@@ -23,13 +25,18 @@ When the server's public URL is known (D19) it also prints the invitation link,
 `promote`/`demote` set ``users.role`` (D20) and are the only commands here that write an
 ``auth_events`` row, with a ``NULL`` actor. Neither they nor `deactivate` ever leave the
 server without an active admin once it has one.
+
+`extracts` turns a project's ``store_extracts`` (D22) on or off: off, the project's next
+entries are stored without their redacted extract; ``--purge`` also deletes the extracts
+already stored for it.
 """
 import argparse
 import secrets
 import sqlite3
 import sys
 
-from server import auth, db, public_url
+from server import auth, db, extracts, public_url
+from server.normalize import normalize
 
 
 def _adduser(args: argparse.Namespace) -> int:
@@ -213,6 +220,29 @@ def _listusers(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def _extracts(args: argparse.Namespace) -> int:
+    if args.purge and args.state != "off":
+        args.parser.error("--purge goes with 'off'")
+    canonical = normalize(args.remote)
+    conn = db.init_db()
+    try:
+        row = conn.execute("SELECT id FROM projects WHERE canonical_remote = ?",
+                           (canonical,)).fetchone()
+        if row is None:
+            print(f"error: no project registered for remote {canonical!r}", file=sys.stderr)
+            return 1
+        conn.execute("UPDATE projects SET store_extracts = ? WHERE id = ?",
+                     (1 if args.state == "on" else 0, row["id"]))
+        purged = extracts.purge(conn, row["id"]) if args.purge else None
+        conn.commit()
+    finally:
+        conn.close()
+    print(f"Extracts {args.state} for {canonical}.")
+    if purged is not None:
+        print(f"Deleted {purged} stored extract(s).")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m server.admin",
@@ -274,6 +304,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="revoke the live device tokens no renewal chain reaches (left by pre-D19 renewals)",
     )
     p_orphans.set_defaults(func=_revoke_orphans)
+
+    p_extracts = sub.add_parser(
+        "extracts", help="keep (on) or stop keeping (off) a project's redacted session extracts")
+    p_extracts.add_argument("--remote", required=True, help="the project's git remote")
+    p_extracts.add_argument("state", choices=("on", "off"))
+    p_extracts.add_argument("--purge", action="store_true",
+                            help="with off: also delete the extracts already stored")
+    p_extracts.set_defaults(func=_extracts, parser=p_extracts)
 
     return parser
 

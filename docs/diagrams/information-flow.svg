@@ -57,7 +57,7 @@
   <!-- step 6 -->
   <circle cx="88" cy="580" r="16" fill="#0E6862"/>
   <text x="88" y="585" text-anchor="middle" font-size="13" font-weight="600" fill="#FFFFFF">6</text>
-  <text x="120" y="575" font-size="14" font-weight="500" fill="#212B36">The summary is posted, nothing else</text>
+  <text x="120" y="575" font-size="14" font-weight="500" fill="#212B36">The summary is posted with the redacted extract</text>
   <text x="120" y="595" font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">POST /api/entries</text>
   <text x="258" y="595" font-size="13" fill="#5B6B7B">with this machine's device token</text>
 
@@ -79,10 +79,8 @@
   <g font-family="'SF Mono', Menlo, Consolas, monospace" font-size="12.5" fill="#212B36">
     <rect x="124" y="664" width="128" height="20" rx="6" fill="#EDF3FE" stroke="#1D63ED" stroke-width="1"/>
     <text x="188" y="678" text-anchor="middle">raw transcript</text>
-    <rect x="260" y="664" width="104" height="20" rx="6" fill="#EDF3FE" stroke="#1D63ED" stroke-width="1"/>
-    <text x="312" y="678" text-anchor="middle">file paths</text>
-    <rect x="372" y="664" width="112" height="20" rx="6" fill="#EDF3FE" stroke="#1D63ED" stroke-width="1"/>
-    <text x="428" y="678" text-anchor="middle">device token</text>
+    <rect x="260" y="664" width="112" height="20" rx="6" fill="#EDF3FE" stroke="#1D63ED" stroke-width="1"/>
+    <text x="316" y="678" text-anchor="middle">device token</text>
   </g>
 
   <!-- ===================== Column 2: the server ===================== -->

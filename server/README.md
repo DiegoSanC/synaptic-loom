@@ -12,7 +12,8 @@ Normative contracts in `DESIGN.md §6.2`; schema in `DESIGN.md §6.1` / `server/
 | `client_ip.py` | `LOOM_CLIENT_IP_SOURCE`: which address keys those windows and the audit line (D17) |
 | `db.py` | `sqlite3` connection (WAL, `foreign_keys=ON`, `busy_timeout`), idempotent schema, `hash_token` / `iso_now` helpers |
 | `normalize.py` | Normalization of the git remote into a canonical identity (server-side authority) |
-| `admin.py` | Admin CLI: `invite` / `listdevices` / `revokedevice` (machines) · `listusers` / `deactivate` / `promote` / `demote` (people; roles are D20's) · `adduser` (break-glass, see below) |
+| `admin.py` | Admin CLI: `invite` / `listdevices` / `revokedevice` (machines) · `listusers` / `deactivate` / `promote` / `demote` (people; roles are D20's) · `extracts` (a project's stored extracts, D22) · `adduser` (break-glass, see below) |
+| `extracts.py` | D22: the redacted extract kept next to each entry (`entry_extracts`, zlib, never indexed) and the per-project `store_extracts` switch |
 | `schema.sql` | Literal schema (never rewritten) |
 
 ## Configuration
@@ -57,6 +58,7 @@ Day to day:
 .venv/bin/python -m server.admin revokedevice --id 3                     # ONE machine
 .venv/bin/python -m server.admin deactivate --email dev2@example.test    # the person: every token of theirs
 .venv/bin/python -m server.admin promote --email dev2@example.test       # role admin; `demote` → member
+.venv/bin/python -m server.admin extracts --remote github.com/org/repo off [--purge]   # D22; `on` again
 ```
 
 `demote` and `deactivate` refuse the last active admin (`last_admin`, exit 1); RUNBOOK §4

@@ -840,6 +840,9 @@ export LOOM_DB=~/.loom-server/loom.db
 .venv/bin/python -m server.admin revoke-orphans                                   # once, on the D19 upgrade (§2)
 .venv/bin/python -m server.admin promote --email dev2@example.test                # role admin (D20)
 .venv/bin/python -m server.admin demote --email dev2@example.test                 # role member
+.venv/bin/python -m server.admin extracts --remote github.com/org/repo off        # D22: stop keeping its extracts
+.venv/bin/python -m server.admin extracts --remote github.com/org/repo off --purge  # …and delete the stored ones
+.venv/bin/python -m server.admin extracts --remote github.com/org/repo on
 # Break-glass: a permanent token printed once (pre-#20 flow; still valid, never expires)
 .venv/bin/python -m server.admin adduser --name dev2 --email dev2@example.test
 ```

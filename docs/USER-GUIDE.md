@@ -18,8 +18,10 @@ available to the team on Wednesday instead of staying in one person's terminal h
 
 You never write an entry by hand and you never run anything to make capture happen.
 
-**What it is not:** a transcript archive, an activity tracker, or per-person metrics. The
-raw transcript never leaves your machine — only the summary does. `loom stats` reports team
+**What it is not:** an activity tracker or per-person metrics. The raw transcript never
+leaves your machine: the summary does, and so does the conversation it was written from,
+with every secret gitleaks finds replaced ([below](#what-actually-leaves-your-machine)).
+`loom stats` reports team
 totals and counts distinct people per item; it never reports a named person's output. The
 one place a name sits next to a verdict is the item the verdict is about: the web UI shows
 who found an item stale or not applicable, so it can be curated ([Feedback](#feedback-the-only-part-that-needs-you)).
@@ -209,22 +211,35 @@ One request per captured session (`client/loom/processor.py`, the entry payload)
   "model":          "sonnet",
   "prompt_version": "v4",
   "item_types":     ["decision", "fact"],
-  "items":          [ /* the decisions, one per line, addressable */ ]
+  "items":          [ /* the decisions, one per line, addressable */ ],
+  "extract":        "[user]: …\n[assistant]: …"  // D22, below
 }
 ```
 
+**The extract** is the text the summarizer read: the session's new turns, your messages,
+the agent's replies and its tool calls and results, with every value gitleaks finds
+replaced by `[REDACTED:<kind>]` (step 5b, D16). A session longer than 500 000 characters
+keeps its first and last 250 000. The server stores it next to the entry, compressed, and
+**never searches it**: it is there so the entry can be re-read against what was said.
+Anything the conversation itself contains travels with it, file paths and command output
+included. It is sent only for projects whose listing says `store_extracts: true`, which is
+the default; a team admin turns it off per project (`python -m server.admin extracts
+--remote <repo> off`, `--purge` to delete what is stored). `loom enable`, `loom register`,
+`loom status` and `loom doctor` name the projects you capture whose extracts are kept.
+
 What never leaves, under any configuration:
 
-- **The raw transcript.** It is read locally to build the summary and stays in
-  `~/.claude/projects/`.
-- **File paths and local directories.** The summarizer is given no path and runs with no
-  tools at all (`--safe-mode --tools ""`, see `contract/FLAGS.md`).
+- **The raw transcript.** It is read locally; only the redacted extract above is sent, and
+  the file stays in `~/.claude/projects/`.
+- **Your local directories as metadata.** No field of the request carries a path, and the
+  summarizer runs with no tools at all (`--safe-mode --tools ""`, see `contract/FLAGS.md`).
 - **Your token.** It authenticates the request; it is never part of one.
 - **Anything from a repo you have not enabled on this machine** — nor anything said in it
   before you enabled it.
 
-**Secrets are caught before the upload, not after.** Every summary is scanned before it is
-posted (I4, fail-closed). A hit sends the entry to `~/.loom/quarantine/` and it is never
+**Secrets are caught before the upload, not after.** The extract is redacted, and scanned
+again, before the summarizer reads it; every summary is scanned before it is posted (I4,
+fail-closed). A hit sends the entry to `~/.loom/quarantine/` and it is never
 uploaded. Review it yourself; if it was a false alarm, release it with
 `loom push-quarantine`.
 

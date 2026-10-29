@@ -20,8 +20,8 @@ from starlette.concurrency import run_in_threadpool
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from server import (auth, auth_events, client_ip, db, feedback, items, links, plugins, public_url,
-                    recall, search, ui_auth, ui_pages, ui_render)
+from server import (auth, auth_events, client_ip, db, extracts, feedback, items, links, plugins,
+                    public_url, recall, search, ui_auth, ui_pages, ui_render)
 # Imported for their side effect: both register their routes on `ui_pages.router` (and
 # their writes in `ui_pages.WRITE_ROUTES`), so they must be imported before
 # `app.include_router(ui_pages.router)` below.
@@ -132,11 +132,15 @@ def _project_dict(row: sqlite3.Row) -> dict:
         "name": row["name"],
         "created_by": row["created_by"],
         "created_at": row["created_at"],
+        # D22: whether this project's entries keep their redacted extract. A client
+        # sends one only when this is true, so a server without the key gets none.
+        "store_extracts": bool(row["store_extracts"]),
     }
 
 
 _PROJECT_SELECT = (
-    "SELECT p.id, p.canonical_remote, p.name, p.created_at, u.name AS created_by "
+    "SELECT p.id, p.canonical_remote, p.name, p.created_at, p.store_extracts, "
+    "u.name AS created_by "
     "FROM projects p LEFT JOIN users u ON u.id = p.created_by"
 )
 
@@ -492,6 +496,9 @@ class EntryCreate(BaseModel):
     # Optional and additive (D13, t-entry-items), the same way: absent → no item rows,
     # and every reader treats the entry as a whole, as before.
     items: list[ItemIn] | None = None
+    # Optional and additive (D22): the redacted text the summary was written from.
+    # Stored next to the entry when the project keeps extracts; never indexed.
+    extract: str | None = Field(default=None, min_length=1, max_length=extracts.MAX_CHARS)
 
     @field_validator("item_types")
     @classmethod
@@ -811,7 +818,9 @@ def create_project(payload: ProjectCreate, request: Request):
                 return _conflict(conn, existing["id"])
             return JSONResponse(
                 status_code=201,
-                content={"id": cur.lastrowid, "canonical_remote": canonical, "name": name},
+                # D22: a new project keeps extracts (the column's default).
+                content={"id": cur.lastrowid, "canonical_remote": canonical, "name": name,
+                         "store_extracts": True},
             )
 
         if payload.path and payload.hostname:
@@ -886,11 +895,14 @@ def create_entry(payload: EntryCreate, request: Request):
     conn = db.connect()
     try:
         proj = conn.execute(
-            "SELECT id FROM projects WHERE canonical_remote = ?", (canonical,)
+            "SELECT id, store_extracts FROM projects WHERE canonical_remote = ?", (canonical,)
         ).fetchone()
         if proj is None:
             return _err(404, "project_not_found", f"No project registered for remote '{canonical}'")
+        # D22: a project switched off keeps the entry and drops the extract.
+        store_extract = payload.extract is not None and bool(proj["store_extracts"])
         try:
+            created_at = db.iso_now()
             cur = conn.execute(
                 "INSERT INTO entries (project_id, user_id, session_id, covered_from, covered_to, "
                 "content_md, content_hash, model, prompt_version, created_at) "
@@ -898,7 +910,7 @@ def create_entry(payload: EntryCreate, request: Request):
                 (
                     proj["id"], uid, payload.session_id, payload.covered_from, payload.covered_to,
                     payload.content_md, payload.content_hash, payload.model, payload.prompt_version,
-                    db.iso_now(),
+                    created_at,
                 ),
             )
             # Same transaction as the entry: a stored entry always carries exactly the
@@ -911,6 +923,8 @@ def create_entry(payload: EntryCreate, request: Request):
                 )
             if entry_items:
                 items.insert(conn, cur.lastrowid, entry_items)
+            if store_extract:
+                extracts.insert(conn, cur.lastrowid, payload.extract, created_at)
             conn.commit()
         except sqlite3.IntegrityError as exc:
             conn.rollback()
@@ -923,9 +937,27 @@ def create_entry(payload: EntryCreate, request: Request):
                 # content_hash is a duplicate; anything else is a fault (→ 500).
                 raise
             return _err(409, "duplicate_entry", "An entry with this content_hash already exists")
-        return JSONResponse(status_code=201, content={"id": cur.lastrowid})
+        return JSONResponse(status_code=201,
+                            content={"id": cur.lastrowid, "extract_stored": store_extract})
     finally:
         conn.close()
+
+
+@app.get("/api/entries/{entry_id}/extract")
+def get_entry_extract(entry_id: int):
+    """``GET /api/entries/{id}/extract`` (D22) — 200 · 404 ``extract_not_found``.
+
+    The redacted text the entry was summarized from. An unknown entry, and one stored
+    without an extract, answer the same 404.
+    """
+    conn = db.connect()
+    try:
+        found = extracts.fetch(conn, entry_id) if db.is_row_id(entry_id) else None
+    finally:
+        conn.close()
+    if found is None:
+        return _err(404, "extract_not_found", f"No stored extract for entry {entry_id}")
+    return found
 
 
 @app.post("/api/links")

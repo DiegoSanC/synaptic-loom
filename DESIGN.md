@@ -33,6 +33,7 @@ behind them, extracted automatically from the author's Claude Code sessions.
 | D18 | **Backups for the Docker Compose topology = `server/backup.sh` in a `backup` service, plus an off-host copy that another machine pulls** (owner decision of 2026-10-17), meeting D8. The service is the server's image run as `app`, with `network_mode: none` and no port; it runs `backup.sh --every ${LOOM_BACKUP_INTERVAL:-6h}`: one backup when it starts and one per interval, by SQLite's online backup API from a read-only connection, into a hidden temporary file in its own volume `loom_backups`, switched to `journal_mode=DELETE` (one self-contained file), kept only if `PRAGMA integrity_check` is `ok`, fsynced and renamed to `loom-<UTC time>.db` (0600; the directory 0700). A failed copy is deleted, purges nothing and ends the service non-zero, so the restart policy retries it and `docker compose ps` shows it; retention keeps the newest `LOOM_BACKUP_KEEP` (56, i.e. 14 days at the default interval — owner decision of 2026-10-19) files the script named. The off-host copy is **pulled** over SSH: `backup.sh --export` opens the backups under the lock the backups take and streams them as a tar after releasing it, so a pull never races a write or the retention and a stalled pull never holds up a backup. Provider disk snapshots are an acceptable complement, not a substitute. `deploy/compose/restore.sh <file>` restores into a **new** volume (integrity-checked there before the server is touched), records it as `LOOM_DATA_VOLUME` in `.env`, recreates `loom` and `backup` on it and leaves the volume it replaced as it was. Frozen by goal wave `s` | Litestream (continuous WAL replication to object storage); the provider's disk snapshots alone; a cron job on the host running `backup.sh` | Entries are written a few times a day and every transcript stays on its developer's machine, so an RPO of hours is acceptable. Litestream would shrink it to seconds at the price of a second process and an object-storage credential living on the server; it can be added later without undoing this. Snapshots alone are crash-consistent images of the live disk, never integrity-checked and tied to one provider's account. A host cron job lives outside the repo, needs a Python and the right user on the host, and is neither started nor tested by `docker compose up`; the service is both. Pulling rather than pushing keeps every credential off the server: whoever takes the server cannot reach the off-host machine, and a pull that never replaces a file it already has (`docs/SERVER-GUIDE.md` Part 2 §8a) leaves it no way to damage the copies there. Given up: the backups volume shares the database's disk, so against the loss of the host the RPO is the interval plus the pull schedule; and the host keeps `KEEP × interval` of history (14 days at the defaults) — longer history is the off-host copy's job |
 | D20 | **Accounts v2, phase 2a: global roles and a writable `/ui` reached through `loom ui`, no passwords** (owner decision of 2026-10-19; contract §6.4). `users.role` is `admin` or `member` (default `member`); `admin.py promote/demote --email` bootstraps the first admin, and the last active admin can be neither demoted nor deactivated. The session `loom ui` opens may write, within its user's role, through the POST-only routes §6.4 lists and no other: an `Origin` check against the server's public URL (`Sec-Fetch-Site: same-origin` as the fallback; a request with neither header is refused), a CSRF token `HMAC(cookie, "csrf")` that is never stored, and `SameSite=Strict` as before; `/api/*` stays bearer-only. Members manage their own machines: "Add a machine" issues a single-use, 10-minute **setup code** that the existing `loom enroll` redeems, and "Revoke" revokes a chain. Admins also invite, deactivate, change roles and revoke any machine. Revoking a chain also revokes, transitively and in the same transaction, every chain minted from a setup code one of its sessions issued (the **issuer cascade**); "Retire" revokes a machine without it, for a machine that is replaced rather than lost (amended 2026-10-19 after the adversarial review, with `Referrer-Policy: same-origin` on `/ui` and the in-transaction re-check, §6.4). State changes are recorded in `auth_events`, and a user reads the ones about them through `GET /api/me` (`loom status`, `loom doctor`). **Amends D14** (writes on the listed routes; what the UI issues has its revocation rebuilt, not inherited) and §6.3's out-of-scope list and "no logout" | Passwords now (phase 2b of the plan, only if web access without an enrolled machine is needed); a long-lived API key created in the web and pasted into the CLI (reopens #20: a leaked copy lives as long as the key); per-project permissions (Q-3.4 in full) | It reuses the credential every user already holds: no password store, no reset flow, no KDF on a 256 MB VM. Two costs, accepted: nobody reaches the web without an enrolled machine, and an admin's laptop token becomes a web-admin credential, bounded by machine revocation and the issuer cascade. Role and `active` are read on every request, so a demotion or a deactivation takes effect on the next click. Frozen by goal wave `t` |
 | D21 | **Server plugins: installed distributions that add to the server, and a server with none behaves exactly as before** (owner decision of 2026-10-23). A plugin is an installed Python distribution declaring an entry point in the group `loom.server_plugins` whose object is a callable `register(app)`; `server/app.py` calls each one, in entry-point-name order, after every core route is declared. Four rules: (1) the core never imports, names or branches on a plugin; (2) a plugin's routes pass the same gate as every other route (the bearer outside `/ui`, the session cookie on `GET` under `/ui`), and a plugin extends neither `PUBLIC_PATHS` nor `ui_pages.WRITE_ROUTES`; (3) a plugin that cannot be loaded, raises, or declares a method and path the server already answers stops the server from starting, with an error naming the plugin; (4) one startup line names what was loaded (`server_plugins names=<a,b>`, or `names=none`). The contract is `register(app)` and the routes it adds; anything else a plugin does with `app` is outside it. Pinned by `server/tests/test_plugins.py` | A long-lived fork of the server; a setting listing modules to import; a flag in the core per optional feature | Code that lives outside this repository can extend the server without a fork, which would have to re-apply every core change by hand, and without flags, which would put that code in the core. Entry points are the packaging standard for this: installing the package is the whole configuration, and nothing in the core lists what may extend it. Refusing to start is the I4 posture: a half-loaded server, or a plugin route silently shadowed by a core one (the first matching route answers), is worse than no plugin. The gate is unchanged so that a new route stays protected by default, the reason `auth_middleware` is an allow-list |
+| D22 | **The redacted extract travels with its entry and is kept next to it, unsearched, on by default** (agreed with the owner on 2026-10-26; the default chosen on 2026-10-29). `POST /api/entries` takes an optional `extract`: step 5b's output — the text the summarizer read, every detected secret already replaced (D16) — cut by the client to its first and last 250 000 characters around one `[loom: <n> characters omitted here]` line. The server stores it zlib-compressed in `entry_extracts`, one row per entry, in the entry's transaction, and **no index reads it**: search and its ranking see the summary and its items only. `projects.store_extracts` (default 1, existing projects included) is the per-project switch: `admin.py extracts --remote <r> on\|off [--purge]`; off, the entry is stored and the extract dropped, `--purge` deletes what is stored. The project listing carries the flag and the client sends an extract only when it reads `true`, so a server from before D22 receives none. `GET /api/entries/{id}/extract` reads it back. The client says so where a developer already looks: `loom enable` and `loom register` when they enable such a project, `loom status` and `loom doctor` (run by `install.sh --update`) naming the captured projects that keep extracts. A quarantined entry (step 8) is written without it. **Amends** the promise that only the summary leaves the machine (README, `docs/USER-GUIDE.md`, `SECURITY.md`): the raw transcript and the token still never do | Off by default with a team opt-in; a second, per-developer consent on top of the team's; the raw transcript; indexing the extract for search | The summary is a lossy reading of the session; keeping what it was read from lets an entry be checked against what was said and lets later readers of the extract (a better summarizer, other derived data) work over sessions already captured, without asking anyone to re-run them. It is the text the summarizer already received, so it adds no exposure beyond the summarizer's own input: a secret the scanner does not detect reaches both, which is why I4 and step 5b are unchanged. Keeping it out of the index keeps every ranking and its benchmark (§12.3) exactly as they were. On by default is the owner's choice; it is said out loud in the four places above rather than silently |
 
 ### Implementation decisions (P1–P6)
 
@@ -227,9 +228,10 @@ For each marker (oldest first):
    by D16 and kept as defense in depth behind step 5b. Positive → entry goes to
    `~/.loom/quarantine/`, advance the pointer, do **not** upload; `loom push-quarantine`
    lets you review/redact it and upload it by hand.
-9. `POST /api/entries` with `content_hash`. `201` or `409` (duplicate) → advance the
-   pointer (to the EOF as of the extraction), clear the marker. Network error/5xx →
-   leave the marker (backoff, next cron run).
+9. `POST /api/entries` with `content_hash`, and (D22) the redacted extract of step 5b
+   when the project's listing says `store_extracts: true`. `201` or `409` (duplicate) →
+   advance the pointer (to the EOF as of the extraction), clear the marker. Network
+   error/5xx → leave the marker (backoff, next cron run).
 
 #### Implementation details
 
@@ -415,7 +417,9 @@ block): the FTS index and `entry_item_types` (`server/search.py`), `entry_links`
 `enrolment_codes` (`server/auth.py`), and `recall_events` (`server/recall.py`: who
 consulted which logbook, from where, with which terms, and how many entries came back);
 and `recall_feedback` (`server/feedback.py`: one person's verdict on one ITEM — slice F of
-the 2026-09-23 plan, below).
+the 2026-09-23 plan, below); and (D22) `entry_extracts` with the `projects.store_extracts`
+column (`server/extracts.py`: the redacted extract of an entry, zlib-compressed, never
+indexed).
 
 ### 6.2 API
 
@@ -424,7 +428,8 @@ the 2026-09-23 plan, below).
 | POST | `/api/projects` | Register a project (by remote or by path). `409` if it already exists → "already registered" message |
 | GET | `/api/projects?remote=<norm>` | Duplicate check / resolution |
 | GET | `/api/projects` | Listing (gate cache on the clients) |
-| POST | `/api/entries` | Upload an entry. `409` if `content_hash` is a duplicate (idempotency). Optional `items` (D13, below) |
+| POST | `/api/entries` | Upload an entry. `409` if `content_hash` is a duplicate (idempotency). Optional `items` (D13, below) and `extract` (D22) |
+| GET | `/api/entries/{id}/extract` | The entry's redacted extract (D22): `200 {entry_id, extract, chars}` · `404 extract_not_found` (unknown entry, or stored without one) |
 | GET | `/api/projects/{id}/items?entry_ids=<csv ≤ 500>[&type=][&q=][&fallback=any_term]` | The items of the listed entries of this project (D13, below; `fallback`: RT.1.4) |
 | GET | `/api/projects/{id}/entries?since=&limit=[&type=][&q=][&fallback=any_term]` | Project logbook (consumption; `q`: RT.1.2, `fallback`: RT.1.4). With `X-Loom-Source: skill\|cli` on the request, one `recall_events` row is recorded (decision of 2026-09-22 below) |
 | POST | `/api/feedback` | `{project_id, item: "<entry>.<n>", verdict, note}` → `201 {id}` · `409 duplicate_feedback` · `404 item_not_found` · `422` (item of another project, verdict outside `useful\|not_applicable\|stale`, a note that is not one line) — slice F, below |
@@ -715,8 +720,8 @@ as enrol for the successor; the old token keeps its own `expires_at`. A legacy t
 // req (one of the two keys)
 {"remote_url": "git@github.com:Org/B.git", "name": "project-b"}   // name optional
 {"path": "/home/dev/x", "hostname": "wsl-dev2", "name": "x"}      // fallback without remote
-// 201
-{"id": 3, "canonical_remote": "github.com/org/b", "name": "project-b"}
+// 201 (store_extracts, D22: a new project keeps extracts)
+{"id": 3, "canonical_remote": "github.com/org/b", "name": "project-b", "store_extracts": true}
 // 409
 {"error": "already_registered",
  "project": {"id": 3, "canonical_remote": "github.com/org/b", "name": "project-b"},
@@ -726,14 +731,19 @@ as enrol for the successor; the old token keeps its own `expires_at`. A legacy t
 **GET `/api/projects?remote=<norm>`** → 200 `{"project": {...}}` | 404
 **GET `/api/projects`** → 200 `{"projects": [{...}]}`  (gate cache)
 
+Each project is `{"id", "canonical_remote", "name", "created_by", "created_at",
+"store_extracts"}`; `store_extracts` (D22) says whether its entries keep their extract.
+
 **POST `/api/entries`**
 ```json
 // req
 {"project_remote": "github.com/org/b", "session_id": "uuid",
  "covered_from": "msg-uuid-a", "covered_to": "msg-uuid-b",
  "content_md": "## Context…", "content_hash": "sha256-hex",
- "model": "sonnet", "prompt_version": "v1"}
-// 201 {"id": 42}   // 409 duplicate_entry   // 404 project_not_found   // 422 validation
+ "model": "sonnet", "prompt_version": "v1",
+ "extract": "[user]: …"}          // optional (D22), at most 501 000 characters
+// 201 {"id": 42, "extract_stored": true}   // false: none sent, or the project is off
+// 409 duplicate_entry   // 404 project_not_found   // 422 validation
 ```
 
 **GET `/api/projects/{id}/entries?since=<ISO>&limit=30`**
