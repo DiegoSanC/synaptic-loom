@@ -244,7 +244,9 @@ def test_register_project_201(client, user_factory):
     u = user_factory("dev2")
     r = client.post("/api/projects", headers=u["auth"], json={"remote_url": "git@github.com:Org/B.git"})
     assert r.status_code == 201
-    assert r.json() == {"id": r.json()["id"], "canonical_remote": "github.com/org/b", "name": "b"}
+    # D22 adds `store_extracts`: a new project keeps extracts.
+    assert r.json() == {"id": r.json()["id"], "canonical_remote": "github.com/org/b", "name": "b",
+                        "store_extracts": True}
 
 
 def test_register_project_explicit_name(client, user_factory):
@@ -278,6 +280,7 @@ def test_register_duplicate_409_with_who_and_when(client, user_factory):
         "id": created["id"],
         "canonical_remote": "github.com/org/b",
         "name": created["name"],
+        "store_extracts": True,                      # D22
     }
     assert body["registered_by"] == "dev2"           # who
     assert body["registered_at"].endswith("Z")       # when (ISO UTC)

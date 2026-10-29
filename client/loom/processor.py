@@ -1504,7 +1504,11 @@ def _process_marker(
         _record(report, cfg, session_id, "quarantined", f"{len(findings)} finding(s)")
         return
 
-    # Step 9: POST /api/entries.
+    # Step 9: POST /api/entries. D22: the extract joins the payload only here, so a
+    # quarantined entry (step 8) is written without it. It is step 5b's output — the
+    # text the summarizer read, every detected secret already replaced.
+    if _stores_extracts(registry, canonical):
+        payload = {**payload, "extract": cap_extract(summarizer_input)}
     try:
         resp = api.post_entry(payload)
     except ServerUnreachable:
@@ -1547,6 +1551,29 @@ def _process_marker(
 
     # Other 4xx (401/403/422): likely misconfig/bug. Keep and report (visible in status).
     _record(report, cfg, session_id, "error", f"unexpected status {resp.status_code}")
+
+
+# D22: the extract an entry travels with is cut to its first and last this-many characters,
+# so a long session costs at most two halves and the server can bound what it accepts.
+EXTRACT_HEAD_CHARS = 250_000
+
+
+def cap_extract(text: str) -> str:
+    """``text`` whole when it fits in two halves, else its first and last
+    ``EXTRACT_HEAD_CHARS`` characters around one line naming how many were left out."""
+    if len(text) <= 2 * EXTRACT_HEAD_CHARS:
+        return text
+    omitted = len(text) - 2 * EXTRACT_HEAD_CHARS
+    return (text[:EXTRACT_HEAD_CHARS]
+            + f"\n\n[loom: {omitted} characters omitted here]\n\n"
+            + text[-EXTRACT_HEAD_CHARS:])
+
+
+def _stores_extracts(registry: Registry, canonical: str) -> bool:
+    """Whether the project's listing says to send the extract (D22). A server from
+    before D22 lists no ``store_extracts``, and gets none."""
+    return any(p.get("canonical_remote") == canonical and p.get("store_extracts") is True
+               for p in registry.projects)
 
 
 def _kinds_detail(findings) -> str:

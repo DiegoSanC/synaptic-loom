@@ -9,11 +9,12 @@
   the per-module idempotent DDL (`search.ensure_search_schema`,
   `links.ensure_links_schema`, `items.ensure_items_schema`, `auth.ensure_auth_schema`,
   `ui_auth.ensure_ui_schema`, `recall.ensure_recall_schema`,
-  `feedback.ensure_feedback_schema`, `auth_events.ensure_auth_events_schema`)
+  `feedback.ensure_feedback_schema`, `auth_events.ensure_auth_events_schema`,
+  `extracts.ensure_extracts_schema`)
   after applying the base schema, so an existing pilot database gains the new objects
   on the next start.
 - A column on an existing table goes through `ensure_column`, DESIGN §6.4's migration rule
-  (D20 adds `users.role` and `ui_sessions.kind` this way).
+  (D20 adds `users.role` and `ui_sessions.kind` this way, D22 `projects.store_extracts`).
 """
 import hashlib
 import os
@@ -21,7 +22,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-from server import auth, auth_events, feedback, items, links, recall, search, ui_auth
+from server import auth, auth_events, extracts, feedback, items, links, recall, search, ui_auth
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 _BUSY_TIMEOUT_MS = 5000
@@ -110,6 +111,7 @@ def init_db(path: str | None = None) -> sqlite3.Connection:
     recall.ensure_recall_schema(conn)
     feedback.ensure_feedback_schema(conn)   # references entry_items: after items
     auth_events.ensure_auth_events_schema(conn)
+    extracts.ensure_extracts_schema(conn)   # references entries and projects
     return conn
 
 

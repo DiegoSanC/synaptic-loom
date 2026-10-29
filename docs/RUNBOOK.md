@@ -369,6 +369,30 @@ from a copy or a thief). That machine gets a **loud 401** (`loom status`, `loom 
 and recovers by enrolling again with a fresh `invite`: the accepted trade-off. After step 3
 the next start logs `count=0`.
 
+#### Deploying stored extracts (D22)
+
+The release that keeps each entry's redacted extract adds one table, `entry_extracts`,
+and one column, `projects.store_extracts`, at boot. The column's default is **on, for the
+projects that already exist too**: from the first entry posted by an updated client, the
+server keeps the redacted conversation next to it. Decide per project before you deploy.
+
+1. Snapshot (§3a), then `fly deploy --ha=false`; check `GET /api/health` and that
+   `GET /api/projects` lists `store_extracts` for each project.
+2. For every project that must not keep extracts, right after the deploy:
+   ```bash
+   fly ssh console -a <app> -u app -C "python -m server.admin extracts --remote <repo> off"
+   # Compose (as `app`, never root: a root-owned WAL sidecar is one the server cannot write)
+   docker compose exec -u app loom python -m server.admin extracts --remote <repo> off
+   ```
+   A client that already runs the new version reads the flag from a listing cached for up
+   to an hour; until it refreshes it may still send an extract, which the server drops.
+3. Update the clients with `install.sh --update`; its `loom doctor` names the captured
+   projects that keep extracts. An older client sends none, and an older server is sent
+   none.
+
+`--purge` with `off` deletes the stored rows. Copies in the backups (§3) age out with
+their retention; SQLite may keep the bytes in free pages until the file is vacuumed.
+
 #### Rollback restores the IMAGE, not the data
 
 Fly's own wording. `fly deploy --image` puts an old image back; it does **not** roll back
@@ -840,6 +864,9 @@ export LOOM_DB=~/.loom-server/loom.db
 .venv/bin/python -m server.admin revoke-orphans                                   # once, on the D19 upgrade (§2)
 .venv/bin/python -m server.admin promote --email dev2@example.test                # role admin (D20)
 .venv/bin/python -m server.admin demote --email dev2@example.test                 # role member
+.venv/bin/python -m server.admin extracts --remote github.com/org/repo off        # D22: stop keeping its extracts
+.venv/bin/python -m server.admin extracts --remote github.com/org/repo off --purge  # …and delete the stored ones
+.venv/bin/python -m server.admin extracts --remote github.com/org/repo on
 # Break-glass: a permanent token printed once (pre-#20 flow; still valid, never expires)
 .venv/bin/python -m server.admin adduser --name dev2 --email dev2@example.test
 ```

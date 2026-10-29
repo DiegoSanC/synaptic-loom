@@ -24,10 +24,12 @@ it on the web.
 - **Capture is opt-in, per project and per machine.** `loom register` adds a project to
   the logbook; `loom enable` lets this machine contribute to it. Nothing is captured from
   a repo you did not enable, nor from before you enabled it.
-- **Only the summary leaves your machine.** The raw transcript, your file paths and your
-  token never do. gitleaks redacts the extract before the summarizer reads it, and scans
-  the summary before it is posted; a hit is quarantined, never uploaded. The summarizer
-  runs headless with no tools at all. Details: [What actually leaves your
+- **The summary leaves your machine, and so does the redacted conversation it was written
+  from.** gitleaks redacts the extract before the summarizer reads it, and that redacted
+  text is what the server keeps next to the entry (never searched; a team admin can turn
+  it off per project). The summary is scanned again before it is posted; a hit is
+  quarantined, never uploaded. The raw transcript and your token never leave. The
+  summarizer runs headless with no tools at all. Details: [What actually leaves your
   machine](docs/USER-GUIDE.md#what-actually-leaves-your-machine).
 - **Entries are append-only.** A later decision is linked to the one it replaces, and the
   logbook stops presenting the old one as current.

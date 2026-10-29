@@ -442,7 +442,7 @@ def cmd_register(args: argparse.Namespace) -> int:
             f"on {existing.get('created_at') or '?'}."
         )
         print(f"  {existing.get('canonical_remote')}  (id {existing.get('id')}, name {existing.get('name')})")
-        _enable_after_register(cfg, canonical)
+        _enable_after_register(cfg, canonical, existing.get("store_extracts") is True)
         return 0
 
     # Not there → register it. The server re-normalizes and is the identity authority.
@@ -459,7 +459,7 @@ def cmd_register(args: argparse.Namespace) -> int:
             f"(id {data.get('id')}, name {data.get('name')})"
         )
         print("Sessions in this repo will contribute to the team logbook.")
-        _enable_after_register(cfg, canonical)
+        _enable_after_register(cfg, canonical, data.get("store_extracts") is True)
         return 0
     if resp.status_code == 409:
         # Race between the GET and the POST: another dev registered it in between.
@@ -468,13 +468,14 @@ def cmd_register(args: argparse.Namespace) -> int:
             f"Already registered by {data.get('registered_by') or 'unknown'} "
             f"on {data.get('registered_at') or '?'}."
         )
-        _enable_after_register(cfg, canonical)
+        project = data.get("project") if isinstance(data.get("project"), dict) else {}
+        _enable_after_register(cfg, canonical, project.get("store_extracts") is True)
         return 0
     _print_http_error(resp)
     return 1
 
 
-def _enable_after_register(cfg: Config, canonical: str) -> None:
+def _enable_after_register(cfg: Config, canonical: str, keeps_extracts: bool) -> None:
     """Owner decision B (2026-09-22): whoever registers a project has decided, so in
     opt-in mode it is enabled on their machine too. In legacy mode every registered
     project is captured already; there is nothing to enable and nothing new to say."""
@@ -483,6 +484,8 @@ def _enable_after_register(cfg: Config, canonical: str) -> None:
     projects_local.set_state(cfg, canonical, projects_local.ENABLED)
     print(f"Capture enabled on this machine for {canonical} (loom disable to stop).")
     print(FROM_NOW_ON)
+    if keeps_extracts:
+        print(f"Note: {EXTRACTS_NOTICE}.")
 
 
 # --------------------------------------------------------------------------- #
@@ -491,6 +494,24 @@ def _enable_after_register(cfg: Config, canonical: str) -> None:
 # D9 amendment (2026-09-30): the processor drops the turns older than the enable.
 FROM_NOW_ON = ("Only what happens from now on is captured: this repo's earlier sessions "
                "stay on this machine.")
+# D22: said wherever a developer already looks — enable, register, status, doctor.
+EXTRACTS_NOTICE = ("the server keeps the redacted conversation of each session captured "
+                   "here next to its summary (secrets replaced by [REDACTED:<kind>]); a "
+                   "team admin can turn this off per project")
+
+
+def _extract_projects(cfg: Config, projects: list[dict]) -> list[str]:
+    """The projects this machine captures whose listing says ``store_extracts: true``."""
+    names = []
+    for project in projects:
+        remote = project.get("canonical_remote")
+        if not remote or project.get("store_extracts") is not True:
+            continue
+        if (cfg.capture_mode == CAPTURE_MODE_OPT_IN
+                and projects_local.state_of(cfg, remote) != projects_local.ENABLED):
+            continue
+        names.append(remote)
+    return sorted(names)
 
 
 def _cwd_canonical() -> str | None:
@@ -544,6 +565,9 @@ def cmd_enable(args: argparse.Namespace) -> int:
     if projects_local.set_state(cfg, canonical, projects_local.ENABLED):
         print(f"Capture enabled on this machine for {canonical}.")
         print(FROM_NOW_ON)
+        if _extract_projects(cfg, [p for p in registry.projects
+                                   if p.get("canonical_remote") == canonical]):
+            print(f"Note: {EXTRACTS_NOTICE}.")
     else:
         print(f"{canonical} was already enabled on this machine.")
     return 0
@@ -1983,6 +2007,10 @@ def cmd_status(args: argparse.Namespace) -> int:
     if isinstance(cache, dict) and cache.get("fetched_at"):
         n = len(cache.get("projects", []))
         print(f"  {n} project(s), refreshed {_human_age(cache['fetched_at'])} ago")
+        kept = _extract_projects(cfg, [p for p in cache.get("projects", [])
+                                       if isinstance(p, dict)])
+        if kept:
+            print(f"  Note: {EXTRACTS_NOTICE}: {', '.join(kept)}")
     else:
         print("  (no cache; it will be populated on the next run with a reachable server)")
 
@@ -3159,6 +3187,16 @@ def cmd_doctor(args: argparse.Namespace) -> int:
                 resp = api._request("GET", "/api/projects")
                 if resp.status_code == 200:
                     checks.append(("ok", "token valid (GET /api/projects → 200)"))
+                    try:
+                        listed = resp.json().get("projects")
+                    except (ValueError, AttributeError):
+                        listed = None
+                    kept = _extract_projects(cfg, [
+                        p for p in (listed if isinstance(listed, list) else [])
+                        if isinstance(p, dict)])
+                    if kept:
+                        checks.append(("ok", f"session extracts: {EXTRACTS_NOTICE}: "
+                                             f"{', '.join(kept)}"))
                     account = _account_check(cfg)
                     if account:
                         checks.append(account)
