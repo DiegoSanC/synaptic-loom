@@ -79,28 +79,30 @@ def test_the_extract_is_stored_compressed_in_its_own_table(client, dev, env):
 
 
 def test_a_word_only_the_extract_holds_finds_nothing(client, dev):
-    client.post("/api/entries", headers=dev["auth"], json=_entry(extract=EXTRACT))
+    item = "- [decision] **total() skips None values** — blank cells. Evidence: x."
+    content = "## Context\nCSV totals.\n## Decisions\n" + item + "\n"
+    entry_id = client.post("/api/entries", headers=dev["auth"], json=_entry(
+        content_md=content, prompt_version="v3", extract=EXTRACT.replace("blank", "empty"),
+        items=[{"item_type": "decision", "labelled": True, "text_md": item}])).json()["id"]
     pid = client.get("/api/projects", headers=dev["auth"]).json()["projects"][0]["id"]
 
-    for word in ("importer", "blank"):          # in the extract only
-        for params in ({"q": word}, {"q": word, "fallback": "any_term"},
-                       {"q": f"{word} skips", "fallback": "any_term"}):
-            r = client.get(f"/api/projects/{pid}/entries", params=params,
-                           headers=dev["auth"])
-            assert r.status_code == 200
-            hits = [e["content_md"] for e in r.json()["entries"]]
-            # any_term on "<word> skips" may find the entry through "skips" — never
-            # through the extract's word, which is the point: nothing indexed holds it.
-            assert all(word not in text for text in hits), (word, params)
-            if "skips" not in params["q"]:
-                assert hits == [], (word, params)
-        r = client.get(f"/api/projects/{pid}/items",
-                       params={"entry_ids": "1", "q": word}, headers=dev["auth"])
+    def entries(**params):
+        r = client.get(f"/api/projects/{pid}/entries", params=params, headers=dev["auth"])
         assert r.status_code == 200
-        assert r.json()["items"] == [], word
-    found = client.get(f"/api/projects/{pid}/entries", params={"q": "skips"},
-                       headers=dev["auth"]).json()["entries"]
-    assert len(found) == 1                        # in the summary: found as before
+        return r.json()["entries"]
+
+    def matches(q):
+        r = client.get(f"/api/projects/{pid}/items",
+                       params={"entry_ids": str(entry_id), "q": q}, headers=dev["auth"])
+        assert r.status_code == 200
+        return [i["match"] for i in r.json()["items"]]
+
+    for word in ("importer", "emits"):           # in the extract only
+        assert entries(q=word) == [], word
+        assert entries(q=word, fallback="any_term") == [], word
+        assert matches(word) == [False], word
+    assert len(entries(q="skips")) == 1           # in the summary: found as before
+    assert matches("skips") == [True]
 
 
 def test_an_entry_without_an_extract_is_a_404_on_the_read(client, dev):
@@ -244,3 +246,29 @@ def test_a_project_from_before_the_column_starts_on(tmp_path):
         conn.close()
     assert row["store_extracts"] == 1
     assert "entry_extracts" in tables
+
+
+def test_the_entry_and_its_extract_are_stored_together_or_not_at_all(env, dev):
+    """I6: an entry committed without its extract would answer the retry `409
+    duplicate_entry`, which the processor reads as stored — the extract lost for good."""
+    from fastapi.testclient import TestClient
+    from server.app import app
+
+    conn = db.connect(env)
+    conn.execute("CREATE TRIGGER d22_abort BEFORE INSERT ON entry_extracts "
+                 "BEGIN SELECT RAISE(ABORT, 'd22 test abort'); END")
+    conn.commit()
+    conn.close()
+    with TestClient(app, raise_server_exceptions=False) as raw:
+        failed = raw.post("/api/entries", headers=dev["auth"], json=_entry(extract=EXTRACT))
+        listed = raw.get("/api/projects/1/entries", headers=dev["auth"]).json()["entries"]
+        conn = db.connect(env)
+        conn.execute("DROP TRIGGER d22_abort")
+        conn.commit()
+        conn.close()
+        retried = raw.post("/api/entries", headers=dev["auth"], json=_entry(extract=EXTRACT))
+
+    assert failed.status_code == 500, failed.text
+    assert listed == []
+    assert retried.status_code == 201
+    assert retried.json()["extract_stored"] is True

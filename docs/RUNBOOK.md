@@ -381,7 +381,8 @@ server keeps the redacted conversation next to it. Decide per project before you
 2. For every project that must not keep extracts, right after the deploy:
    ```bash
    fly ssh console -a <app> -u app -C "python -m server.admin extracts --remote <repo> off"
-   # Compose: docker compose exec loom python -m server.admin extracts --remote <repo> off
+   # Compose (as `app`, never root: a root-owned WAL sidecar is one the server cannot write)
+   docker compose exec -u app loom python -m server.admin extracts --remote <repo> off
    ```
    A client that already runs the new version reads the flag from a listing cached for up
    to an hour; until it refreshes it may still send an extract, which the server drops.

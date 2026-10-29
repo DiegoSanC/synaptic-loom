@@ -280,10 +280,10 @@ Verify both. The app disappearing is not proof the volume did.
 
 **What the server keeps (D22).** Each entry arrives with the redacted conversation it was
 summarized from, and the server keeps it next to the entry, compressed and never searched.
-This is on for every project by default; turn it off per project with
-`python -m server.admin extracts --remote <repo> off` (`--purge` also deletes what is
-stored). `docs/USER-GUIDE.md` → "What actually leaves your machine" has the details.
-
+This is on for every project by default; turn it off per project with the `extracts`
+admin command, run inside the Machine like the others (§7) — `docs/RUNBOOK.md` →
+"Deploying stored extracts (D22)" has the exact lines. `docs/USER-GUIDE.md` → "What
+actually leaves your machine" has the details.
 
 Everything after "it is running and people can enrol" is `docs/RUNBOOK.md`: deploys and
 what to watch afterwards, backups and the restore drill (§3a), rollback (§3), adding and
