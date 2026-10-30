@@ -64,9 +64,9 @@ its effect as a diff of ``RESULTS.md``; regenerate it with
 
     .venv/bin/python test/retrieval_eval/run_eval.py --out test/retrieval_eval/RESULTS.md
 
-Anything a later change adds to the corpus that a model would write — search keywords
-for an item, say — is generated ONCE by the real prompt from ``corpus.md`` alone, never
-with ``queries.json`` in view, and committed beside it; writing it by hand would leak the
+Anything a change adds to the corpus's items that a model would write is generated ONCE,
+by the prompt that writes it in real use, from ``corpus.md`` alone, never with
+``queries.json`` in view, and committed beside it; writing it by hand would leak the
 judgments into the index.
 """
 from __future__ import annotations
