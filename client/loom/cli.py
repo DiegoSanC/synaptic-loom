@@ -74,7 +74,9 @@ from loom.api_client import ApiClient, ServerUnreachable
 from loom.config import (
     CAPTURE_MODE_ALL_REGISTERED,
     CAPTURE_MODE_OPT_IN,
+    CLAUDE_CONFIG_DIR_ENV,
     DEFAULT_CACHE_TTL_S,
+    DEFAULT_CLAUDE_CONFIG_DIR,
     DEFAULT_MODEL,
     DEFAULT_PROMPT_VERSION,
     DEFAULT_TIMEOUT_S,
@@ -2163,6 +2165,21 @@ _MANDATORY_SCANNER = {"engine": scan_engine.ENGINE_GITLEAKS,
                       "gitleaks_version": scan_engine.GITLEAKS_PINNED_VERSION}
 
 
+def _claude_config_dir_to_record(loom_home: Path, existing) -> str | None:
+    """The ``claude_config_dir`` a config written now carries: the one it already holds
+    (install.sh records it when a config exists), else the detected one."""
+    if isinstance(existing, dict):
+        kept = existing.get("claude_config_dir")
+        if isinstance(kept, str) and kept:
+            return kept
+    return _detected_claude_config_dir(loom_home)
+
+
+def _claude_config_dir_entry(loom_home: Path, existing) -> dict:
+    claude_dir = _claude_config_dir_to_record(loom_home, existing)
+    return {"claude_config_dir": claude_dir} if claude_dir else {}
+
+
 def _write_config_600(path: Path, config: dict) -> None:
     """Writes ``config.json``, creating it with 0600 permissions (it holds the token)."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -2217,6 +2234,9 @@ def cmd_init(args: argparse.Namespace) -> int:
         "scanner": _MANDATORY_SCANNER,
     }
     config_path = loom_home / "config.json"
+    claude_dir = _claude_config_dir_to_record(loom_home, _read_json(config_path))
+    if claude_dir:
+        config["claude_config_dir"] = claude_dir
     _write_config_600(config_path, config)
     for sub in WORK_DIRS:
         (loom_home / sub).mkdir(parents=True, exist_ok=True)
@@ -2448,6 +2468,8 @@ def cmd_enroll(args: argparse.Namespace) -> int:
         "scanner": {**(existing.get("scanner") if isinstance(existing.get("scanner"), dict)
                        else {}), **_MANDATORY_SCANNER},
     }
+    config.pop("claude_config_dir", None)   # an empty or non-string value is dropped
+    config.update(_claude_config_dir_entry(loom_home, existing))
     config_path = loom_home / "config.json"
     _write_config_600(config_path, config)
     for sub in WORK_DIRS:
@@ -2468,6 +2490,25 @@ def cmd_enroll(args: argparse.Namespace) -> int:
 # doctor                                                                       #
 # --------------------------------------------------------------------------- #
 _SYMBOL = {"ok": "✓", "warn": "⚠", "fail": "✗"}
+
+
+def _detected_claude_config_dir(loom_home: Path) -> str | None:
+    """This shell's ``CLAUDE_CONFIG_DIR``, when install.sh registered this install's hook
+    in it; ``None`` otherwise, which means Claude Code's default ``~/.claude``.
+
+    What `loom enroll` and `loom init` record as ``claude_config_dir`` when the config
+    holds none yet. Asking for the hook keeps a wrapper's variable from re-pointing an
+    install made for another directory: an enrolment run inside ``claudew`` after an
+    install for ``~/.claude`` must not move the summarizer onto the work account.
+    """
+    raw = os.environ.get(CLAUDE_CONFIG_DIR_ENV)
+    if not raw:
+        return None
+    path = Path(raw).expanduser().absolute()
+    if path == Path(DEFAULT_CLAUDE_CONFIG_DIR).expanduser():
+        return None
+    hook_dst = str(loom_home / "hooks" / "sessionend.sh")
+    return str(path) if _hook_in_settings(path / "settings.json", hook_dst) else None
 
 
 def _hook_in_settings(settings_path: Path, hook_dst: str) -> bool:
@@ -3221,13 +3262,17 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             checks.append(("fail", f"server rejected the token at {rejected.get('at', '?')} "
                                    f"({rejected.get('detail', '?')}); run 'loom enroll'"))
 
-    # SessionEnd hook in ~/.claude/settings.json (READ-ONLY on the real file).
-    settings_path = Path(os.path.expanduser("~/.claude/settings.json"))
+    # SessionEnd hook in <Claude Code config dir>/settings.json (READ-ONLY on the real file).
+    claude_home = cfg.claude_home if cfg else Path(
+        _detected_claude_config_dir(loom_home) or DEFAULT_CLAUDE_CONFIG_DIR).expanduser()
+    settings_path = claude_home / "settings.json"
     hook_dst = str(loom_home / "hooks" / "sessionend.sh")
     if _hook_in_settings(settings_path, hook_dst):
         checks.append(("ok", f"SessionEnd hook registered in {settings_path}"))
     else:
-        checks.append(("fail", f"SessionEnd hook is NOT in {settings_path} (run install.sh)"))
+        checks.append(("fail", f"SessionEnd hook is NOT in {settings_path} (run install.sh, "
+                               f"with CLAUDE_CONFIG_DIR set if your Claude Code uses another "
+                               f"configuration directory)"))
 
     # Phase-2 rows (R2.4.2 / AC-2.4c): what loom is actually RUNNING WITH — the scanner
     # engine in force, whether the periodic trigger is armed, how fresh the last sweep is.

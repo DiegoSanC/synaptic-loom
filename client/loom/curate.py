@@ -713,7 +713,7 @@ def _run_llm(cfg: Config, prompt: str, payload: str) -> subprocess.CompletedProc
         "text",
         prompt,
     ]
-    env = {**os.environ, "LOOM_SUMMARIZER": "1"}
+    env = {**cfg.claude_env(), "LOOM_SUMMARIZER": "1"}
     return subprocess.run(  # noqa: S603 — fixed argv, no shell, bounded by timeout
         cmd,
         input=payload,

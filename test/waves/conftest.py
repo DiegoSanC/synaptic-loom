@@ -11,10 +11,17 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+# The goals point HOME at a tmpdir to keep the real ~/.claude out of reach; install.sh,
+# doctor and enrolment also read CLAUDE_CONFIG_DIR, which a `CLAUDE_CONFIG_DIR=... claude`
+# wrapper leaves set in every command its session runs. Dropped so it cannot aim them at
+# the real directory.
+os.environ.pop("CLAUDE_CONFIG_DIR", None)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import _goalkit as kit  # noqa: E402

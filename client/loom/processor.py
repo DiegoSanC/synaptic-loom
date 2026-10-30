@@ -1082,7 +1082,8 @@ def _run_summarizer(cfg: Config, delta_text: str) -> subprocess.CompletedProcess
     """Invokes the summarizer (fresh session, no tools; corrected invocation per FLAGS.md).
 
     ``cwd = LOOM_HOME`` (I1), ``LOOM_SUMMARIZER=1`` (the hook's anti-recursion guard),
-    ``--tools ""`` (real tool blocking, I3). The delta text goes in through stdin.
+    ``--tools ""`` (real tool blocking, I3), the install's ``CLAUDE_CONFIG_DIR``
+    (:meth:`Config.claude_env`). The delta text goes in through stdin.
     May raise ``subprocess.TimeoutExpired``.
     """
     cmd = [
@@ -1097,7 +1098,7 @@ def _run_summarizer(cfg: Config, delta_text: str) -> subprocess.CompletedProcess
         "text",
         cfg.read_prompt(),
     ]
-    env = {**os.environ, "LOOM_SUMMARIZER": "1"}
+    env = {**cfg.claude_env(), "LOOM_SUMMARIZER": "1"}
     return subprocess.run(
         cmd,
         input=delta_text,
