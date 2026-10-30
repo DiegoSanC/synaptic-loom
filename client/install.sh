@@ -14,9 +14,14 @@
 #      updates the code without reinstalling — DESIGN §7). Prefers `uv` (this machine has no
 #      ensurepip, so `python3 -m venv` fails); falls back to `python3 -m venv` without uv.
 #   3. Copies hooks/sessionend.sh and prompts/summarizer_v1.md into $LOOM_HOME.
-#   4. Merges (never overwrites) the SessionEnd hook into ~/.claude/settings.json with jq:
+#   4. Merges (never overwrites) the SessionEnd hook into <claude dir>/settings.json with jq:
 #      timestamped backup, shows the diff and asks for confirmation unless --yes; if a loom
 #      entry already exists it reports "already installed", no duplicate; keeps ALL prior content.
+#      <claude dir> is Claude Code's configuration directory: config.json's
+#      claude_config_dir, else ~/.claude when this install's hook is already registered
+#      there, else $CLAUDE_CONFIG_DIR, else ~/.claude. A directory other than
+#      ~/.claude is recorded as claude_config_dir in an existing config.json, so the
+#      periodic pass and doctor use it without the variable.
 #   5. Installs the periodic trigger that runs `loom process` every 15 min (R2.2): a systemd
 #      *user* timer where `systemctl --user` works, a tagged crontab entry everywhere else
 #      (macOS, hosts without a user manager). Replace-in-place, never duplicated. The previous
@@ -30,7 +35,7 @@
 #      more. A needed binary that does not resolve is reported; a PATH line over 900 bytes
 #      fails the install before the scheduler is touched (docs/RUNBOOK.md §2). The scanner
 #      itself is $LOOM_HOME/bin/gitleaks, run by absolute path (D16).
-#   +  Adds the loom instruction block to ~/.claude/CLAUDE.md (D10): the one user-level
+#   +  Adds the loom instruction block to <claude dir>/CLAUDE.md (D10): the one user-level
 #      rule that makes the agent run `loom check` at the start of a task. Between
 #      `<!-- loom:start -->` / `<!-- loom:end -->` markers; creates the file when absent,
 #      never touches a byte outside the markers, replaces only the inside on a re-run, asks
@@ -52,6 +57,10 @@
 #                        crontab's only content the crontab is REMOVED (`crontab -r`), not
 #                        rewritten empty; if other entries remain they are reinstalled
 #                        byte-exact; no crontab at all is a clean no-op. Backup first, always.
+#   CLAUDE_CONFIG_DIR=<dir> (env) Claude Code's configuration directory, when it is not
+#                        ~/.claude (as for a `CLAUDE_CONFIG_DIR=... claude` wrapper). A
+#                        claude_config_dir already in config.json wins over it, and so
+#                        does a hook of this install already in ~/.claude/settings.json.
 #   LOOM_SKIP_VENV=1     (env) Skips step 2 (used by the tests to avoid building a real venv).
 #   LOOM_SKIP_TRIGGER=1  (env) Skips step 5 (for CI / hosts where the scheduler is managed
 #                        elsewhere; it keeps a test run from touching the real user crontab).
@@ -83,6 +92,9 @@ for arg in "$@"; do
       echo "  --yes                 do not ask before touching settings.json / pulling"
       echo "  --update              git pull --ff-only + re-copy + re-arm the trigger + doctor"
       echo "  --uninstall-trigger   remove the periodic trigger (timer and/or cron) and exit"
+      echo "  (env) CLAUDE_CONFIG_DIR=<dir>  Claude Code's configuration directory, if not"
+      echo "        ~/.claude (config.json's claude_config_dir, or this install's hook"
+      echo "        already in ~/.claude/settings.json, wins over it)"
       echo "  (env) LOOM_SKIP_VENV=1     skip creating the venv"
       echo "  (env) LOOM_SKIP_TRIGGER=1  skip installing the periodic trigger"
       echo "  (env) LOOM_SKIP_GITLEAKS=1 skip installing gitleaks (capture stays paused)"
@@ -101,11 +113,55 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" # .../client
 REPO_DIR="$(dirname "$SCRIPT_DIR")"                        # repo root (pyproject.toml here)
 LOOM_HOME="${LOOM_HOME:-$HOME/.loom}"
-CLAUDE_DIR="$HOME/.claude"
-SETTINGS="$CLAUDE_DIR/settings.json"
+CLAUDE_DIR_DEFAULT="$HOME/.claude"
 
 HOOK_SRC="$SCRIPT_DIR/hooks/sessionend.sh"
 HOOK_DST="$LOOM_HOME/hooks/sessionend.sh"
+
+# Claude Code's configuration directory, decided ONCE per install:
+#   1. config.json's claude_config_dir, the install's recorded choice;
+#   2. ~/.claude when this install's hook is already registered there: an install made
+#      before the key existed, re-run or --update'd from a session whose wrapper exports
+#      another CLAUDE_CONFIG_DIR, must not move the hook (and the summarizer's account)
+#      onto that profile while the old hook keeps firing;
+#   3. $CLAUDE_CONFIG_DIR;
+#   4. ~/.claude.
+# A leading ~ is expanded and a relative path made absolute, so what is recorded does not
+# depend on the directory a later pass runs in. Without jq the config is not read; the jq
+# check below stops the install before anything uses this.
+hook_in_default_settings() {
+  local settings="$CLAUDE_DIR_DEFAULT/settings.json" n
+  [ -f "$settings" ] && command -v jq >/dev/null 2>&1 || return 1
+  n="$(jq --arg cmd "$HOOK_DST" \
+    '[.hooks.SessionEnd[]?.hooks[]? | select(.command == $cmd)] | length' "$settings" 2>/dev/null)" || return 1
+  [ "${n:-0}" -gt 0 ]
+}
+resolve_claude_dir() {
+  local recorded="" dir
+  if [ -f "$LOOM_HOME/config.json" ] && command -v jq >/dev/null 2>&1; then
+    recorded="$(jq -r '.claude_config_dir // empty | strings' "$LOOM_HOME/config.json" 2>/dev/null || true)"
+  fi
+  dir="${recorded:-${CLAUDE_CONFIG_DIR:-$CLAUDE_DIR_DEFAULT}}"
+  case "$dir" in
+    "~") dir="$HOME" ;;
+    "~/"*) dir="$HOME/${dir#\~/}" ;;
+  esac
+  case "$dir" in
+    /*) ;;
+    *) dir="$PWD/$dir" ;;
+  esac
+  dir="${dir%/}"
+  if [ -z "$recorded" ] && [ "$dir" != "$CLAUDE_DIR_DEFAULT" ] && hook_in_default_settings; then
+    echo "install.sh: this install's hook is already in $CLAUDE_DIR_DEFAULT/settings.json;" >&2
+    echo "  CLAUDE_CONFIG_DIR ($dir) is ignored and the install stays there. To move it," >&2
+    echo "  remove the hook, the CLAUDE.md block and the loom skills from $CLAUDE_DIR_DEFAULT" >&2
+    echo "  first (client/UNINSTALL.md §1, §1b and §1c) and run install.sh again." >&2
+    dir="$CLAUDE_DIR_DEFAULT"
+  fi
+  printf '%s\n' "$dir"
+}
+CLAUDE_DIR="$(resolve_claude_dir)"
+SETTINGS="$CLAUDE_DIR/settings.json"
 PROMPT_SRC="$REPO_DIR/prompts/summarizer_v1.md"
 PROMPT_DST="$LOOM_HOME/prompts/summarizer_v1.md"
 SKILLS_SRC="$SCRIPT_DIR/skills"
@@ -445,6 +501,31 @@ pin_scanner_in_config() {
     echo "     config.json: scanner.engine = gitleaks, scanner.gitleaks_version = $GITLEAKS_VERSION"
 }
 
+# A Claude Code configuration directory other than ~/.claude goes into an existing
+# config.json as claude_config_dir, once the hook is registered there: the periodic pass,
+# a plain terminal's doctor and the sweep do not carry CLAUDE_CONFIG_DIR. Without a config
+# yet, `loom enroll` records it (it finds this install's hook there). Same atomic,
+# owner-only write as pin_scanner_in_config.
+record_claude_dir_in_config() {
+  local cfg="$LOOM_HOME/config.json" new
+  [ -f "$cfg" ] || return 0
+  [ "$CLAUDE_DIR" = "$CLAUDE_DIR_DEFAULT" ] && return 0
+  if ! new="$(jq --arg d "$CLAUDE_DIR" \
+    '.claude_config_dir = ((.claude_config_dir | select(type == "string" and length > 0)) // $d)' \
+    "$cfg" 2>/dev/null)"; then
+    echo "     WARNING: $cfg is not valid JSON; claude_config_dir not recorded (see loom doctor)." >&2
+    return 0
+  fi
+  if [ "$new" = "$(jq . "$cfg")" ]; then
+    return 0
+  fi
+  (
+    umask 077
+    printf '%s\n' "$new" >"$cfg.tmp"
+  ) && chmod 600 "$cfg.tmp" && mv -f "$cfg.tmp" "$cfg" &&
+    echo "     config.json: claude_config_dir = $CLAUDE_DIR"
+}
+
 # ---- periodic-trigger helpers (used by step 5 and by --uninstall-trigger) ----------------
 # Both schedulers end up embedding $LOOM_HOME in a line that something else parses: cron hands
 # its command field to /bin/sh, and systemd parses ExecStart with its own splitting rules. So
@@ -746,7 +827,7 @@ fi
 
 # jq is essential for the settings merge (and for the hook itself).
 if ! command -v jq >/dev/null 2>&1; then
-  echo "install.sh: 'jq' is missing (required to merge ~/.claude/settings.json)." >&2
+  echo "install.sh: 'jq' is missing (required to merge $SETTINGS)." >&2
   echo "  Install it (e.g. 'sudo apt install jq') and retry." >&2
   exit 1
 fi
@@ -902,8 +983,11 @@ cp "$SKILLS_SRC/loom/SKILL.md" "$SKILLS_DST/loom/SKILL.md"
 cp "$SKILLS_SRC/loom-register/SKILL.md" "$SKILLS_DST/loom-register/SKILL.md"
 cp "$SKILLS_SRC/loom-feedback/SKILL.md" "$SKILLS_DST/loom-feedback/SKILL.md"
 
-# ---- 4. merge the SessionEnd hook into ~/.claude/settings.json --------------------------
+# ---- 4. merge the SessionEnd hook into <claude dir>/settings.json -----------------------
 echo "4/5  Registering the SessionEnd hook in $SETTINGS ..."
+if [ "$CLAUDE_DIR" != "$CLAUDE_DIR_DEFAULT" ]; then
+  echo "     Claude Code configuration directory: $CLAUDE_DIR (not ~/.claude)"
+fi
 mkdir -p "$CLAUDE_DIR"
 
 CREATED_SETTINGS=0
@@ -963,6 +1047,7 @@ else
   printf '%s\n' "$NEW" >"$SETTINGS.tmp" && mv -f "$SETTINGS.tmp" "$SETTINGS"
   echo "     Hook installed ✓"
 fi
+record_claude_dir_in_config
 
 # ---- 5. periodic trigger (systemd user timer, or cron fallback) --------------------------
 # R2.2.2: the kick fired by the SessionEnd hook is best-effort — it does not survive a
@@ -1121,3 +1206,8 @@ transcript and launch the processor (kick), and the periodic trigger runs
 Update later with: bash $SCRIPT_DIR/install.sh --yes --update
 Uninstall: see client/UNINSTALL.md.
 EOF
+if [ "$CLAUDE_DIR" != "$CLAUDE_DIR_DEFAULT" ] && [ ! -f "$LOOM_HOME/config.json" ]; then
+  echo
+  echo "This install serves $CLAUDE_DIR, not ~/.claude: run step 1 with"
+  echo "CLAUDE_CONFIG_DIR=$CLAUDE_DIR still set, so loom enroll records it."
+fi

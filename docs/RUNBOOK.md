@@ -28,8 +28,8 @@ Originally deployed on **2026-07-24** . Complements `DESIGN.md §8` and
 | Local phase-1 server | **RETIRED at the cutover** — `loom-server.service` stopped and disabled; `~/.loom-server/loom.db` frozen, not an authority |
 | Server interpreter | `<repo>/.venv/bin/python` (extras `[server,dev]`) |
 | Client (dev) | `~/.loom/` + venv `~/.loom/venv` (`loom` package, editable, extra `[client]`) |
-| SessionEnd hook | `~/.loom/hooks/sessionend.sh`, registered in `~/.claude/settings.json` |
-| Skills | `~/.claude/skills/loom/` and `~/.claude/skills/loom-register/` |
+| SessionEnd hook | `~/.loom/hooks/sessionend.sh`, registered in `~/.claude/settings.json` (or the `claude_config_dir` of `config.json`) |
+| Skills | `~/.claude/skills/loom/` and `~/.claude/skills/loom-register/` (same directory) |
 | Dev config | `~/.loom/config.json` (chmod 600) → points at `https://<app>.fly.dev`, the machine's device token |
 | Users and machines | `server.admin listusers` / `listdevices`, inside the Machine (§2 → "Administering users") |
 | Pilot project | one synthetic project with a fictitious remote, `github.com/example-group/loom-pilot` |
@@ -1671,7 +1671,8 @@ perfectly healthy transcript permanently — silent capture loss with a diagnost
 an I/O error rather than corruption.
 
 *How likely is that here?* **Unverified, and worth measuring rather than assuming.** On the
-default `sweep.transcripts_root` (`~/.claude/projects`) under WSL2 the transcripts live on the
+default `sweep.transcripts_root` (`~/.claude/projects`, or the `projects` directory of
+`claude_config_dir`) under WSL2 the transcripts live on the
 VM's own ext4, where transient `EIO`/`ESTALE` are unlikely. The exposure appears only if
 `transcripts_root` is pointed at a Windows drive (`/mnt/c/…`, 9p) or any network mount, where
 transient I/O errors are realistic. Check which applies on this host before weighting the

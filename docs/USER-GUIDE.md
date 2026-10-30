@@ -82,6 +82,27 @@ lists every file it touches.
 > checkout you trust, and read `client/install.sh` first if you would read any other script
 > before running it.
 
+**If you run Claude Code with `CLAUDE_CONFIG_DIR`** (a wrapper such as
+`CLAUDE_CONFIG_DIR=~/.claude-personal claude`), set it for the installer and for step 3 too:
+
+```bash
+export CLAUDE_CONFIG_DIR=~/.claude-personal
+bash client/install.sh
+```
+
+The installer then puts the hook, the `CLAUDE.md` block and the skills in that directory
+instead of `~/.claude`, and `loom enroll` records it in `config.json` as
+`claude_config_dir`. From then on the scheduled pass, `loom doctor` and the summarizer use it
+without the variable, and the summarizer signs in with that directory's account.
+
+One machine serves one Claude Code configuration directory: the hook and the scheduled pass
+exist once per machine. An install that already has its hook in `~/.claude` stays there
+even when the installer runs with `CLAUDE_CONFIG_DIR` set (it says so). To move an install,
+remove the hook, the `CLAUDE.md` block and the loom skills from the old directory
+([client/UNINSTALL.md](../client/UNINSTALL.md) §1, §1b and §1c), delete `claude_config_dir`
+from `~/.loom/config.json` if it is there, and run the installer again with the new
+`CLAUDE_CONFIG_DIR`.
+
 ### 3. Enrol this machine
 
 ```bash
@@ -175,7 +196,8 @@ Ask where a repo stands at any time:
 ## What it changes on your machine
 
 Everything lives under your home directory. Nothing is installed system-wide and nothing
-touches your global Python — the venv sits inside `~/.loom`.
+touches your global Python — the venv sits inside `~/.loom`. With `CLAUDE_CONFIG_DIR` set
+([step 2](#2-run-the-installer)), read that directory wherever `~/.claude` appears below.
 
 | What | Change | Undo |
 |---|---|---|
@@ -427,14 +449,15 @@ Stop the background job but keep the client:
 bash client/install.sh --uninstall-trigger
 ```
 
-Remove the client completely: four steps in any order, with the exact commands — including
+Remove the client completely: five steps in any order, with the exact commands — including
 a `jq` filter that strips only Loom's hook and leaves your other settings untouched — in
 [`client/UNINSTALL.md`](../client/UNINSTALL.md):
 
 1. Remove the SessionEnd hook from `~/.claude/settings.json`.
 2. Remove the block from `~/.claude/CLAUDE.md`.
-3. Remove the scheduled job.
-4. `rm -rf ~/.loom` (this also removes the venv).
+3. Remove the loom skills from `~/.claude/skills/`.
+4. Remove the scheduled job.
+5. `rm -rf ~/.loom` (this also removes the venv).
 
 Uninstalling does not touch your transcripts and does not withdraw entries already posted.
 Retire this machine when you are done: "Retire" on *My machines* in `loom ui`, or ask the

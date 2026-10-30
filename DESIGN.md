@@ -131,6 +131,16 @@ normalize(url):
 
 ### 4.1 SessionEnd hook (user level, `~/.claude/settings.json`)
 
+`~/.claude` here and below is Claude Code's configuration directory: `CLAUDE_CONFIG_DIR`
+when that is set. install.sh registers the hook there and records any directory other
+than `~/.claude` as `claude_config_dir` in `config.json` (or `loom enroll` does, finding
+the hook there), because the periodic trigger does not carry the variable: doctor, the
+sweep's default `transcripts_root` and the summarizer's `CLAUDE_CONFIG_DIR` come from it
+(absent: `~/.claude`, and the variable is removed, never inherited). A recorded value
+wins over the variable, and so does this install's hook already in
+`~/.claude/settings.json`: one machine serves one directory, and a re-run from inside
+another profile's session must not move the capture onto that profile's account.
+
 Receives on stdin: `session_id`, `transcript_path`, `cwd`, `reason`. Does **one single thing**:
 
 ```bash

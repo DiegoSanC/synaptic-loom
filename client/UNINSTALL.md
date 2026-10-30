@@ -1,10 +1,11 @@
 # Uninstalling the loom client
 
-Reverts what `client/install.sh` did (DESIGN.md §4.1). Four steps; the order does not matter.
+Reverts what `client/install.sh` did (DESIGN.md §4.1). Five steps; the order does not matter.
 
 > Every path below assumes the default installation (`LOOM_HOME=~/.loom`, settings in
 > `~/.claude/settings.json`). If you installed with a different `LOOM_HOME`, substitute
-> it below.
+> it below; if you installed for another Claude Code configuration directory
+> (`claude_config_dir` in `config.json`), substitute it for `~/.claude`.
 
 ## 1. Remove the SessionEnd hook from `~/.claude/settings.json`
 
@@ -55,6 +56,12 @@ awk '/^<!-- loom:start -->/{skip=1; next} /^<!-- loom:end -->/{skip=0; next} !sk
 ```
 
 If the file held nothing but the block (install.sh created it), delete it instead.
+
+## 1c. Remove the loom skills from `~/.claude/skills/`
+
+```bash
+rm -rf ~/.claude/skills/loom ~/.claude/skills/loom-register ~/.claude/skills/loom-feedback
+```
 
 ## 2. Delete the local state
 

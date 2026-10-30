@@ -15,11 +15,19 @@ here out of ``LOOM_HOME``:
      "processor": {"tear_ratio_threshold": 0.5},
      "curation": {"candidate_k": 8, "timeout_s": 900, "digest_threshold": 15},
      "log": {"char_budget": 8000},
-     "capture_mode": "opt_in" | "all_registered"}``.
+     "capture_mode": "opt_in" | "all_registered",
+     "claude_config_dir": "~/.claude-personal"}``.
   ``capture_mode`` (D9) decides whether the local per-project gate is enforced. ABSENT
   means ``all_registered`` — the pre-D9 behaviour — so every config written before the
   key existed keeps loading and capturing exactly as it did. ``loom enroll`` writes
   ``opt_in``; ``loom enable`` / ``loom disable`` switch a machine to it.
+  ``claude_config_dir`` is the Claude Code configuration directory this install serves:
+  where install.sh put the hook, the ``CLAUDE.md`` block and the skills, where doctor
+  looks for the hook, where the sweep finds transcripts, and the ``CLAUDE_CONFIG_DIR``
+  the summarizer runs with. ABSENT means ``~/.claude``, Claude Code's own default. It is
+  recorded rather than read from the environment because the periodic trigger and a
+  plain terminal do not carry the ``CLAUDE_CONFIG_DIR`` a wrapper such as
+  ``CLAUDE_CONFIG_DIR=~/.claude-x claude`` sets for Claude Code alone.
   Two extra keys, documented here, exist for testability:
     * ``claude_bin``  — summarizer binary (default ``"claude"``); in tests it points at
       a stub.
@@ -63,6 +71,9 @@ DEFAULT_PROMPT_VERSION = "v2"
 # machine whose config omits the key. An enrolment that finds a config keeps its value.
 ENROLL_PROMPT_VERSION = "v4"
 DEFAULT_CLAUDE_BIN = "claude"
+# Claude Code's configuration directory when CLAUDE_CONFIG_DIR is not set.
+DEFAULT_CLAUDE_CONFIG_DIR = "~/.claude"
+CLAUDE_CONFIG_DIR_ENV = "CLAUDE_CONFIG_DIR"
 
 # A prompt version is a bare token: it is interpolated into a FILENAME under
 # ``<LOOM_HOME>/prompts/``. config.json is hand-editable, and the resolved file is read
@@ -75,10 +86,10 @@ _PROMPT_VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,31}")
 
 # Phase 2 (R2.1): orphan-transcript sweep. The settle threshold is a liveness
 # heuristic, not a guarantee (DESIGN.md §12, Q-2.2); transcripts_root is
-# overridable so tests never touch the real ~/.claude tree.
+# overridable so tests never touch the real ~/.claude tree. Absent, it is the
+# ``projects`` directory of the Claude Code configuration directory.
 DEFAULT_SWEEP_ENABLED = True
 DEFAULT_SWEEP_SETTLE_S = 1800
-DEFAULT_SWEEP_TRANSCRIPTS_ROOT = "~/.claude/projects"
 
 # Phase 2 (R2.3) scanner engine selection, changed by D16 (2026-10-15): gitleaks is
 # mandatory for capture. "gitleaks" is the default; "auto" is read as a legacy alias of
@@ -296,6 +307,7 @@ class Config:
     sweep_enabled: bool = DEFAULT_SWEEP_ENABLED
     sweep_settle_s: int = DEFAULT_SWEEP_SETTLE_S
     sweep_transcripts_root: Path | None = None
+    claude_config_dir: Path | None = None
     scanner_engine: str = DEFAULT_SCANNER_ENGINE
     scanner_gitleaks_version: str | None = DEFAULT_GITLEAKS_VERSION
     tear_ratio_threshold: float = DEFAULT_TEAR_RATIO_THRESHOLD
@@ -324,11 +336,36 @@ class Config:
             if self.prompt_path is not None
             else self.loom_home / "prompts" / prompt_filename(self.prompt_version)
         )
+        if self.claude_config_dir is not None:
+            self.claude_config_dir = Path(self.claude_config_dir).expanduser()
+            # Spelled out, the default stays "absent": Claude Code does not treat
+            # CLAUDE_CONFIG_DIR=~/.claude exactly as unset (where it keeps .claude.json),
+            # so the summarizer must not be handed it.
+            if self.claude_config_dir == Path(DEFAULT_CLAUDE_CONFIG_DIR).expanduser():
+                self.claude_config_dir = None
         self.sweep_transcripts_root = (
             Path(self.sweep_transcripts_root).expanduser()
             if self.sweep_transcripts_root is not None
-            else Path(DEFAULT_SWEEP_TRANSCRIPTS_ROOT).expanduser()
+            else self.claude_home / "projects"
         )
+
+    @property
+    def claude_home(self) -> Path:
+        """The Claude Code configuration directory this install serves."""
+        return self.claude_config_dir or Path(DEFAULT_CLAUDE_CONFIG_DIR).expanduser()
+
+    def claude_env(self) -> dict[str, str]:
+        """The environment a ``claude`` subprocess runs with: this process's, with
+        ``CLAUDE_CONFIG_DIR`` set to the directory the install serves, or removed when
+        that is ``~/.claude``. Never inherited: a pass started from inside another
+        profile's session (its wrapper exports the variable to every command) must still
+        sign in with the account the hook was installed for."""
+        env = dict(os.environ)
+        if self.claude_config_dir is not None:
+            env[CLAUDE_CONFIG_DIR_ENV] = str(self.claude_config_dir)
+        else:
+            env.pop(CLAUDE_CONFIG_DIR_ENV, None)
+        return env
 
     # --- Derived paths -----------------------------------------------------------
     @property
@@ -456,6 +493,7 @@ class Config:
             log_section = {}
         prompt_path = data.get("prompt_path")
         transcripts_root = sweep.get("transcripts_root")
+        claude_config_dir = data.get("claude_config_dir")
         return cls(
             loom_home=home,
             server_url=data["server_url"],
@@ -469,6 +507,9 @@ class Config:
             sweep_enabled=sweep.get("enabled", DEFAULT_SWEEP_ENABLED),
             sweep_settle_s=sweep.get("settle_s", DEFAULT_SWEEP_SETTLE_S),
             sweep_transcripts_root=Path(transcripts_root) if transcripts_root else None,
+            claude_config_dir=(Path(claude_config_dir)
+                               if isinstance(claude_config_dir, str) and claude_config_dir
+                               else None),
             scanner_engine=scanner.get("engine", DEFAULT_SCANNER_ENGINE),
             scanner_gitleaks_version=scanner.get(
                 "gitleaks_version", DEFAULT_GITLEAKS_VERSION
