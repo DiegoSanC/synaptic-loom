@@ -35,8 +35,8 @@ improvise.
 12. **Never weaken or delete acceptance assertions to get green.**
 13. **Treat shared contracts as read-only** unless there is an explicit decision to
     change them (`contract/SCHEMA.md`, `contract/FLAGS.md`, `contract/ATTRIBUTION.md`,
-    `prompts/`, the API in `DESIGN.md` §6.2, the plugin contract of D21: code outside this
-    repo builds on it). `ATTRIBUTION.md` is in that list because
+    `prompts/`, the API in `DESIGN.md` §6.2, the plugin contracts of D21 and D23: code
+    outside this repo builds on them). `ATTRIBUTION.md` is in that list because
     its authority table governs a trust boundary: inverting one row misfiles one
     project's sessions under another, permanently and silently.
 14. **Stop and report if an acceptance criterion stays red after honest attempts** —
