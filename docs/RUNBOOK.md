@@ -694,6 +694,36 @@ managed by other means).
 > portable is out of scope for phase 2 (the hook is a frozen contract); the pilot host is
 > WSL2, where the kick works.
 
+### Client plugins (D23)
+
+A client plugin is a Python distribution installed into the client's venv that declares
+an entry point in `loom.client_plugins`. After each `loom process` pass, every entry the
+pass stored is handed to every plugin, each in a child process of its own.
+
+```bash
+~/.loom/venv/bin/pip install <distribution>     # install one (pip uninstall removes it)
+~/.loom/venv/bin/loom doctor | grep 'client plugins'
+grep -P '\tplugin_(done|failed)\t' ~/.loom/log/processor.log | tail
+```
+
+- **`plugin_done` / `plugin_failed`:** one line per plugin and entry, with its name, the
+  entry id and, on failure, `exit=<n>`, `timeout` or `error=<type>`. A plugin's own output
+  is discarded; it keeps its own log if it needs one.
+- **Timeout:** `plugins.timeout_s` in `config.json` (default 600 s, 1–3600). Past it the
+  run ends as `timeout`.
+- **Nothing of a run outlives it.** When a run ends, however it ends, its process group is
+  killed: the plugin and whatever it started without leaving that group (a process that
+  calls `setsid` itself escapes it). If the pass dies first, the plugin kills its own
+  group within a second.
+- **Nothing a plugin does costs or delays a capture.** Plugins run after the pass has
+  settled every entry and released its lock. The pass leaves its entries in
+  `~/.loom/plugins_spool/` and takes `~/.loom/plugins.lock` without waiting: if another
+  pass is running plugins, that one takes the new entries too, and otherwise the next pass
+  does. No capture waits for a plugin, and two plugin runs never overlap; the pass that
+  holds the lock runs the plugins before it exits, so under systemd the timer's next pass
+  starts after that run. A plugin's work for an entry is not retried, and with no plugin
+  installed a pass deletes what is left in the spool (`plugin_spool_dropped`).
+
 ---
 
 ## 3. Backup and restore

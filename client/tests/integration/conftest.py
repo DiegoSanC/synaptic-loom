@@ -8,9 +8,12 @@ Every test runs with:
 """
 from __future__ import annotations
 
+import importlib
 import json
+import os
 import shutil
 import subprocess
+import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -188,3 +191,33 @@ def env(tmp_path, httpserver) -> Env:
     shutil.copyfile(REAL_FIXTURE, transcript)
 
     return Env(home=home, repo=repo, transcript=transcript, prompt=prompt, httpserver=httpserver)
+
+
+@pytest.fixture
+def install_client_plugin(tmp_path, monkeypatch):
+    """Installs a one-module client plugin (D23) the way pip would: a ``*.dist-info``
+    with an ``entry_points.txt`` in ``loom.client_plugins``, in a site directory that is
+    on this process's path (where the capture pass looks for plugins) and on
+    ``PYTHONPATH`` (where the child process that runs a plugin looks for it). Each test
+    gets its own directory, so a plugin never leaks into the rest of the suite.
+    """
+    site = tmp_path / "client_site"
+    site.mkdir()
+    monkeypatch.syspath_prepend(str(site))
+    monkeypatch.setenv("PYTHONPATH",
+                       os.pathsep.join(filter(None, [str(site),
+                                                     os.environ.get("PYTHONPATH")])))
+
+    def _install(name: str, source: str, *, entry: str | None = None) -> None:
+        """Distribution ``<name>-plugin``, module ``<name>_plugin``, entry point ``entry``
+        (default ``name``) → ``<name>_plugin:register``."""
+        (site / f"{name}_plugin.py").write_text(textwrap.dedent(source), encoding="utf-8")
+        dist_info = site / f"{name}_plugin-0.1.dist-info"
+        dist_info.mkdir()
+        (dist_info / "METADATA").write_text(
+            f"Metadata-Version: 2.1\nName: {name}-plugin\nVersion: 0.1\n", encoding="utf-8")
+        (dist_info / "entry_points.txt").write_text(
+            f"[loom.client_plugins]\n{entry or name} = {name}_plugin:register\n",
+            encoding="utf-8")
+        importlib.invalidate_caches()
+    return _install

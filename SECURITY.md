@@ -25,7 +25,9 @@ Synaptic Loom moves a team's knowledge between machines, so these matter most:
 - **Anything that makes the client upload more than the summary and its redacted
   extract:** a raw transcript, a token, a secret that gets past the gitleaks checks, an
   extract stored for a project switched off, or a stored extract that search can reach
-  (`docs/USER-GUIDE.md`, "What actually leaves your machine").
+  (`docs/USER-GUIDE.md`, "What actually leaves your machine"). What a client plugin you
+  installed sends is that plugin's own (D23); a way for a plugin to reach more than D23
+  hands it, or to cost or change a capture, is in scope.
 - **Attribution:** a session filed under the wrong project (`contract/ATTRIBUTION.md`).
 - **The deployment guides:** a setting in `fly.toml` or `deploy/compose/` that exposes
   the server or lets a client choose its own address (`docs/SERVER-GUIDE.md`).

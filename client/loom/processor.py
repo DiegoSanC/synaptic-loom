@@ -34,7 +34,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
 
-from loom import auth, okf, projects_local, scan_engine, secret_scan, sweep
+from loom import auth, okf, plugins, projects_local, scan_engine, secret_scan, sweep
 from loom.api_client import ApiClient, AuthRejected, ServerUnreachable
 from loom.config import CAPTURE_MODE_OPT_IN, Config
 from loom.normalize import normalize
@@ -158,6 +158,11 @@ class RunReport:
     lock_held: bool = False
     sweep: "sweep.SweepReport | None" = None
     paused: str | None = None
+    # D23: the client plugins installed when the pass started (None: the list could not
+    # be read), and the entries it stored (201), in order, for them. Entries are
+    # collected only when there is a plugin.
+    plugin_names: list[str] | None = field(default_factory=list)
+    stored: list[plugins.StoredEntry] = field(default_factory=list)
 
     def _count(self, category: str) -> int:
         return sum(1 for o in self.outcomes if _CATEGORY.get(o.action) == category)
@@ -1078,12 +1083,15 @@ def parse_item_types(summary_md: str, prompt_version: str) -> tuple[list[str], i
 # --------------------------------------------------------------------------- #
 # Summarizer                                                                   #
 # --------------------------------------------------------------------------- #
-def _run_summarizer(cfg: Config, delta_text: str) -> subprocess.CompletedProcess:
-    """Invokes the summarizer (fresh session, no tools; corrected invocation per FLAGS.md).
+def run_claude(cfg: Config, prompt: str, input_text: str, *,
+               model: str) -> subprocess.CompletedProcess:
+    """One isolated model call (fresh session, no tools; corrected invocation per FLAGS.md).
 
     ``cwd = LOOM_HOME`` (I1), ``LOOM_SUMMARIZER=1`` (the hook's anti-recursion guard),
     ``--tools ""`` (real tool blocking, I3), the install's ``CLAUDE_CONFIG_DIR``
-    (:meth:`Config.claude_env`). The delta text goes in through stdin.
+    (:meth:`Config.claude_env`). ``prompt`` is the last argument, ``input_text`` goes in
+    through stdin. The summarizer and a client plugin's ``run_model`` (D23) both call
+    it, so a plugin's model call is isolated exactly as the summarizer's is.
     May raise ``subprocess.TimeoutExpired``.
     """
     cmd = [
@@ -1093,21 +1101,26 @@ def _run_summarizer(cfg: Config, delta_text: str) -> subprocess.CompletedProcess
         "--tools",
         "",
         "--model",
-        cfg.model,
+        model,
         "--output-format",
         "text",
-        cfg.read_prompt(),
+        prompt,
     ]
     env = {**cfg.claude_env(), "LOOM_SUMMARIZER": "1"}
     return subprocess.run(
         cmd,
-        input=delta_text,
+        input=input_text,
         env=env,
         cwd=str(cfg.loom_home),
         timeout=cfg.timeout_s,
         capture_output=True,
         text=True,
     )
+
+
+def _run_summarizer(cfg: Config, delta_text: str) -> subprocess.CompletedProcess:
+    """Invokes the summarizer: :func:`run_claude` with the summarizer prompt and model."""
+    return run_claude(cfg, cfg.read_prompt(), delta_text, model=cfg.model)
 
 
 # --------------------------------------------------------------------------- #
@@ -1508,8 +1521,11 @@ def _process_marker(
     # Step 9: POST /api/entries. D22: the extract joins the payload only here, so a
     # quarantined entry (step 8) is written without it. It is step 5b's output — the
     # text the summarizer read, every detected secret already replaced.
-    if _stores_extracts(registry, canonical):
-        payload = {**payload, "extract": cap_extract(summarizer_input)}
+    stores_extract = _stores_extracts(registry, canonical)
+    extract = (cap_extract(summarizer_input)
+               if stores_extract or report.plugin_names else "")
+    if stores_extract:
+        payload = {**payload, "extract": extract}
     try:
         resp = api.post_entry(payload)
     except ServerUnreachable:
@@ -1526,6 +1542,10 @@ def _process_marker(
         _log_label_fallbacks(cfg, session_id, label_fallbacks)
         _record(report, cfg, session_id, action)
         auth.clear_auth_rejected(cfg)  # an entry landed: the credential works again
+        if resp.status_code == 201 and report.plugin_names:
+            stored = plugins.stored_entry(resp, payload, extract)
+            if stored is not None:
+                report.stored.append(stored)
         return
     if resp.status_code in (401, 403):
         # The credential, not the network. Keep the marker (nothing is lost, the next
@@ -1865,6 +1885,16 @@ def read_scanner_paused(cfg: Config) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _plugin_names(cfg: Config) -> list[str] | None:
+    """The installed client plugins (D23), read from metadata once per pass, or None when
+    the metadata cannot be read: not knowing is not "none installed". Total."""
+    try:
+        return [name for name, _target in plugins.installed()]
+    except Exception as exc:  # noqa: BLE001 — a broken metadata dir costs no capture.
+        _log(cfg, "plugins", "plugin_failed", f"discovery error={type(exc).__name__}")
+        return None
+
+
 def run_once(cfg: Config) -> RunReport:
     """Processes every pending marker once. Serialized by ``flock``.
 
@@ -1905,6 +1935,7 @@ def run_once(cfg: Config) -> RunReport:
         _renew_device_token(cfg, api)
         registry = _load_registry(cfg, api)
         state = _load_state(cfg)
+        report.plugin_names = _plugin_names(cfg)
 
         # Orphan-transcript sweep (R2.1): it runs HERE, inside the lock we already hold
         # and before the queue is listed, so its synthetic markers are processed in this
@@ -1922,6 +1953,7 @@ def run_once(cfg: Config) -> RunReport:
                 _process_marker(cfg, api, registry, state, report, marker_path)
             except Exception as exc:  # noqa: BLE001 — isolate the marker, don't abort the run.
                 _handle_pipeline_failure(cfg, report, marker_path, exc, identity)
+
     finally:
         try:
             fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -1929,6 +1961,10 @@ def run_once(cfg: Config) -> RunReport:
             pass
         lock_fd.close()
 
+    # D23: every entry of the pass is settled (pointer, marker, outcome) and the lock is
+    # released before any plugin runs, so nothing a plugin does can change what was
+    # captured or hold up the next capture. Plugins take a lock of their own instead.
+    plugins.run_after_pass(cfg, report.plugin_names, report.stored, _log)
     return report
 
 

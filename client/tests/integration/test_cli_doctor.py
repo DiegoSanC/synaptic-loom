@@ -399,3 +399,43 @@ def test_doctor_warns_on_opt_in_with_nothing_enabled(env, monkeypatch, tmp_path,
     row = next(r for r in out.splitlines() if "capture mode" in r)
     assert row.startswith("⚠"), row
     assert "0 projects" in row and "loom enable" in row
+
+
+def test_doctor_says_when_no_client_plugin_is_installed(env, monkeypatch, tmp_path, capsys):
+    """D23: what extends the client is visible where a developer already looks."""
+    _prepare(env, monkeypatch, tmp_path, include_hook=True)
+
+    rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert "✓ client plugins: none installed" in out.splitlines()
+
+
+def test_doctor_names_every_installed_client_plugin_without_running_it(
+        env, monkeypatch, tmp_path, capsys, install_client_plugin):
+    _prepare(env, monkeypatch, tmp_path, include_hook=True)
+    install_client_plugin("zeta", "raise SystemExit('doctor must not import a plugin')\n")
+    install_client_plugin("alpha", "def register(loom):\n    pass\n")
+
+    rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    assert ("✓ client plugins: alpha (alpha_plugin:register), "
+            "zeta (zeta_plugin:register)") in out.splitlines()
+
+
+def test_doctor_warns_when_two_distributions_declare_the_same_plugin(
+        env, monkeypatch, tmp_path, capsys, install_client_plugin):
+    _prepare(env, monkeypatch, tmp_path, include_hook=True)
+    install_client_plugin("first", "def register(loom):\n    pass\n", entry="same")
+    install_client_plugin("second", "def register(loom):\n    pass\n", entry="same")
+
+    rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert rc == 0, out
+    [row] = [r for r in out.splitlines() if "client plugins:" in r]
+    assert row.startswith("⚠"), row
+    assert "'same' is declared by more than one distribution" in row

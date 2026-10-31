@@ -251,7 +251,16 @@ backups age out with them). Your client reads a cached listing, refreshed hourly
 up to an hour after a switch-off it may still send one; the server drops it. `loom enable`, `loom register`,
 `loom status` and `loom doctor` name the projects you capture whose extracts are kept.
 
-What never leaves, under any configuration:
+**Client plugins** (D23). The client can be extended by Python packages installed in its
+own environment (`~/.loom/venv`). After a capture pass has stored an entry, each plugin is
+run once with that entry and its redacted extract, in a process of its own, and can call
+the model the way the summarizer does and send requests to your team's server with your
+credential. What a plugin sends, and where, is up to the plugin: treat installing one like
+installing any other program that can read your files. None is installed by default.
+`loom doctor` lists every one under `client plugins:`; `~/.loom/venv/bin/pip uninstall
+<package>` removes one.
+
+What never leaves, under any configuration of Loom itself:
 
 - **The raw transcript.** It is read locally; only the redacted extract above is sent, and
   the file stays in `~/.claude/projects/`.

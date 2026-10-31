@@ -15,6 +15,7 @@ here out of ``LOOM_HOME``:
      "processor": {"tear_ratio_threshold": 0.5},
      "curation": {"candidate_k": 8, "timeout_s": 900, "digest_threshold": 15},
      "log": {"char_budget": 8000},
+     "plugins": {"timeout_s": 600},
      "capture_mode": "opt_in" | "all_registered",
      "claude_config_dir": "~/.claude-personal"}``.
   ``capture_mode`` (D9) decides whether the local per-project gate is enforced. ABSENT
@@ -131,6 +132,16 @@ DEFAULT_CURATION_TIMEOUT_S = 900
 MIN_CURATION_TIMEOUT_S = 30
 MAX_CURATION_TIMEOUT_S = 3600
 
+# D23: wall clock for ONE client plugin handling ONE stored entry, in its own child
+# process; past it the run ends as a timeout. A plugin may call the model more than
+# once, so the default is twice the default summarizer budget. Additive key
+# (p2-config-additive-keys). A too-small value only makes plugins fail: they run after
+# the entry is stored, so no value of this key can cost a capture, and the bounds are
+# wide on purpose.
+DEFAULT_PLUGIN_TIMEOUT_S = 600
+MIN_PLUGIN_TIMEOUT_S = 1
+MAX_PLUGIN_TIMEOUT_S = 3600
+
 # Phase 4 (T.F6, E16): how many NEW current entries a project must accumulate since its
 # last digest before a curate pass pays for a digest LLM call. The whole cost gate of
 # T.F6 — below it there is no call at all and the watermark is untouched. Additive key
@@ -196,6 +207,12 @@ def _curation_timeout_s(raw: object) -> int:
     """The configured curation timeout, or the default for anything unusable."""
     return _bounded_int(raw, DEFAULT_CURATION_TIMEOUT_S,
                         MIN_CURATION_TIMEOUT_S, MAX_CURATION_TIMEOUT_S)
+
+
+def _plugin_timeout_s(raw: object) -> int:
+    """The configured client plugin timeout, or the default for anything unusable."""
+    return _bounded_int(raw, DEFAULT_PLUGIN_TIMEOUT_S,
+                        MIN_PLUGIN_TIMEOUT_S, MAX_PLUGIN_TIMEOUT_S)
 
 
 def _candidate_k(raw: object) -> int:
@@ -315,6 +332,7 @@ class Config:
     curation_timeout_s: int = DEFAULT_CURATION_TIMEOUT_S
     curation_digest_threshold: int = DEFAULT_DIGEST_THRESHOLD
     log_char_budget: int = DEFAULT_LOG_CHAR_BUDGET
+    plugin_timeout_s: int = DEFAULT_PLUGIN_TIMEOUT_S
     # Device token lifetime (issue #20). Both absent = a legacy permanent `adduser`
     # token, which is what every config written before enrolment existed carries.
     token_issued_at: str | None = None
@@ -491,6 +509,10 @@ class Config:
         log_section = data.get("log") or {}
         if not isinstance(log_section, dict):
             log_section = {}
+        # Additive section (D23), guarded like the ones above.
+        plugins = data.get("plugins") or {}
+        if not isinstance(plugins, dict):
+            plugins = {}
         prompt_path = data.get("prompt_path")
         transcripts_root = sweep.get("transcripts_root")
         claude_config_dir = data.get("claude_config_dir")
@@ -528,6 +550,9 @@ class Config:
             ),
             log_char_budget=_log_char_budget(
                 log_section.get("char_budget", DEFAULT_LOG_CHAR_BUDGET)
+            ),
+            plugin_timeout_s=_plugin_timeout_s(
+                plugins.get("timeout_s", DEFAULT_PLUGIN_TIMEOUT_S)
             ),
             token_issued_at=_optional_str(data.get("token_issued_at")),
             token_expires_at=_optional_str(data.get("token_expires_at")),

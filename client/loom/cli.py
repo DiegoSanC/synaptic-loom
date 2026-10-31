@@ -69,7 +69,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from loom import auth, curate, okf, processor, projects_local, scan_engine
+from loom import auth, curate, okf, plugins, processor, projects_local, scan_engine
 from loom.api_client import ApiClient, ServerUnreachable
 from loom.config import (
     CAPTURE_MODE_ALL_REGISTERED,
@@ -3145,6 +3145,24 @@ def _capture_mode_check(cfg: Config) -> tuple[str, str]:
                   f"({cfg.projects_local_path})")
 
 
+def _client_plugins_check() -> tuple[str, str]:
+    """The installed client plugins (D23), by entry-point name, or that there are none."""
+    try:
+        found = plugins.installed()
+    except Exception as exc:  # noqa: BLE001 — a broken metadata dir is a warning, not a crash.
+        return ("warn", f"client plugins: could not list them ({type(exc).__name__})")
+    if not found:
+        return ("ok", "client plugins: none installed")
+    listed = ", ".join(f"{name} ({target})" for name, target in found)
+    twice = plugins.declared_twice()
+    if twice:
+        return ("warn", f"client plugins: {listed}; "
+                        + ", ".join(f"'{name}'" for name in twice)
+                        + " is declared by more than one distribution, and only the first "
+                          "found runs")
+    return ("ok", f"client plugins: {listed}")
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     checks: list[tuple[str, str]] = []
 
@@ -3273,6 +3291,10 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         checks.append(("fail", f"SessionEnd hook is NOT in {settings_path} (run install.sh, "
                                f"with CLAUDE_CONFIG_DIR set if your Claude Code uses another "
                                f"configuration directory)"))
+
+    # D23: what extends the client, named from the installed metadata. Nothing is
+    # imported: doctor never runs a plugin's code.
+    checks.append(_client_plugins_check())
 
     # Phase-2 rows (R2.4.2 / AC-2.4c): what loom is actually RUNNING WITH — the scanner
     # engine in force, whether the periodic trigger is armed, how fresh the last sweep is.
