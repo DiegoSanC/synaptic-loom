@@ -17,10 +17,8 @@ import time
 from importlib.metadata import entry_points
 
 from loom.config import Config
-from loom.plugins import GROUP, PARENT_ENV, PluginHost, StoredEntry
-
-# Exit status when no installed distribution declares the name (uninstalled meanwhile).
-NOT_FOUND = 2
+from loom.plugins import (BODY_REFUSED, GROUP, NOT_INSTALLED, PARENT_ENV, BodyRefused,
+                          PluginHost, StoredEntry)
 
 
 def _orphaned(parent: int) -> bool:
@@ -44,12 +42,17 @@ def main(argv: list[str] | None = None) -> int:
     entry = StoredEntry(**json.loads(sys.stdin.read()))
     matches = [ep for ep in entry_points(group=GROUP) if ep.name == name]
     if not matches:
-        return NOT_FOUND
+        return NOT_INSTALLED
     register = matches[0].load()
     host = PluginHost(Config.load())
-    register(host)
-    for callback in host.callbacks:
-        callback(entry)
+    try:
+        register(host)
+        for callback in host.callbacks:
+            callback(entry)
+    except BodyRefused:
+        # The one failure of a plugin the pass can name: a body `server_request` did
+        # not send, which the plugin let through.
+        return BODY_REFUSED
     return 0
 
 

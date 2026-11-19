@@ -707,8 +707,21 @@ grep -P '\tplugin_(done|failed)\t' ~/.loom/log/processor.log | tail
 ```
 
 - **`plugin_done` / `plugin_failed`:** one line per plugin and entry, with its name, the
-  entry id and, on failure, `exit=<n>`, `timeout` or `error=<type>`. A plugin's own output
+  entry id and, on failure, `exit=<n>`, `timeout`, `error=<type>`, `not_installed` (the
+  distribution was uninstalled meanwhile) or `body_refused` (below). A plugin's own output
   is discarded; it keeps its own log if it needs one.
+- **What a plugin is handed:** the stored entry, and its redacted extract only when the
+  project keeps extracts (`store_extracts`, D22). For a project that keeps none the
+  plugin is still called, with an empty extract.
+- **`body_refused`:** a body a plugin sends with `loom.server_request` is scanned first
+  with the scanner of step 8 (gitleaks ∪ regex). A finding, or a scan that cannot run,
+  sends nothing and raises `loom.plugins.BodyRefused` in the plugin; the line appears
+  when the plugin does not catch it. Neither the body nor the value found is logged. A
+  request without a body is not scanned.
+- **`spool not removed file=<name> error=<type>`** (session `plugins`): a file in
+  `~/.loom/plugins_spool/` could not be deleted, so its entry was not run and the pass
+  stopped running plugins. Fix the directory's permissions (it is `0700`, yours) or
+  remove the named file; the next pass carries on from there.
 - **Timeout:** `plugins.timeout_s` in `config.json` (default 600 s, 1–3600). Past it the
   run ends as `timeout`.
 - **Nothing of a run outlives it.** When a run ends, however it ends, its process group is
