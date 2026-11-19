@@ -7,15 +7,18 @@ a ``claude`` stub and a mock server. A plugin is installed the way pip installs 
 process of the pass, found by its entry point in ``loom.client_plugins``.
 
 - After a pass stores an entry (201), each plugin is called once with that entry: its
-  id, project, session, text, items, the extract the summarizer read, and whether the
-  server kept it.
+  id, project, session, text, items, the extract the summarizer read when the project
+  keeps extracts (empty when it does not), and whether the server kept it.
 - An entry that is a duplicate (409) or quarantined is never handed to a plugin.
 - A plugin that raises, cannot be imported, or outlives its timeout costs no capture:
   the entry, the pointer and the queue are settled before it runs. It leaves one
   ``plugin_failed`` line naming it, and nothing it printed.
 - Plugins run in entry-point-name order, and one failing does not stop the next.
 - ``run_model`` calls the summarizer's binary with the summarizer's isolation, and
-  ``server_request`` reaches the configured server with the client's credential.
+  ``server_request`` reaches the configured server with the client's credential, after
+  its body has passed the secret scan: a finding, or a scan that cannot run, sends
+  nothing.
+- A spool file that cannot be removed is not run, and the pass ends.
 """
 from __future__ import annotations
 
@@ -47,6 +50,8 @@ REAL_GITLEAKS = shutil.which("gitleaks")
 REMOTE = "github.com/org/b"     # the integration env's repo remote (conftest)
 ENTRY_ID = 7
 API_SECRET = "zX9j2kQ8vB4nM7cL1wR5tY6uI3oP0aSdFgHjKlZxCvB"   # gitleaks: generic-api-key
+# What a model can answer: the secret inside quotes, which JSON escapes when it is sent.
+LEAKED_ANSWER = f'Set api_key = "{API_SECRET}" and retry.'
 
 # Writes everything the plugin was handed to $PLUGIN_OUT/<name>-<entry id>.json.
 RECORDER = """
@@ -78,7 +83,8 @@ def _transcript(env, turns) -> None:
 def _claude(env, calls: Path, *, summary: str = CANNED_SUMMARY) -> str:
     """A ``claude`` stub that records every call (argv, cwd, the guard, stdin). It
     answers the summarizer with ``summary``, ``PLUGIN PROMPT`` with ``model says hi``,
-    and exits 3 on ``FAILING PROMPT``."""
+    ``LEAKING PROMPT`` with a line that quotes ``API_SECRET``, and exits 3 on
+    ``FAILING PROMPT``."""
     path = env.home / "claude_recorder.py"
     path.write_text(
         f"#!{sys.executable}\n"
@@ -92,6 +98,8 @@ def _claude(env, calls: Path, *, summary: str = CANNED_SUMMARY) -> str:
         "    sys.exit(3)\n"
         "if sys.argv[-1] == 'PLUGIN PROMPT':\n"
         "    sys.stdout.write('model says hi')\n"
+        "elif sys.argv[-1] == 'LEAKING PROMPT':\n"
+        f"    sys.stdout.write({LEAKED_ANSWER!r})\n"
         "else:\n"
         f"    sys.stdout.write({summary!r})\n",
         encoding="utf-8",
@@ -402,6 +410,100 @@ def test_server_request_reaches_the_server_with_the_clients_credential(
     assert request.get_json() == {"entry": ENTRY_ID}
 
 
+def _plugin_requests(env) -> list:
+    return [request for request, _ in env.httpserver.log if request.path == "/api/plugin-test"]
+
+
+def test_server_request_sends_nothing_when_the_body_holds_a_secret(
+        env, run_cli, tmp_path, plugin_out, install_client_plugin):
+    install_client_plugin("poster", """
+        import os, pathlib
+
+        def register(loom):
+            def stored(entry):
+                out = pathlib.Path(os.environ["PLUGIN_OUT"])
+                answer = loom.run_model("LEAKING PROMPT", "x")
+                try:
+                    loom.server_request("POST", "/api/plugin-test",
+                                        json={"notes": [{"text": answer}]})
+                except loom.BodyRefused as exc:
+                    (out / "refused").write_text(str(exc))
+                resp = loom.server_request("POST", "/api/plugin-test",
+                                           json={"entry": entry.entry_id})
+                (out / "status").write_text(str(resp.status_code))
+            loom.on_entry_stored(stored)
+    """)
+    _configure(env, tmp_path)
+    env.httpserver.expect_request("/api/plugin-test", method="POST").respond_with_json(
+        {"ok": True}, status=201)
+
+    rc, output = run_cli("process")
+
+    assert rc == 0, output
+    refused = (plugin_out / "refused").read_text()
+    assert "generic-api-key" in refused                 # the kind, never the value
+    assert API_SECRET not in refused
+    # Only the clean body ever reached the server.
+    assert [r.get_json() for r in _plugin_requests(env)] == [{"entry": ENTRY_ID}]
+    assert (plugin_out / "status").read_text() == "201"
+    assert len(_log_lines(env, "plugin_done")) == 1
+    assert API_SECRET not in (env.home / "log" / "processor.log").read_text(encoding="utf-8")
+
+
+def test_a_refused_body_the_plugin_does_not_catch_is_its_failure_reason(
+        env, run_cli, tmp_path, plugin_out, install_client_plugin):
+    install_client_plugin("poster", f"""
+        def register(loom):
+            def stored(entry):
+                loom.server_request("PUT", "/api/plugin-test",
+                                    json={{"note": {LEAKED_ANSWER!r}}})
+            loom.on_entry_stored(stored)
+    """)
+    _configure(env, tmp_path)
+    env.httpserver.expect_request("/api/plugin-test").respond_with_json({"ok": True})
+
+    rc, output = run_cli("process")
+
+    assert rc == 0, output
+    _capture_settled(env)
+    assert _plugin_requests(env) == []
+    assert [line.split("\t")[-1] for line in _log_lines(env, "plugin_failed")] == [
+        f"name=poster entry={ENTRY_ID} body_refused"]
+    assert API_SECRET not in (env.home / "log" / "processor.log").read_text(encoding="utf-8")
+
+
+def test_server_request_sends_no_body_the_scanner_could_not_read(
+        env, run_cli, tmp_path, plugin_out, install_client_plugin):
+    # The plugin's own process loses gitleaks (an emptied PATH) after the pass scanned
+    # the entry with it: a body is refused, a request without one still goes out.
+    install_client_plugin("poster", """
+        import os, pathlib
+
+        def register(loom):
+            def stored(entry):
+                out = pathlib.Path(os.environ["PLUGIN_OUT"])
+                os.environ["PATH"] = ""
+                try:
+                    loom.server_request("POST", "/api/plugin-test",
+                                        json={"entry": entry.entry_id})
+                except loom.BodyRefused as exc:
+                    (out / "refused").write_text(str(exc))
+                resp = loom.server_request("GET", "/api/plugin-test")
+                (out / "status").write_text(str(resp.status_code))
+            loom.on_entry_stored(stored)
+    """)
+    _configure(env, tmp_path)
+    env.httpserver.expect_request("/api/plugin-test").respond_with_json({"ok": True})
+
+    rc, output = run_cli("process")
+
+    assert rc == 0, output
+    assert "could not run" in (plugin_out / "refused").read_text()
+    assert [r.method for r in _plugin_requests(env)] == ["GET"]
+    assert (plugin_out / "status").read_text() == "200"
+    assert len(_log_lines(env, "plugin_done")) == 1
+
+
 # --------------------------------------------------------------------------- #
 # The timeout key                                                              #
 # --------------------------------------------------------------------------- #
@@ -509,7 +611,7 @@ def test_plugins_run_after_every_entry_of_the_pass_is_settled_and_the_lock_is_fr
         f"{ENTRY_ID + 1} observer", f"{ENTRY_ID + 1} zz_after"]
 
 
-def test_a_project_that_keeps_no_extracts_still_hands_the_plugin_its_extract(
+def test_a_project_that_keeps_no_extracts_hands_the_plugin_an_empty_extract(
         env, run_cli, tmp_path, plugin_out, install_client_plugin):
     install_client_plugin("recorder", _recorder("recorder"))
     calls = _configure(env, tmp_path, store_extracts=False,
@@ -520,10 +622,21 @@ def test_a_project_that_keeps_no_extracts_still_hands_the_plugin_its_extract(
     assert rc == 0, output
     [posted] = env.posted_entries()
     assert "extract" not in posted
-    handed = json.loads((plugin_out / f"recorder-{ENTRY_ID}.json").read_text())
     summarizer_stdin = json.loads(calls.read_text(encoding="utf-8").splitlines()[0])["stdin"]
-    assert handed["extract"] == summarizer_stdin
-    assert handed["extract_stored"] is False
+    assert "total() skip" in summarizer_stdin        # there was an extract to withhold
+    # The plugin is still called, with everything but the extract.
+    handed = json.loads((plugin_out / f"recorder-{ENTRY_ID}.json").read_text())
+    assert handed == {
+        "entry_id": ENTRY_ID,
+        "project_remote": REMOTE,
+        "session_id": "sess-plugin",
+        "content_md": posted["content_md"],
+        "items": posted.get("items", []),
+        "item_types": posted["item_types"],
+        "extract": "",
+        "extract_stored": False,
+    }
+    assert len(_log_lines(env, "plugin_done")) == 1
 
 
 def test_a_201_without_an_id_is_handed_to_no_plugin(env, run_cli, tmp_path, plugin_out,
@@ -787,3 +900,109 @@ def test_a_plugin_list_that_cannot_be_read_keeps_the_spool(
 
     assert rc == 0, output
     assert (plugin_out / f"recorder-{ENTRY_ID}.json").exists()
+
+
+# --------------------------------------------------------------------------- #
+# A spool file that cannot be removed                                          #
+# --------------------------------------------------------------------------- #
+def _pass_that_must_end(env, seconds: float = 60) -> int:
+    """One ``loom process`` in a process of its own, so a pass that never ends is a
+    failure here and not a suite that hangs."""
+    try:
+        done = subprocess.run(
+            [sys.executable, "-c", "import sys; from loom.cli import main; "
+                                   "sys.exit(main(['process']))"],
+            env={**os.environ, "LOOM_HOME": str(env.home)},
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=seconds)
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"the pass was still running after {seconds} s")
+    return done.returncode
+
+
+@pytest.mark.skipif(os.geteuid() == 0,
+                    reason="root removes a file from a read-only directory")
+def test_a_spool_file_that_cannot_be_removed_is_not_run_and_the_pass_ends(
+        env, run_cli, tmp_path, plugin_out, install_client_plugin):
+    install_client_plugin("recorder", _recorder("recorder"))
+    _configure(env, tmp_path)
+    with open(env.home / "plugins.lock", "w") as held:      # leave the entry spooled
+        fcntl.flock(held, fcntl.LOCK_EX)
+        rc, output = run_cli("process")
+        assert rc == 0, output
+    spool = env.home / "plugins_spool"
+    [spooled] = list(spool.iterdir())
+    spool.chmod(0o500)                                      # nothing in it can be removed
+    try:
+        assert _pass_that_must_end(env) == 0
+    finally:
+        spool.chmod(0o700)
+
+    assert list(plugin_out.iterdir()) == []                 # not run, not even once
+    assert [line.split("\t")[-1] for line in _log_lines(env, "plugin_failed")] == [
+        f"spool not removed file={spooled.name} error=PermissionError"]
+    assert _log_lines(env, "plugin_done") == []
+    assert list(spool.iterdir()) == [spooled]
+
+    rc, output = run_cli("process")                         # removable again: run once
+
+    assert rc == 0, output
+    assert (plugin_out / f"recorder-{ENTRY_ID}.json").exists()
+    assert len(_log_lines(env, "plugin_done")) == 1
+    assert list(spool.iterdir()) == []
+
+
+def test_a_spool_entry_that_is_not_a_file_ends_the_pass_with_one_line(
+        env, tmp_path, plugin_out, install_client_plugin):
+    install_client_plugin("recorder", _recorder("recorder"))
+    _configure(env, tmp_path)
+    spool = env.home / "plugins_spool"
+    stuck = spool / "99999999999999999999-1-1.json"         # sorts after the pass's entry
+    stuck.mkdir(parents=True)                               # neither read nor unlinked
+
+    assert _pass_that_must_end(env) == 0
+
+    assert (plugin_out / f"recorder-{ENTRY_ID}.json").exists()
+    assert len(_log_lines(env, "plugin_done")) == 1
+    [failed] = _log_lines(env, "plugin_failed")
+    assert f"spool not removed file={stuck.name} error=" in failed
+
+
+# --------------------------------------------------------------------------- #
+# What the runner says for itself                                              #
+# --------------------------------------------------------------------------- #
+def test_a_plugin_uninstalled_during_the_pass_is_logged_as_not_installed(
+        env, run_cli, tmp_path, plugin_out, install_client_plugin):
+    install_client_plugin("a_remover", """
+        import pathlib, shutil
+
+        def register(loom):
+            def stored(entry):
+                shutil.rmtree(pathlib.Path(__file__).parent / "b_gone_plugin-0.1.dist-info")
+            loom.on_entry_stored(stored)
+    """)
+    install_client_plugin("b_gone", _recorder("b_gone"))
+    _configure(env, tmp_path)
+
+    rc, output = run_cli("process")
+
+    assert rc == 0, output
+    assert list(plugin_out.iterdir()) == []
+    assert [line.split("\t")[-1] for line in _log_lines(env, "plugin_failed")] == [
+        f"name=b_gone entry={ENTRY_ID} not_installed"]
+
+
+def test_a_plugins_own_exit_status_is_logged_as_it_is(env, run_cli, tmp_path,
+                                                      install_client_plugin):
+    install_client_plugin("quitter", """
+        import sys
+
+        def register(loom):
+            loom.on_entry_stored(lambda entry: sys.exit(2))
+    """)
+    _configure(env, tmp_path)
+
+    rc, output = run_cli("process")
+
+    assert rc == 0, output
+    assert [line.split("\t")[-1] for line in _log_lines(env, "plugin_failed")] == [
+        f"name=quitter entry={ENTRY_ID} exit=2"]

@@ -1520,10 +1520,10 @@ def _process_marker(
 
     # Step 9: POST /api/entries. D22: the extract joins the payload only here, so a
     # quarantined entry (step 8) is written without it. It is step 5b's output — the
-    # text the summarizer read, every detected secret already replaced.
+    # text the summarizer read, every detected secret already replaced. A project that
+    # keeps no extracts has none, for the server and for a client plugin alike (D23).
     stores_extract = _stores_extracts(registry, canonical)
-    extract = (cap_extract(summarizer_input)
-               if stores_extract or report.plugin_names else "")
+    extract = cap_extract(summarizer_input) if stores_extract else ""
     if stores_extract:
         payload = {**payload, "extract": extract}
     try:

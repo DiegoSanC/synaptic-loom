@@ -253,10 +253,14 @@ up to an hour after a switch-off it may still send one; the server drops it. `lo
 
 **Client plugins** (D23). The client can be extended by Python packages installed in its
 own environment (`~/.loom/venv`). After a capture pass has stored an entry, each plugin is
-run once with that entry and its redacted extract, in a process of its own, and can call
-the model the way the summarizer does and send requests to your team's server with your
-credential. What a plugin sends, and where, is up to the plugin: treat installing one like
-installing any other program that can read your files. None is installed by default.
+run once with that entry, in a process of its own, and can call the model the way the
+summarizer does and send requests to your team's server with your credential. It is
+handed the redacted extract only for a project that keeps extracts (see above); for one
+that does not, it gets the entry and an empty extract. A request body a plugin sends
+through the client is scanned for secrets first, like every summary, and is not sent if
+the scan finds one or cannot run. What a plugin sends by its own means, and where, is up
+to the plugin: treat installing one like installing any other program that can read your
+files. None is installed by default.
 `loom doctor` lists every one under `client plugins:`; `~/.loom/venv/bin/pip uninstall
 <package>` removes one.
 
