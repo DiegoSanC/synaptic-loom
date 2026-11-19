@@ -8,12 +8,14 @@ What is asserted, each through the API or the admin CLI (the boundaries the chan
 - a project's `store_extracts` is on by default (also for a project that existed before
   the column), travels in the project listing, and when off the entry is stored and the
   extract is not;
-- `admin.py extracts` turns it on and off, and `--purge` deletes what is stored;
+- `admin.py extracts` turns it on and off, and `--purge` deletes what is stored: after it
+  neither the database file nor its WAL holds the purged extracts' bytes;
 - the bounds: an oversized extract is a 422, a duplicate entry leaves the stored extract
   as it was, an entry without one is a 404 on the read.
 """
 import sqlite3
 import zlib
+from pathlib import Path
 
 import pytest
 
@@ -200,6 +202,95 @@ def test_purge_deletes_the_stored_extracts_of_that_project_only(client, dev, cap
     assert flags == {REMOTE: False, "github.com/org/c": True}
     assert client.get(f"/api/entries/{kept}/extract",
                       headers=dev["auth"]).status_code == 200
+
+
+def _file_bytes(db_file):
+    """The database file and its WAL, as they are on disk."""
+    return b"".join(Path(db_file + suffix).read_bytes() for suffix in ("", "-wal")
+                    if Path(db_file + suffix).exists())
+
+
+def test_after_a_purge_the_database_file_no_longer_holds_the_extract(client, dev, env):
+    stored = zlib.compress(EXTRACT.encode("utf-8"), 9)
+    client.post("/api/entries", headers=dev["auth"], json=_entry(extract=EXTRACT))
+    assert stored in _file_bytes(env)       # the bytes searched for below are the stored ones
+
+    assert admin.main(["extracts", "--remote", REMOTE, "off", "--purge"]) == 0
+
+    assert stored not in _file_bytes(env)
+
+
+def test_a_purge_leaves_no_older_copy_of_any_purged_extract_in_the_file(client, dev, env):
+    """A table that has grown keeps older copies of its first rows in pages it has since
+    rewritten, and a long extract spills over several pages: none of it may stay."""
+    other = "github.com/org/c"
+    _register(client, dev["auth"], other)
+    texts = {remote: [f"{remote} session {n}: " + f"turn {n} of the conversation; " * 4
+                      for n in range(150)]
+             for remote in (REMOTE, other)}
+    long_text = "".join(f"[{n:05d}] tool output {n * 7919:x}\n" for n in range(4000))
+    for n in range(150):
+        for remote in (REMOTE, other):
+            posted = client.post("/api/entries", headers=dev["auth"], json=_entry(
+                project_remote=remote, extract=texts[remote][n],
+                content_hash=f"{remote}-{n}"))
+            assert posted.json()["extract_stored"] is True
+    client.post("/api/entries", headers=dev["auth"],
+                json=_entry(extract=long_text, content_hash="long"))
+    long_stored = zlib.compress(long_text.encode("utf-8"), 9)
+    assert len(long_stored) > 3 * 4096      # several pages of the file
+    # 32 bytes at a time: a page boundary cuts the stored blob, never every piece of it.
+    pieces = [long_stored[at:at + 32] for at in range(0, len(long_stored) - 32, 32)]
+    purged = [zlib.compress(text.encode("utf-8"), 9) for text in texts[REMOTE]]
+    before = _file_bytes(env)
+    assert all(blob in before for blob in purged)
+    assert sum(piece in before for piece in pieces) > len(pieces) * 0.9
+
+    assert admin.main(["extracts", "--remote", REMOTE, "off", "--purge"]) == 0
+
+    after = _file_bytes(env)
+    assert [n for n, blob in enumerate(purged) if blob in after] == []
+    assert [n for n, piece in enumerate(pieces) if piece in after] == []
+    pid = {p["canonical_remote"]: p["id"] for p in client.get(
+        "/api/projects", headers=dev["auth"]).json()["projects"]}[other]
+    kept = client.get(f"/api/projects/{pid}/entries", params={"limit": 200},
+                      headers=dev["auth"]).json()["entries"]
+    assert len(kept) == 150
+    found = client.get(f"/api/projects/{pid}/entries", params={"limit": 200, "q": "skips"},
+                       headers=dev["auth"]).json()["entries"]
+    assert len(found) == 150                # the rewritten file still answers a search
+    assert sorted(client.get(f"/api/entries/{e['id']}/extract",
+                             headers=dev["auth"]).json()["extract"]
+                  for e in kept) == sorted(texts[other])
+
+
+def test_a_purge_another_connection_holds_back_says_so_and_a_second_run_finishes_it(
+        client, dev, env, capsys, monkeypatch):
+    monkeypatch.setattr(db, "_BUSY_TIMEOUT_MS", 200)    # how long the purge waits for it
+    stored = zlib.compress(EXTRACT.encode("utf-8"), 9)
+    entry_id = client.post("/api/entries", headers=dev["auth"],
+                           json=_entry(extract=EXTRACT)).json()["id"]
+    reader = sqlite3.connect(env)
+    try:
+        reader.execute("BEGIN")
+        assert reader.execute("SELECT count(*) FROM entry_extracts").fetchone() == (1,)
+
+        assert admin.main(["extracts", "--remote", REMOTE, "off", "--purge"]) == 1
+
+        said = capsys.readouterr()
+        assert "Deleted 1 stored extract(s)." in said.out
+        assert "Run the same command again" in said.err
+        assert client.get(f"/api/entries/{entry_id}/extract",
+                          headers=dev["auth"]).status_code == 404
+        assert stored in _file_bytes(env)   # what the message is about
+    finally:
+        reader.close()
+
+    assert admin.main(["extracts", "--remote", REMOTE, "off", "--purge"]) == 0
+
+    said = capsys.readouterr()
+    assert "Deleted 0 stored extract(s)." in said.out and said.err == ""
+    assert stored not in _file_bytes(env)
 
 
 def test_purge_needs_off(capsys, env):

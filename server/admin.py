@@ -28,7 +28,9 @@ server without an active admin once it has one.
 
 `extracts` turns a project's ``store_extracts`` (D22) on or off: off, the project's next
 entries are stored without their redacted extract; ``--purge`` also deletes the extracts
-already stored for it.
+already stored for it and rewrites the database file (``extracts.rewrite_database``), so
+that neither the file nor its WAL keeps their bytes. It exits 1 when the rewrite could not
+finish; running it again completes it.
 """
 import argparse
 import secrets
@@ -239,11 +241,18 @@ def _extracts(args: argparse.Namespace) -> int:
                      (1 if args.state == "on" else 0, row["id"]))
         purged = extracts.purge(conn, row["id"]) if args.purge else None
         conn.commit()
+        print(f"Extracts {args.state} for {canonical}.")
+        if purged is None:
+            return 0
+        print(f"Deleted {purged} stored extract(s).")
+        if not extracts.rewrite_database(conn):
+            print("error: the database file could not be rewritten while another connection "
+                  "was reading it, so it may still hold the deleted extracts' bytes. "
+                  "Run the same command again.", file=sys.stderr)
+            return 1
+        print("Rewrote the database file: it no longer holds their bytes.")
     finally:
         conn.close()
-    print(f"Extracts {args.state} for {canonical}.")
-    if purged is not None:
-        print(f"Deleted {purged} stored extract(s).")
     return 0
 
 

@@ -390,8 +390,18 @@ server keeps the redacted conversation next to it. Decide per project before you
    projects that keep extracts. An older client sends none, and an older server is sent
    none.
 
-`--purge` with `off` deletes the stored rows. Copies in the backups (§3) age out with
-their retention; SQLite may keep the bytes in free pages until the file is vacuumed.
+`--purge` with `off` deletes the stored rows and then rewrites the database file (`VACUUM`,
+then a checkpoint that empties the WAL): when it exits 0, neither the live database file
+nor its WAL holds the purged extracts' bytes any more. The rewrite needs free space for
+about one more copy of the database on the data volume and one in the container's
+temporary directory, and writes wait while it runs. It exits 1 and says so when another
+connection (a request being served, a backup being taken) kept it from finishing: the rows
+are deleted, the bytes may not be, and running the same command again completes it. A
+purge run by a server version that only deleted the rows left their bytes in the file;
+running `off --purge` again rewrites it.
+
+Backups and volume snapshots taken **before** the purge (§3) keep the extracts until
+their retention removes them (D8/D18).
 
 #### Rollback restores the IMAGE, not the data
 
