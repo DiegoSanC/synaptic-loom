@@ -140,7 +140,11 @@ sweep's default `transcripts_root` and the summarizer's `CLAUDE_CONFIG_DIR` come
 (absent: `~/.claude`, and the variable is removed, never inherited). A recorded value
 wins over the variable, and so does this install's hook already in
 `~/.claude/settings.json`: one machine serves one directory, and a re-run from inside
-another profile's session must not move the capture onto that profile's account.
+another profile's session must not move the capture onto that profile's account. The
+other side of that rule is an install that stays on `~/.claude` while the Claude Code in
+use keeps its sessions elsewhere, with every check green: `loom doctor` run from a shell
+whose `CLAUDE_CONFIG_DIR` resolves to another directory than the one served adds a `⚠`
+row naming both (a warning, never a `✗`: a second profile may be left out on purpose).
 
 Receives on stdin: `session_id`, `transcript_path`, `cwd`, `reason`. Does **one single thing**:
 

@@ -152,6 +152,10 @@ the last 7 days, someone else changed your account or your machines — an admin
 your role or revoked a machine, or the operator ran `admin.py`. `loom status` lists what
 happened (below). An older server without this information shows no `account` row.
 
+A `⚠` row about `CLAUDE_CONFIG_DIR` means the shell you ran `loom doctor` from sets it to
+another directory than the one this install serves, so the sessions of the Claude Code
+that uses it are not captured. [Step 2](#2-run-the-installer) says how to move an install.
+
 ---
 
 ## Connect a project

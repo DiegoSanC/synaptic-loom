@@ -2511,6 +2511,38 @@ def _detected_claude_config_dir(loom_home: Path) -> str | None:
     return str(path) if _hook_in_settings(path / "settings.json", hook_dst) else None
 
 
+def _resolved(path: Path) -> Path:
+    """``path`` with ``~`` expanded and symlinks followed; as given when it cannot be."""
+    path = path.expanduser()
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return path.absolute()
+
+
+def _shell_claude_dir_check(claude_home: Path) -> tuple[str, str] | None:
+    """A ``⚠`` when this shell's ``CLAUDE_CONFIG_DIR`` is another directory than
+    ``claude_home``, the one this install serves; ``None`` (no row) when the variable is
+    unset or names the same directory, however it is spelled or symlinked.
+
+    The case it is for: an install made before ``claude_config_dir`` existed, on a machine
+    whose Claude Code runs with the variable. install.sh keeps the hook in ``~/.claude``,
+    every other row is green, and no session of the profile in use is ever captured.
+    Deliberately a ``⚠``, never a ``✗``: a machine can run a second profile it does not
+    want captured, and doctor cannot tell that from the shell alone.
+    """
+    raw = os.environ.get(CLAUDE_CONFIG_DIR_ENV)
+    if not raw:
+        return None
+    shell_dir = Path(raw).expanduser()
+    if _resolved(shell_dir) == _resolved(claude_home):
+        return None
+    return ("warn", f"this shell's {CLAUDE_CONFIG_DIR_ENV} is {shell_dir}, but this install "
+                    f"serves {claude_home}: Claude Code sessions run with {shell_dir} are not "
+                    f"captured. To move the install: docs/USER-GUIDE.md, '2. Run the "
+                    f"installer'")
+
+
 def _hook_in_settings(settings_path: Path, hook_dst: str) -> bool:
     """Is there a SessionEnd command hook pointing at ``hook_dst``? (read-only)."""
     data = _read_json(settings_path)
@@ -3285,12 +3317,18 @@ def cmd_doctor(args: argparse.Namespace) -> int:
         _detected_claude_config_dir(loom_home) or DEFAULT_CLAUDE_CONFIG_DIR).expanduser()
     settings_path = claude_home / "settings.json"
     hook_dst = str(loom_home / "hooks" / "sessionend.sh")
-    if _hook_in_settings(settings_path, hook_dst):
+    hooked = _hook_in_settings(settings_path, hook_dst)
+    if hooked:
         checks.append(("ok", f"SessionEnd hook registered in {settings_path}"))
     else:
         checks.append(("fail", f"SessionEnd hook is NOT in {settings_path} (run install.sh, "
                                f"with CLAUDE_CONFIG_DIR set if your Claude Code uses another "
                                f"configuration directory)"))
+    # Only an install that exists serves a directory: with neither a config nor a hook,
+    # the row above already says where install.sh would put it.
+    shell_dir = _shell_claude_dir_check(claude_home) if cfg or hooked else None
+    if shell_dir:
+        checks.append(shell_dir)
 
     # D23: what extends the client, named from the installed metadata. Nothing is
     # imported: doctor never runs a plugin's code.

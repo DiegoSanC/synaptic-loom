@@ -12,7 +12,10 @@ alone. Asserted through the real install.sh, the real CLI and a mock server:
 - doctor looks for the hook there, the sweep reads its ``projects``, and the summarizer and
   curation run ``claude`` with it as ``CLAUDE_CONFIG_DIR`` — the periodic pass does not
   carry the variable, and without it ``claude -p`` signs in with a different account or
-  none at all.
+  none at all;
+- doctor run from a shell whose ``CLAUDE_CONFIG_DIR`` is another directory than the one
+  the install serves says so in a ``⚠`` row: every other row is green there while
+  nothing is captured from the profile in use.
 
 Every test runs with ``HOME`` at a tmpdir; ``client/tests/conftest.py`` drops an inherited
 ``CLAUDE_CONFIG_DIR``, so each one sets the variable itself.
@@ -327,6 +330,138 @@ def test_doctor_without_a_config_looks_where_the_hook_was_installed(tmp_path, mo
 
     row = _hook_row(capsys.readouterr().out)
     assert row.startswith("✓") and str(other / "settings.json") in row, row
+
+
+def _doctor(tmp_path, monkeypatch, capsys, httpserver, *, shell_dir, serves=".claude",
+            recorded=None):
+    """Run doctor for an install whose hook is in ``<tmp_path>/<serves>`` and whose config
+    records ``recorded``, from a shell with ``CLAUDE_CONFIG_DIR=shell_dir`` (``None``:
+    unset). Returns its exit status and the rows about the shell's directory."""
+    home = tmp_path / ".loom"
+    claude_home = tmp_path / serves
+    claude_home.mkdir(exist_ok=True)
+    (claude_home / "settings.json").write_text(json.dumps({"hooks": {"SessionEnd": [
+        {"hooks": [{"type": "command", "command": str(home / "hooks" / "sessionend.sh")}]}]}}),
+        encoding="utf-8")
+    _write_config(tmp_path, server_url=httpserver.url_for(""),
+                  **({"claude_config_dir": recorded} if recorded else {}))
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LOOM_HOME", str(home))
+    if shell_dir is None:
+        monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    else:
+        monkeypatch.setenv("CLAUDE_CONFIG_DIR", shell_dir)
+    httpserver.expect_request("/api/health", method="GET").respond_with_json(
+        {"status": "ok", "version": "0.1.0"})
+    httpserver.expect_request("/api/projects", method="GET").respond_with_json({"projects": []})
+
+    rc = cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    assert _hook_row(out).startswith("✓"), out      # the hook row alone shows nothing wrong
+    rows = [ln for ln in out.splitlines()
+            if "CLAUDE_CONFIG_DIR" in ln and "SessionEnd hook" not in ln]
+    return rc, rows, [ln for ln in out.splitlines() if ln.startswith("✗")]
+
+
+def test_doctor_warns_when_the_shell_uses_another_directory_than_the_install(
+        tmp_path, monkeypatch, capsys, httpserver):
+    # Installed before `claude_config_dir` existed: the hook stays in ~/.claude, and the
+    # Claude Code this shell runs keeps its sessions somewhere else.
+    used = tmp_path / ".claude-personal"
+
+    rc, rows, failed = _doctor(tmp_path, monkeypatch, capsys, httpserver, shell_dir=str(used))
+
+    [row] = rows
+    assert row.startswith("⚠"), row
+    assert str(used) in row and str(tmp_path / ".claude") in row, row
+    assert "docs/USER-GUIDE.md" in row, row
+    # A warning, not a fault: the same install from a shell without the variable fails
+    # the same rows and exits the same.
+    plain_rc, plain_rows, plain_failed = _doctor(tmp_path, monkeypatch, capsys, httpserver,
+                                                 shell_dir=None)
+    assert plain_rows == []
+    assert (rc, failed) == (plain_rc, plain_failed)
+
+
+def test_doctor_warns_when_the_recorded_directory_is_not_the_shells(
+        tmp_path, monkeypatch, capsys, httpserver):
+    served, used = tmp_path / ".claude-personal", tmp_path / ".claude-work"
+
+    _, rows, _ = _doctor(tmp_path, monkeypatch, capsys, httpserver, shell_dir=str(used),
+                         serves=".claude-personal", recorded=str(served))
+
+    [row] = rows
+    assert row.startswith("⚠") and str(used) in row and str(served) in row, row
+
+
+@pytest.mark.parametrize("spelled", ["{home}/.claude-personal", "~/.claude-personal",
+                                     "{home}/.claude-personal/", "{home}/link"],
+                         ids=["same", "tilde", "trailing-slash", "symlink-to-it"])
+def test_doctor_says_nothing_when_the_shell_uses_the_install_directory(
+        tmp_path, monkeypatch, capsys, httpserver, spelled):
+    served = tmp_path / ".claude-personal"
+    served.mkdir()
+    (tmp_path / "link").symlink_to(served, target_is_directory=True)
+
+    _, rows, _ = _doctor(tmp_path, monkeypatch, capsys, httpserver,
+                         shell_dir=spelled.format(home=tmp_path),
+                         serves=".claude-personal", recorded=str(served))
+
+    assert rows == []
+
+
+def test_doctor_says_nothing_when_dot_claude_is_a_symlink_to_the_shells_directory(
+        tmp_path, monkeypatch, capsys, httpserver):
+    real = tmp_path / "dotfiles" / "claude"
+    real.mkdir(parents=True)
+    (tmp_path / ".claude").symlink_to(real, target_is_directory=True)
+
+    _, rows, _ = _doctor(tmp_path, monkeypatch, capsys, httpserver, shell_dir=str(real))
+
+    assert rows == []
+
+
+def test_doctor_warns_about_a_shell_directory_it_cannot_resolve(
+        tmp_path, monkeypatch, capsys, httpserver):
+    loop = tmp_path / "loop"
+    loop.symlink_to(loop)
+
+    _, rows, _ = _doctor(tmp_path, monkeypatch, capsys, httpserver, shell_dir=str(loop))
+
+    [row] = rows
+    assert row.startswith("⚠") and str(loop) in row, row
+
+
+@pytest.mark.parametrize("hook_in_dot_claude", [True, False], ids=["hook", "no-hook"])
+def test_doctor_without_a_config_warns_only_for_an_install_that_exists(
+        tmp_path, monkeypatch, capsys, hook_in_dot_claude):
+    # Not enrolled yet. With the hook in ~/.claude the install stays there whatever the
+    # variable says; with no hook anywhere there is no install to serve a directory, and
+    # the hook row already tells the reader to run install.sh with the variable set.
+    home = tmp_path / ".loom"
+    used = tmp_path / ".claude-personal"
+    if hook_in_dot_claude:
+        (tmp_path / ".claude").mkdir()
+        (tmp_path / ".claude" / "settings.json").write_text(json.dumps({"hooks": {
+            "SessionEnd": [{"hooks": [{"type": "command",
+                                       "command": str(home / "hooks" / "sessionend.sh")}]}]}}),
+            encoding="utf-8")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("LOOM_HOME", str(home))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(used))
+
+    cli.main(["doctor"])
+
+    out = capsys.readouterr().out
+    rows = [ln for ln in out.splitlines()
+            if "CLAUDE_CONFIG_DIR" in ln and "SessionEnd hook" not in ln]
+    if hook_in_dot_claude:
+        [row] = rows
+        assert row.startswith("⚠") and str(used) in row and str(tmp_path / ".claude") in row
+    else:
+        assert rows == []
+        assert _hook_row(out).startswith("✗") and "CLAUDE_CONFIG_DIR" in _hook_row(out)
 
 
 def test_a_recorded_default_directory_is_left_unset_for_claude(tmp_path, monkeypatch):
