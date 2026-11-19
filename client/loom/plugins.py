@@ -16,6 +16,10 @@ A plugin can cost no capture: the entry, the pointer and the queue are settled b
 runs, and whatever it does (raise, fail to import, hang) ends in one `plugin_failed`
 line naming it, never in anything it printed (I5). Its work for that entry is not
 retried. A client with no plugin installed starts no process and writes no line.
+
+What a plugin is handed and what it sends through the host follow the core's own rules:
+the extract is there only for a project that keeps extracts (D22), and a body given to
+`server_request` passes the step-8 secret scan before anything is sent (I4).
 """
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ from typing import Callable
 
 import requests
 
+from loom import scan_engine
 from loom.api_client import ApiClient, ServerUnreachable
 from loom.config import Config
 
@@ -44,6 +49,13 @@ SPOOL_DIR = "plugins_spool"
 LOCK_FILE = "plugins.lock"
 # The pid of the pass, so the child's watchdog knows whom to outlive no longer.
 PARENT_ENV = "LOOM_PLUGIN_PARENT"
+# Exit statuses the runner keeps for what it has to say itself, and the reason each one
+# is logged as. They are away from the statuses programs exit with by convention (1 and
+# 2, sysexits' 64-78, the shells' 126 and up for signals, 255), so a plugin's own
+# `sys.exit(2)` is logged as `exit=2` and not as one of these.
+NOT_INSTALLED = 201     # no installed distribution declares the name any more
+BODY_REFUSED = 202      # a `BodyRefused` the plugin did not catch
+RUNNER_REASONS = {NOT_INSTALLED: "not_installed", BODY_REFUSED: "body_refused"}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -52,8 +64,9 @@ class StoredEntry:
 
     ``content_md``, ``items`` and ``item_types`` are exactly what was posted;
     ``extract`` is the text the summarizer read (step 5b's output, every detected secret
-    already replaced, D16), cut as D22 cuts it, and present whether or not the project
-    keeps extracts; ``extract_stored`` says whether the server kept it.
+    already replaced, D16), cut as D22 cuts it, when the project's listing says it keeps
+    extracts, and empty when it does not: what was posted with the entry, and no more;
+    ``extract_stored`` says whether the server kept it.
     """
 
     entry_id: int
@@ -70,11 +83,18 @@ class ModelCallFailed(Exception):
     """`run_model` could not get an answer: a timeout, a non-zero exit, or no binary."""
 
 
+class BodyRefused(Exception):
+    """`server_request` sent nothing: the secret scan flagged the body, or could not
+    run (fail-closed, I4). The message names the kinds found or the error's type, never
+    the body or a value."""
+
+
 class PluginHost:
     """The `loom` a plugin's `register` receives (the child-process side)."""
 
     ModelCallFailed = ModelCallFailed
     ServerUnreachable = ServerUnreachable
+    BodyRefused = BodyRefused
 
     def __init__(self, cfg: Config) -> None:
         self._cfg = cfg
@@ -106,11 +126,52 @@ class PluginHost:
                        ) -> requests.Response:
         """One request to the configured server with this client's bearer. `path` starts
         with `/`. Any HTTP answer is returned as it came, whatever its status; raises
-        :class:`ServerUnreachable` only when the server cannot be reached."""
+        :class:`ServerUnreachable` only when the server cannot be reached.
+
+        A body (`json` other than None) is serialized here and scanned as step 8 scans
+        an entry (gitleaks ∪ regex) before anything is sent: a finding, or a scan that
+        cannot run, raises :class:`BodyRefused` and nothing leaves. A request without a
+        body is not scanned."""
         if not path.startswith("/"):
             raise ValueError("path must start with '/'")
-        return ApiClient(self._cfg.server_url, self._cfg.token)._request(
-            method, path, json=json)
+        api = ApiClient(self._cfg.server_url, self._cfg.token)
+        if json is None:
+            return api._request(method, path)
+        return api._request(method, path, data=_scanned_body(self._cfg, json),
+                            headers={"Content-Type": "application/json"})
+
+
+def _strings(value: object):
+    """Every string in a JSON value: object keys, and strings at any depth."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield from _strings(key)
+            yield from _strings(item)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+
+
+def _scanned_body(cfg: Config, payload: object) -> bytes:
+    """`payload` as the JSON bytes to send, or :class:`BodyRefused`.
+
+    The scan reads the serialized body and, after it, every string in it as plain text:
+    JSON escapes the quotes and line ends inside a string, and a rule that reads
+    `key = "value"` does not match `key = \\"value\\"`. The bytes returned are the ones
+    scanned, so what is sent is what passed.
+    """
+    body = json.dumps(payload, allow_nan=False)
+    try:
+        findings = scan_engine.scan("\n".join([body, *_strings(payload)]), cfg)
+    except Exception as exc:  # noqa: BLE001 — fail-closed: no verdict == a hit (I4).
+        raise BodyRefused("body not sent: the secret scan could not run "
+                          f"({type(exc).__name__})") from None
+    if findings:
+        kinds = ", ".join(sorted({finding.kind for finding in findings}))
+        raise BodyRefused(f"body not sent: the secret scan flagged it ({kinds})")
+    return body.encode("utf-8")
 
 
 # --------------------------------------------------------------------------- #
@@ -204,7 +265,9 @@ def _run_one(cfg: Config, name: str, entry: StoredEntry) -> str | None:
         child.wait()
     if timed_out:
         return "timeout"
-    return None if child.returncode == 0 else f"exit={child.returncode}"
+    if child.returncode == 0:
+        return None
+    return RUNNER_REASONS.get(child.returncode, f"exit={child.returncode}")
 
 
 def _spool(spool: Path, entry: StoredEntry) -> None:
@@ -220,7 +283,9 @@ def _spool(spool: Path, entry: StoredEntry) -> None:
 def _drain(cfg: Config, spool: Path, names: list[str],
            log: Callable[[Config, str, str, str], None]) -> None:
     """Run every plugin on every spooled entry, oldest first, until the spool is empty.
-    Each file is removed before its runs start: a plugin's work is never retried."""
+    Each file is removed before its runs start: a plugin's work is never retried. A file
+    that cannot be removed is therefore not run, and ends the drain: it would be found,
+    and run, again on every turn of this loop."""
     while True:
         pending = sorted(spool.glob("*.json"))
         if not pending:
@@ -231,9 +296,11 @@ def _drain(cfg: Config, spool: Path, names: list[str],
             except Exception:  # noqa: BLE001 — a damaged file is dropped, not retried.
                 entry = None
             try:
-                path.unlink()
-            except OSError:
-                pass
+                path.unlink(missing_ok=True)
+            except OSError as exc:
+                log(cfg, "plugins", "plugin_failed",
+                    f"spool not removed file={path.name} error={type(exc).__name__}")
+                return
             if entry is None:
                 log(cfg, "plugins", "plugin_failed", f"spool error file={path.name}")
                 continue
