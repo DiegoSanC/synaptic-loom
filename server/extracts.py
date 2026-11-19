@@ -74,8 +74,33 @@ def fetch(conn: sqlite3.Connection, entry_id: int) -> dict | None:
 
 
 def purge(conn: sqlite3.Connection, project_id: int) -> int:
-    """Delete every stored extract of ``project_id``, in the caller's transaction."""
+    """Delete every stored extract of ``project_id``, in the caller's transaction.
+
+    The rows are gone; their bytes are not until `rewrite_database` has run.
+    """
     cur = conn.execute(
         "DELETE FROM entry_extracts WHERE entry_id IN "
         "(SELECT id FROM entries WHERE project_id = ?)", (project_id,))
     return cur.rowcount
+
+
+def rewrite_database(conn: sqlite3.Connection) -> bool:
+    """Rebuild the database file from its live rows and empty the WAL, so that neither
+    holds the bytes of a deleted row. Run it after the purge's commit, outside any
+    transaction.
+
+    A ``DELETE`` only unlinks: the bytes stay in the freed space, in the pages the table
+    rewrote as it grew (an older copy of its first rows) and in the WAL's earlier frames.
+    ``PRAGMA secure_delete`` on the purging connection zeroes the first of those and not
+    the second, which is why this is a ``VACUUM``: it copies the live rows into a new file
+    and nothing else. The ``TRUNCATE`` checkpoint then writes that copy over the database
+    file and cuts the WAL to zero bytes.
+
+    ``False`` when the checkpoint could not finish because another connection was still
+    reading an earlier state: the WAL then still holds the old frames, and a second run
+    completes it. ``VACUUM`` itself waits for a writer like any other write
+    (``busy_timeout``) and needs room for a second copy of the database while it runs.
+    """
+    conn.execute("VACUUM")
+    busy = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+    return busy == 0
